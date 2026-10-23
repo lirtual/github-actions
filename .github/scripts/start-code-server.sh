@@ -5,6 +5,7 @@ TARBALL="$RUNNER_TEMP/code-server.tar.gz"
 curl --fail --location --retry 2 \
   "https://github.com/coder/code-server/releases/download/v$VERSION/code-server-$VERSION-linux-amd64.tar.gz" \
   --output "$TARBALL"
+echo CODE_SERVER_ARCHIVE_SHA256=$(sha256sum "$TARBALL" | awk '{print $1}')
 tar -xzf "$TARBALL" -C "$RUNNER_TEMP"
 BIN="$RUNNER_TEMP/code-server-$VERSION-linux-amd64/bin/code-server"
 "$BIN" --version >/dev/null
