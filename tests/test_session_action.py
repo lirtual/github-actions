@@ -94,7 +94,7 @@ class SessionProtocolTests(unittest.TestCase):
         settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
         settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "ONLY-GITHUB-SECRET"
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=open_request):
+            with mock.patch.object(session.OPENER, "open", side_effect=open_request):
                 out = io.StringIO()
                 with redirect_stdout(out):
                     session.assert_status("claim")
@@ -119,7 +119,7 @@ class SessionProtocolTests(unittest.TestCase):
                 raise urllib.error.HTTPError(req.full_url, 503, "pending", {}, None)
             return _MemoryReply({"result": "claimed"})
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+            with mock.patch.object(session.OPENER, "open", side_effect=respond):
                 with mock.patch.object(session.time, "sleep") as sleeper:
                     session.assert_status("claim")
                     self.assertEqual(sleeper.call_count, 2)
@@ -133,7 +133,7 @@ class SessionProtocolTests(unittest.TestCase):
             denied.append(req.full_url)
             raise urllib.error.HTTPError(req.full_url, 403, "forbidden", {}, None)
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=deny):
+            with mock.patch.object(session.OPENER, "open", side_effect=deny):
                 with mock.patch.object(session.time, "sleep") as sleeper:
                     with self.assertRaises(ValueError):
                         session.assert_status("claim")
@@ -151,7 +151,7 @@ class SessionProtocolTests(unittest.TestCase):
             calls.append(req.full_url)
             return _MemoryReply({"result": "already_claimed"})
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+            with mock.patch.object(session.OPENER, "open", side_effect=respond):
                 with mock.patch.object(session.time, "sleep") as sleeper:
                     session.assert_status("claim")
                     sleeper.assert_not_called()
@@ -188,7 +188,7 @@ class SessionProtocolTests(unittest.TestCase):
                         raise outcome
                     return outcome
                 with mock.patch.dict(os.environ, settings, clear=True):
-                    with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                    with mock.patch.object(session.OPENER, "open", side_effect=respond):
                         with mock.patch.object(session.time, "sleep") as sleep:
                             output = io.StringIO()
                             with redirect_stdout(output):
@@ -198,6 +198,16 @@ class SessionProtocolTests(unittest.TestCase):
                             self.assertEqual(sleep.call_count, expected - 1)
                             self.assertEqual(calls, ["Bearer " + token for token in issued])
                             self.assertNotIn("SECRET-NEVER-LOG", output.getvalue())
+
+    def test_signed_protocol_uses_no_redirect_opener(self):
+        # The opener must override urllib's default automatic redirect
+        # handler, which otherwise may forward Bearer authentication.
+        handlers = session.OPENER.handlers
+        candidates = [h for h in handlers
+                      if isinstance(h, session.urllib.request.HTTPRedirectHandler)]
+        self.assertEqual(len(candidates), 1)
+        self.assertIsNone(candidates[0].redirect_request(
+            object(), None, 302, "Found", {}, "https://untrusted.example/"))
 
     def test_transport_retry_never_overrides_following_403(self):
         import urllib.error
@@ -213,7 +223,7 @@ class SessionProtocolTests(unittest.TestCase):
                 raise ConnectionResetError("lost initial reply")
             raise urllib.error.HTTPError(request.full_url, 403, "denied", {}, None)
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+            with mock.patch.object(session.OPENER, "open", side_effect=respond):
                 with mock.patch.object(session.time, "sleep") as sleep:
                     with self.assertRaises(ValueError):
                         session.assert_status("claim")
@@ -234,7 +244,7 @@ class SessionProtocolTests(unittest.TestCase):
                 raise urllib.error.HTTPError(req.full_url, 503, "temporary", {}, None)
             return _MemoryReply({"result": "ready"})
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+            with mock.patch.object(session.OPENER, "open", side_effect=respond):
                 with mock.patch.object(session.time, "sleep") as sleeper:
                     session.assert_status("ready")
         self.assertEqual(len(attempts), 3)
@@ -251,7 +261,7 @@ class SessionProtocolTests(unittest.TestCase):
             calls.append(req.full_url)
             return _MemoryReply({"result": "already_ready"})
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+            with mock.patch.object(session.OPENER, "open", side_effect=respond):
                 with mock.patch.object(session.time, "sleep") as sleeper:
                     session.assert_status("ready")
                     sleeper.assert_not_called()
@@ -269,7 +279,7 @@ class SessionProtocolTests(unittest.TestCase):
             calls.append(req.full_url)
             raise urllib.error.HTTPError(req.full_url, 403, "forbidden", {}, None)
         with mock.patch.dict(os.environ, settings, clear=True):
-            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+            with mock.patch.object(session.OPENER, "open", side_effect=respond):
                 with mock.patch.object(session.time, "sleep") as sleeper:
                     with self.assertRaises(ValueError):
                         session.assert_status("ready")
