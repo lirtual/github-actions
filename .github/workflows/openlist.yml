@@ -60,25 +60,7 @@ jobs:
         shell: bash
         env:
           OPENLIST_ADMIN_PASSWORD: ${{ secrets.SESSION_OPENLIST_ADMIN_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "$OPENLIST_ADMIN_PASSWORD"
-          mkdir -p "$RUNNER_TEMP/openlist-data"
-          docker run --detach --rm --name session-openlist \
-            --user "$(id -u):$(id -g)" \
-            --publish 127.0.0.1:5244:5244 \
-            --volume "$RUNNER_TEMP/openlist-data:/opt/openlist/data" \
-            --env OPENLIST_ADMIN_PASSWORD \
-            openlistteam/openlist:v4.2.6 >/dev/null
-          ready=false
-          for _ in $(seq 1 45); do
-            if curl --fail --silent --max-time 2 http://127.0.0.1:5244/ >/dev/null; then
-              ready=true
-              break
-            fi
-            sleep 2
-          done
-          test "$ready" = true
+        run: bash .github/scripts/start-openlist.sh
       - name: Signed Ready after local OpenList health check
         run: python3 .github/scripts/session_action.py ready
       - name: Hold until Runner-local lifetime or cancellation
