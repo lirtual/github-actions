@@ -6,6 +6,7 @@ verifies signed OIDC identity and the immutable GitHub physical Run before
 accepting claim or ready.
 """
 import json
+import urllib.error
 import os
 import pathlib
 import re
@@ -57,19 +58,34 @@ def github_token(audience):
 def assert_status(stage):
     attempt, audience, claim = configuration()
     url = claim if stage == "claim" else claim[:-len("/claim")] + "/ready"
-    jwt = github_token(audience)
-    request = urllib.request.Request(
-        url, method="POST",
-        data=json.dumps({"attemptId": attempt}).encode("utf-8"),
-        headers={"Authorization": "Bearer " + jwt, "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        result = json.load(response)
-        status = response.status
     expected = "claimed" if stage == "claim" else "ready"
-    if status != 200 or result != {"result": expected}:
-        raise ValueError("signed " + stage + " not accepted")
-    print("Signed GitHub Session " + stage + " acknowledged")
+    if stage not in ("claim", "ready"):
+        raise ValueError("invalid protocol operation")
+    # The GitHub physical Run may not yet be visible in the REST API when
+    # signed Ready first arrives. Retry only HTTP 503 (temporarily
+    # unconfirmed/unavailable), with a finite budget and a freshly issued
+    # GitHub OIDC JWT each time. HTTP 403 is a definitive denial.
+    attempts = 12 if stage == "ready" else 1
+    for retry in range(attempts):
+        jwt = github_token(audience)
+        request = urllib.request.Request(
+            url, method="POST",
+            data=json.dumps({"attemptId": attempt}).encode("utf-8"),
+            headers={"Authorization": "Bearer " + jwt, "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                result = json.load(response)
+                if response.status != 200 or result != {"result": expected}:
+                    raise ValueError("signed " + stage + " not accepted")
+            print("Signed GitHub Session " + stage + " acknowledged")
+            return
+        except urllib.error.HTTPError as failure:
+            failure.close()
+            if failure.code != 503 or retry == attempts - 1:
+                raise ValueError("signed " + stage + " denied") from None
+            time.sleep(5)
+    raise ValueError("signed " + stage + " unavailable")
 
 
 def start_file():
