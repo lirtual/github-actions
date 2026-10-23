@@ -29,6 +29,10 @@ Each workflow lives in its own file and uses the same minimal GitHub OIDC → Wo
 | `code-server.yml` | Ubuntu | Tailscale SSH forwarding | code-server `4.140.0` on `127.0.0.1:8080` |
 | `openlist.yml` | Ubuntu | Tailscale SSH forwarding | OpenList Docker `v4.2.6` on `127.0.0.1:5244` |
 
+**How to find your private Session:** the Tailscale Action explicitly assigns `sa-<github_run_id>` as the ephemeral node hostname. After the signed Ready state, `workflow_status` exposes `private_hostname` (for example `sa-123456789`) and still reports `physical_health: unverified` until physical state reconciliation. These names work only within an authorized tailnet with correct MagicDNS/Tailscale SSH access rules. For Linux use `ssh runner@sa-<github_run_id>`; for Windows use `ssh sessionuser@sa-<github_run_id>` with the approved private key. For Chrome, code-server and OpenList use an authenticated SSH local port-forward to the same node on ports 9222, 8080 and 5244 respectively. This is not a public URL or proof of reachability.
+
+**Supply-chain bounds:** the code-server 4.140.0 linux-amd64 download is checked against hardcoded SHA-256 `864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48` (matched two distinct GitHub-hosted Runner downloads). OpenList v4.2.6 is pinned to multi-architecture image index digest `sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64`. Any new release must be reviewed and update these immutable values explicitly; the version/tag alone is not authority.
+
 The three internal workflow_dispatch inputs `attempt_id`, `dispatch_id`, `capability_id` are supplied **only** by Workflow MCP. Users may choose `duration_minutes` (1–330, default 330). These workflows do not accept shell commands or arbitrary URLs as input.
 
 **Repository configuration before any separately approved live acceptance:**
