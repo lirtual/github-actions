@@ -84,6 +84,12 @@ jobs:
               sys.exit("GitHub OIDC identity unavailable")
           separator = "&" if "?" in endpoint else "?"
           token_url = endpoint + separator + urllib.parse.urlencode({"audience": audience})
+          # Do not forward Bearer credentials or accept a redirected fake 200.
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          opener = urllib.request.build_opener(NoRedirect())
           try:
               # The GitHub Job may start before the dispatch ACK is stored in
               # D1, or its first successful Claim HTTP response may be lost.
@@ -92,7 +98,7 @@ jobs:
                   request = urllib.request.Request(
                       token_url, headers={"Authorization": "Bearer " + authorization}
                   )
-                  with urllib.request.urlopen(request, timeout=15) as response:
+                  with opener.open(request, timeout=15) as response:
                       issued = json.load(response)
                   jwt = issued.get("value")
                   if not isinstance(jwt, str) or not jwt:
@@ -107,7 +113,7 @@ jobs:
                       method="POST",
                   )
                   try:
-                      with urllib.request.urlopen(request, timeout=20) as response:
+                      with opener.open(request, timeout=20) as response:
                           accepted = response.status == 200 and json.load(response) in (
                               {"result": "claimed"}, {"result": "already_claimed"}
                           )
