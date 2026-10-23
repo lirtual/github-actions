@@ -13,7 +13,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 yml = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
                 self.assertIn("ref: ${{ github.sha }}", yml)
                 self.assertIn("persist-credentials: false", yml)
-                self.assertIn("hostname: sa-${{ github.run_id }}", yml)
+                self.assertIn("hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}", yml)
                 self.assertIn("timeout-minutes: 330", yml)
                 self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
                 self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
