@@ -5,7 +5,9 @@ TARBALL="$RUNNER_TEMP/code-server.tar.gz"
 curl --fail --location --retry 2 \
   "https://github.com/coder/code-server/releases/download/v$VERSION/code-server-$VERSION-linux-amd64.tar.gz" \
   --output "$TARBALL"
-echo CODE_SERVER_ARCHIVE_SHA256=$(sha256sum "$TARBALL" | awk '{print $1}')
+# SHA-256 observed in two separate secret-free GitHub-hosted CI runs for
+# the official v4.140.0 linux-amd64 release. Fail closed on any asset drift.
+printf '%s  %s\n' '864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48' "$TARBALL" | sha256sum -c -
 tar -xzf "$TARBALL" -C "$RUNNER_TEMP"
 BIN="$RUNNER_TEMP/code-server-$VERSION-linux-amd64/bin/code-server"
 "$BIN" --version >/dev/null
