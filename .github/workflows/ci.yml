@@ -21,5 +21,14 @@ jobs:
           persist-credentials: false
       - name: Validate GitHub Workflow syntax and expressions
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
-      - name: Check local Session protocol Python syntax
-        run: python3 -m py_compile .github/scripts/session_action.py
+      - name: Test shared GitHub OIDC and bounded Session protocol
+        run: |
+          python3 -m py_compile .github/scripts/session_action.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Parse Windows SSH configuration script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errorsFound = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.github/scripts/windows-ssh.ps1').Path, [ref]$tokens, [ref]$errorsFound) | Out-Null
+          if ($errorsFound.Count -ne 0) { throw 'Invalid Windows SSH script syntax' }
