@@ -21,6 +21,16 @@ AUDIENCE = re.compile(r"^workflow-github-[a-z0-9:-]{4,120}$")
 MAX_MINUTES = 330
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # Never forward GitHub's short-lived Bearer JWT or accept a fake success
+    # body from a redirected endpoint.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(_NoRedirect())
+
+
 def configuration():
     attempt = os.getenv("ATTEMPT_ID", "")
     dispatch = os.getenv("DISPATCH_ID", "")
@@ -48,7 +58,7 @@ def github_token(audience):
         url + separator + urllib.parse.urlencode({"audience": audience}),
         headers={"Authorization": "Bearer " + secret},
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
+    with OPENER.open(request, timeout=15) as response:
         data = json.load(response)
     jwt = data.get("value")
     if not isinstance(jwt, str) or not jwt:
@@ -74,7 +84,7 @@ def assert_status(stage):
             headers={"Authorization": "Bearer " + jwt, "Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with OPENER.open(request, timeout=20) as response:
                 result = json.load(response)
                 # HTTP response may be lost after D1 already committed Ready.
                 # An immutable GitHub OIDC identity and physical owner are still
