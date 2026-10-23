@@ -46,6 +46,6 @@ The GitHub Job has a literal `timeout-minutes: 330` maximum from its actual star
 
 ### Acceptance and publication gate
 
-All five workflows are **Draft code**, not provisioned devices. PR CI checks all YAML with Actionlint, Python syntax and protocol unit tests, and PowerShell source parsing. This does **not** validate network provisioning, actual Tailnet OIDC grants, Windows SSH firewall behavior, Chrome SSH forwarding, OpenList login, or a real GitHub `workflow_dispatch` / signed Ready / cancellation lifecycle.
+All five workflows are **Draft code**, not provisioned devices. PR CI checks all YAML with Actionlint, Python syntax and protocol unit tests, Windows PowerShell source parsing, **actual `windows-latest` runner prerequisites**, and secret-free real Ubuntu Runner startup of Chrome, code-server and OpenList on `127.0.0.1`. Signed Ready has a bounded retry for temporary GitHub physical-status inconsistency (`503`) but fails immediately on `403`. These checks do **not** validate Tailnet OIDC grants, real SSH/port-forwarding reachability, Windows SSH account/firewall activation, OpenList login, or a real GitHub `workflow_dispatch` → signed Ready → cancellation lifecycle.
 
 No merge, protected/tag release, production Cloudflare Worker deploy, D1 migration, GitHub secrets, Tailscale trust configuration, actual physical sessions or live E2E should occur without their separate security and release review. Do not set up a public endpoint as a workaround.
