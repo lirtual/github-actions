@@ -38,6 +38,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
     def test_task_signed_claim_transport_recovery_and_403_denial(self):
         # Execute the actual embedded Task script, not a copy of its logic.
         import contextlib
+        import http.client
         import io
         import json
         import os
@@ -72,6 +73,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
         for statuses, expected_calls, should_succeed in [
             ([503, "already_claimed"], 2, True),
             ([503, "claimed"], 2, True),
+            ([ConnectionResetError("lost HTTP 200"), "already_claimed"], 2, True),
+            ([http.client.IncompleteRead(b'{"result":', 9), "already_claimed"], 2, True),
+            ([ConnectionResetError("lost HTTP 200"), 403], 2, False),
             ([403], 1, False),
         ]:
             with self.subTest(statuses=statuses):
@@ -86,6 +90,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
                         return Reply({"value": token})
                     claim_tokens.append(request.get_header("Authorization"))
                     result = responses.pop(0)
+                    if isinstance(result, BaseException):
+                        raise result
                     if isinstance(result, int):
                         raise urllib.error.HTTPError(request.full_url, result,
                                                      "temporary or denied", {}, None)
