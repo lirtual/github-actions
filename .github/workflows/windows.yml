@@ -53,7 +53,7 @@ jobs:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:session-actions
-          hostname: sa-${{ github.run_id }}
+          hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
       - name: Configure restricted SSH-only Windows Session
         shell: pwsh
         env:
