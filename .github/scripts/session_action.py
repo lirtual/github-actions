@@ -76,7 +76,11 @@ def assert_status(stage):
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 result = json.load(response)
-                if response.status != 200 or result != {"result": expected}:
+                # HTTP response may be lost after D1 already committed Ready.
+                # An immutable GitHub OIDC identity and physical owner are still
+                # reverified by the Worker before it returns already_ready.
+                allowed = {expected, "already_ready"} if stage == "ready" else {expected}
+                if response.status != 200 or result not in tuple({"result": value} for value in allowed):
                     raise ValueError("signed " + stage + " not accepted")
             print("Signed GitHub Session " + stage + " acknowledged")
             return
