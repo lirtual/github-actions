@@ -32,6 +32,18 @@ $Capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
 if ($Capability.State -ne 'Installed') {
     Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
 }
+# Restrict the SSH daemon too. Prepend before default Match blocks.
+$Config = Join-Path $env:ProgramData 'ssh\sshd_config'
+if (-not (Test-Path $Config)) { throw 'OpenSSH configuration missing' }
+$Baseline = [IO.File]::ReadAllText($Config)
+$Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
+    'PubkeyAuthentication yes' + [Environment]::NewLine +
+    'PermitEmptyPasswords no' + [Environment]::NewLine +
+    'AllowUsers sessionuser' + [Environment]::NewLine
+[IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
+$Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
+& $Sshd -t
+if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
 Set-Service sshd -StartupType Manual
 # Disable broad stock inbound rules BEFORE opening the Tailnet-only one.
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue |
