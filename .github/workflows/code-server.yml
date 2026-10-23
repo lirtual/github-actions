@@ -1,0 +1,95 @@
+name: code-server Session
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_id:
+        description: Server-owned logical Attempt
+        type: string
+        required: true
+      dispatch_id:
+        description: Server-owned dispatch correlation
+        type: string
+        required: true
+      capability_id:
+        description: Server-owned capability
+        type: string
+        required: true
+      duration_minutes:
+        description: Session lifetime in minutes (1-330)
+        type: number
+        default: 330
+        required: false
+env:
+  WORKFLOW_ACTION_TYPE: session
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      ATTEMPT_ID: ${{ inputs.attempt_id }}
+      DISPATCH_ID: ${{ inputs.dispatch_id }}
+      CAPABILITY_ID: ${{ inputs.capability_id }}
+      WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
+      WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
+      DURATION_MINUTES: ${{ inputs.duration_minutes }}
+    steps:
+      - name: Checkout pinned dispatched revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Record Runner-local lifetime
+        run: python3 .github/scripts/session_action.py start
+      - name: Claim pinned GitHub physical Run
+        run: python3 .github/scripts/session_action.py claim
+      - name: Join private Tailnet
+        uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:session-actions
+      - name: Enable Tailnet SSH for authenticated port forwarding
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo tailscale set --ssh
+          tailscale ip -4 >/dev/null
+      - name: Install fixed code-server release and bind only loopback
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=4.140.0
+          TARBALL="$RUNNER_TEMP/code-server.tar.gz"
+          curl --fail --location --retry 2 \
+            "https://github.com/coder/code-server/releases/download/v$VERSION/code-server-$VERSION-linux-amd64.tar.gz" \
+            --output "$TARBALL"
+          tar -xzf "$TARBALL" -C "$RUNNER_TEMP"
+          BIN="$RUNNER_TEMP/code-server-$VERSION-linux-amd64/bin/code-server"
+          "$BIN" --version >/dev/null
+          "$BIN" --auth none --bind-addr 127.0.0.1:8080 \
+            >"$RUNNER_TEMP/code-server-session.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/session-service.pid"
+          ready=false
+          for _ in $(seq 1 45); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:8080/ > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = true
+
+      - name: Signed Ready after local service health check
+        run: python3 .github/scripts/session_action.py ready
+      - name: Hold until Runner-local lifetime or GitHub cancellation
+        run: python3 .github/scripts/session_action.py hold
+      - name: Cleanup and disable Tailnet SSH
+        if: always()
+        shell: bash
+        run: |
+          if test -s "$RUNNER_TEMP/session-service.pid"; then
+            kill "$(cat "$RUNNER_TEMP/session-service.pid")" 2>/dev/null || true
+          fi
+          sudo tailscale set --ssh=false || true
