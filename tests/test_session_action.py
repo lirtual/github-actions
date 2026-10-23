@@ -140,6 +140,24 @@ class SessionProtocolTests(unittest.TestCase):
                     sleeper.assert_not_called()
         self.assertEqual(len(denied), 1)
 
+    def test_claim_accepts_signed_already_claimed_after_lost_http_ack(self):
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        calls = []
+        def respond(req, timeout=0):
+            if "oidc.actions.example" in req.full_url:
+                return _MemoryReply({"value": "fresh.jwt.for.test"})
+            calls.append(req.full_url)
+            return _MemoryReply({"result": "already_claimed"})
+        with mock.patch.dict(os.environ, settings, clear=True):
+            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                with mock.patch.object(session.time, "sleep") as sleeper:
+                    session.assert_status("claim")
+                    sleeper.assert_not_called()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].endswith("/github/action/claim"))
+
     def test_ready_retries_only_transient_503_with_fresh_oidc(self):
         import urllib.error
         settings = self.settings()
