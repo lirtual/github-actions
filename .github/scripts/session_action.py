@@ -65,7 +65,7 @@ def assert_status(stage):
     # signed Ready first arrives. Retry only HTTP 503 (temporarily
     # unconfirmed/unavailable), with a finite budget and a freshly issued
     # GitHub OIDC JWT each time. HTTP 403 is a definitive denial.
-    attempts = 12 if stage == "ready" else 1
+    attempts = 12  # Claim waits for D1 dispatch ACK; Ready waits for physical status.
     for retry in range(attempts):
         jwt = github_token(audience)
         request = urllib.request.Request(
