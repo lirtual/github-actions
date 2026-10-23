@@ -76,6 +76,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
             ([ConnectionResetError("lost HTTP 200"), "already_claimed"], 2, True),
             ([http.client.IncompleteRead(b'{"result":', 9), "already_claimed"], 2, True),
             ([ConnectionResetError("lost HTTP 200"), 403], 2, False),
+            ([302], 1, False),
             ([403], 1, False),
         ]:
             with self.subTest(statuses=statuses):
@@ -99,7 +100,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
 
                 stdout = io.StringIO()
                 with mock.patch.dict(os.environ, environment, clear=True):
-                    with mock.patch("urllib.request.urlopen", side_effect=respond):
+                    with mock.patch("urllib.request.build_opener") as build_opener:
+                        build_opener.return_value.open.side_effect = respond
                         with mock.patch("time.sleep") as sleep:
                             with contextlib.redirect_stdout(stdout):
                                 if should_succeed:
