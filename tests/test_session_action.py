@@ -1,5 +1,6 @@
 """Offline tests for shared GitHub Session protocol (no real secrets or network)."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -45,6 +46,50 @@ class SessionProtocolTests(unittest.TestCase):
             with mock.patch.dict(os.environ, changed, clear=True):
                 with self.subTest(name=name, value=value), self.assertRaises(ValueError):
                     session.configuration()
+
+    def test_signed_claim_and_ready_are_separate_and_do_not_log_tokens(self):
+        import io
+        from contextlib import redirect_stdout
+
+        issued = {"value": "SIGNED.JWT.DO-NOT-LOG"}
+        visited = []
+
+        class Reply:
+            status = 200
+            def __init__(self, body):
+                self.body = io.BytesIO(json.dumps(body).encode("utf-8"))
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, size=-1):
+                return self.body.read(size)
+
+        def open_request(req, timeout=0):
+            self.assertTrue(timeout <= 20)
+            visited.append(req)
+            if len(visited) % 2:
+                self.assertEqual(req.get_header("Authorization"), "Bearer ONLY-GITHUB-SECRET")
+                self.assertIn("audience=workflow-github-action%3Aproduction", req.full_url)
+                return Reply(issued)
+            self.assertEqual(req.get_header("Authorization"), "Bearer " + issued["value"])
+            self.assertEqual(json.loads(req.data)["attemptId"], ATTEMPT)
+            expected = "claimed" if len(visited) == 2 else "ready"
+            return Reply({"result": expected})
+
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "ONLY-GITHUB-SECRET"
+        with mock.patch.dict(os.environ, settings, clear=True):
+            with mock.patch.object(session.urllib.request, "urlopen", side_effect=open_request):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    session.assert_status("claim")
+                    session.assert_status("ready")
+        self.assertTrue(visited[1].full_url.endswith("/github/action/claim"))
+        self.assertTrue(visited[3].full_url.endswith("/github/action/ready"))
+        self.assertNotIn(issued["value"], out.getvalue())
+        self.assertNotIn("ONLY-GITHUB-SECRET", out.getvalue())
 
     def test_hold_rejects_bad_duration_and_does_not_extend_clock(self):
         with tempfile.TemporaryDirectory() as root:
