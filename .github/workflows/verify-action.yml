@@ -1,0 +1,129 @@
+name: Verify Workflow Action
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_id:
+        description: Server-owned logical attempt ID
+        type: string
+        required: true
+      dispatch_id:
+        description: Server-owned dispatch correlation ID
+        type: string
+        required: true
+      capability_id:
+        description: Server-owned execution capability
+        type: string
+        required: true
+      outcome:
+        description: Verify the real GitHub task success or failure path
+        type: choice
+        required: true
+        options: [success, failure]
+        default: success
+
+# An explicitly approved Task; this is not a general command runner.
+env:
+  WORKFLOW_ACTION_TYPE: task
+
+# No checkout, repository contents, GitHub token use, or application secrets.
+# GitHub OIDC is requested exclusively to claim a D1-registered Attempt.
+permissions:
+  contents: none
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Claim approved physical Run before any task work
+        shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          CAPABILITY_ID: ${{ inputs.capability_id }}
+          CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
+          OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          uuid = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
+          attempt = os.environ.get("ATTEMPT_ID", "")
+          dispatch = os.environ.get("DISPATCH_ID", "")
+          claim_url = os.environ.get("CLAIM_URL", "")
+          audience = os.environ.get("OIDC_AUDIENCE", "")
+          parsed = urllib.parse.urlsplit(claim_url)
+          if (
+              not uuid.fullmatch(attempt)
+              or not uuid.fullmatch(dispatch)
+              or os.environ.get("CAPABILITY_ID") != "github.action"
+              or not re.fullmatch(r"workflow-github-[a-z0-9:-]{4,120}", audience)
+              or parsed.scheme != "https"
+              or not parsed.netloc
+              or parsed.username is not None
+              or parsed.password is not None
+              or parsed.path != "/github/action/claim"
+              or parsed.query
+              or parsed.fragment
+          ):
+              sys.exit("Action claim configuration or server-owned identity invalid")
+
+          # GitHub's OIDC request credentials are short-lived and never logged.
+          endpoint = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+          authorization = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+          if not endpoint.startswith("https://") or not authorization:
+              sys.exit("GitHub OIDC identity unavailable")
+          separator = "&" if "?" in endpoint else "?"
+          token_url = endpoint + separator + urllib.parse.urlencode({"audience": audience})
+          try:
+              request = urllib.request.Request(
+                  token_url, headers={"Authorization": "Bearer " + authorization}
+              )
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  issued = json.load(response)
+              jwt = issued.get("value")
+              if not isinstance(jwt, str) or not jwt:
+                  raise ValueError("missing signed token")
+              request = urllib.request.Request(
+                  claim_url,
+                  data=json.dumps({"attemptId": attempt}).encode("utf-8"),
+                  headers={
+                      "Authorization": "Bearer " + jwt,
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  accepted = response.status == 200 and json.load(response) == {"result": "claimed"}
+              if not accepted:
+                  raise ValueError("claim denied")
+          except Exception:
+              # Do not echo GitHub credentials, issued JWTs, or HTTP response bodies.
+              sys.exit("GitHub Action owner claim denied or unavailable")
+          print("GitHub physical Run ownership verified")
+          PY
+
+      - name: Execute bounded verification Task
+        shell: bash
+        env:
+          REQUESTED_OUTCOME: ${{ inputs.outcome }}
+        run: |
+          case "$REQUESTED_OUTCOME" in
+            success)
+              echo "Verified GitHub Task completed successfully"
+              ;;
+            failure)
+              echo "Verified GitHub Task exercised the failure path"
+              exit 1
+              ;;
+            *)
+              echo "Unsupported Task outcome" >&2
+              exit 1
+              ;;
+          esac
