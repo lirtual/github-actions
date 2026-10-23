@@ -1,0 +1,21 @@
+name: Static Workflow Contract
+on:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - README.md
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate GitHub Workflow syntax and expressions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/verify-action.yml .github/workflows/ci.yml
