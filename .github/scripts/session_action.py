@@ -6,6 +6,7 @@ verifies signed OIDC identity and the immutable GitHub physical Run before
 accepting claim or ready.
 """
 import json
+import http.client
 import urllib.error
 import os
 import pathlib
@@ -61,10 +62,9 @@ def assert_status(stage):
     expected = "claimed" if stage == "claim" else "ready"
     if stage not in ("claim", "ready"):
         raise ValueError("invalid protocol operation")
-    # The GitHub physical Run may not yet be visible in the REST API when
-    # signed Ready first arrives. Retry only HTTP 503 (temporarily
-    # unconfirmed/unavailable), with a finite budget and a freshly issued
-    # GitHub OIDC JWT each time. HTTP 403 is a definitive denial.
+    # Retry only transient 503 or an ambiguous POST transport/response loss.
+    # The Worker independently re-verifies the same physical signed owner
+    # before returning already_claimed / already_ready. HTTP 403 fails closed.
     attempts = 12  # Claim waits for D1 dispatch ACK; Ready waits for physical status.
     for retry in range(attempts):
         jwt = github_token(audience)
@@ -85,10 +85,19 @@ def assert_status(stage):
             print("Signed GitHub Session " + stage + " acknowledged")
             return
         except urllib.error.HTTPError as failure:
+            code = failure.code
             failure.close()
-            if failure.code != 503 or retry == attempts - 1:
+            if code != 503:
                 raise ValueError("signed " + stage + " denied") from None
-            time.sleep(5)
+        except (OSError, http.client.IncompleteRead, json.JSONDecodeError):
+            # The server may already have committed its D1 CAS before the
+            # connection broke or the HTTP 200 JSON body was truncated.
+            # A replay is harmless only because the Worker requires the same
+            # signed physical owner and checks cancellation/terminal fences.
+            pass
+        if retry == attempts - 1:
+            raise ValueError("signed " + stage + " unavailable")
+        time.sleep(5)
     raise ValueError("signed " + stage + " unavailable")
 
 
