@@ -15,6 +15,11 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("persist-credentials: false", yml)
                 self.assertIn("hostname: sa-${{ github.run_id }}", yml)
                 self.assertIn("timeout-minutes: 330", yml)
+                self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
+                self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
+                self.assertNotIn("secrets.TS_OAUTH_CLIENT_ID", yml)
+                self.assertNotIn("secrets.TS_AUDIENCE", yml)
+
                 self.assertIn("WORKFLOW_ACTION_TYPE: session", yml)
                 self.assertIn("session_action.py claim", yml)
                 self.assertIn("session_action.py ready", yml)
