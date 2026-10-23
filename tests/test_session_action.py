@@ -125,6 +125,23 @@ class SessionProtocolTests(unittest.TestCase):
         self.assertEqual(len(attempts), 3)
         self.assertEqual(sleeper.call_count, 2)
 
+    def test_ready_accepts_signed_idempotent_replay_after_lost_response(self):
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        calls = []
+        def respond(req, timeout=0):
+            if "oidc.actions.example" in req.full_url:
+                return _MemoryReply({"value": "fresh.jwt.for.test"})
+            calls.append(req.full_url)
+            return _MemoryReply({"result": "already_ready"})
+        with mock.patch.dict(os.environ, settings, clear=True):
+            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                with mock.patch.object(session.time, "sleep") as sleeper:
+                    session.assert_status("ready")
+                    sleeper.assert_not_called()
+                    self.assertEqual(len(calls), 1)
+
     def test_signed_ready_never_retries_authorization_denial(self):
         import urllib.error
         settings = self.settings()
