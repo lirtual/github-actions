@@ -32,3 +32,51 @@ jobs:
           $errorsFound = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.github/scripts/windows-ssh.ps1').Path, [ref]$tokens, [ref]$errorsFound) | Out-Null
           if ($errorsFound.Count -ne 0) { throw 'Invalid Windows SSH script syntax' }
+
+  smoke-linux-services:
+    # This executes only isolated, loopback-bound services. It intentionally
+    # has NO repository/Tailnet secrets, OIDC, dispatch or Workflow MCP grants.
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [chrome, code-server, openlist]
+    steps:
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify actual Session launch script shell syntax
+        shell: bash
+        run: bash -n .github/scripts/start-*.sh
+      - name: Start the same local service script used by the Session
+        shell: bash
+        env:
+          OPENLIST_ADMIN_PASSWORD: ci-ephemeral-loopback-only
+        run: bash ".github/scripts/start-${{ matrix.service }}.sh"
+      - name: Ensure no service listens on wildcard/public addresses
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            chrome) PORT=9222 ;;
+            code-server) PORT=8080 ;;
+            openlist) PORT=5244 ;;
+            *) exit 1 ;;
+          esac
+          ss -lnt | grep -E "127\\.0\\.0\\.1:$PORT[[:space:]]"
+          if ss -lnt | grep -E "(0\\.0\\.0\\.0|\\*|\\[::\\]):$PORT[[:space:]]"; then
+            echo "Service must not listen on a public interface" >&2
+            exit 1
+          fi
+      - name: Remove transient local service
+        if: always()
+        shell: bash
+        run: |
+          if test -s "$RUNNER_TEMP/session-service.pid"; then
+            kill "$(cat "$RUNNER_TEMP/session-service.pid")" 2>/dev/null || true
+          fi
+          docker rm --force session-openlist >/dev/null 2>&1 || true
