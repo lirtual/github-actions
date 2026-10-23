@@ -67,8 +67,8 @@ jobs:
             openlist) PORT=5244 ;;
             *) exit 1 ;;
           esac
-          ss -lnt | grep -E "127\\.0\\.0\\.1:$PORT[[:space:]]"
-          if ss -lnt | grep -E "(0\\.0\\.0\\.0|\\*|\\[::\\]):$PORT[[:space:]]"; then
+          ss -lnt | grep -E "127\\.0\\.0\\.1:${PORT}[[:space:]]"
+          if ss -lnt | grep -E "(0\\.0\\.0\\.0|\\*|\\[::\\]):${PORT}[[:space:]]"; then
             echo "Service must not listen on a public interface" >&2
             exit 1
           fi
