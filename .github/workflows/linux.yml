@@ -43,6 +43,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
       - name: Record Runner-local bounded lifetime
         run: python3 .github/scripts/session_action.py start
       - name: Claim approved physical GitHub Run
