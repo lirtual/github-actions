@@ -47,6 +47,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import json
+          import http.client
           import os
           import re
           import sys
@@ -113,13 +114,19 @@ jobs:
                   except urllib.error.HTTPError as failure:
                       code = failure.code
                       failure.close()
-                      if code != 503 or retry == 11:
+                      if code != 503:
                           raise
-                      time.sleep(5)
-                      continue
-                  if not accepted:
-                      raise ValueError("claim denied")
-                  break
+                  except (OSError, http.client.IncompleteRead, json.JSONDecodeError):
+                      # First 200 may have committed Claim before its reply broke.
+                      # Only the same signed physical owner can replay safely.
+                      pass
+                  else:
+                      if not accepted:
+                          raise ValueError("claim denied")
+                      break
+                  if retry == 11:
+                      raise ValueError("claim unavailable")
+                  time.sleep(5)
           except Exception:
               # Do not echo GitHub credentials, issued JWTs, or HTTP response bodies.
               sys.exit("GitHub Action owner claim denied or unavailable")
