@@ -79,7 +79,7 @@ def assert_status(stage):
                 # HTTP response may be lost after D1 already committed Ready.
                 # An immutable GitHub OIDC identity and physical owner are still
                 # reverified by the Worker before it returns already_ready.
-                allowed = {expected, "already_ready"} if stage == "ready" else {expected}
+                allowed = {expected, "already_ready" if stage == "ready" else "already_claimed"}
                 if response.status != 200 or result not in tuple({"result": value} for value in allowed):
                     raise ValueError("signed " + stage + " not accepted")
             print("Signed GitHub Session " + stage + " acknowledged")
