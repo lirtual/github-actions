@@ -18,6 +18,19 @@ DISPATCH = "22222222-2222-4222-8222-222222222222"
 AUDIENCE = "workflow-github-action:production"
 
 
+
+class _MemoryReply:
+    status = 200
+    def __init__(self, data):
+        import io
+        self.stream = io.BytesIO(json.dumps(data).encode("utf-8"))
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        return False
+    def read(self, size=-1):
+        return self.stream.read(size)
+
 class SessionProtocolTests(unittest.TestCase):
     def settings(self):
         return {
@@ -90,6 +103,46 @@ class SessionProtocolTests(unittest.TestCase):
         self.assertTrue(visited[3].full_url.endswith("/github/action/ready"))
         self.assertNotIn(issued["value"], out.getvalue())
         self.assertNotIn("ONLY-GITHUB-SECRET", out.getvalue())
+
+
+    def test_ready_retries_only_transient_503_with_fresh_oidc(self):
+        import urllib.error
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        attempts = []
+        def respond(req, timeout=0):
+            if "oidc.actions.example" in req.full_url:
+                return _MemoryReply({"value": "fresh.jwt.for.test"})
+            attempts.append(req.full_url)
+            if len(attempts) < 3:
+                raise urllib.error.HTTPError(req.full_url, 503, "temporary", {}, None)
+            return _MemoryReply({"result": "ready"})
+        with mock.patch.dict(os.environ, settings, clear=True):
+            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                with mock.patch.object(session.time, "sleep") as sleeper:
+                    session.assert_status("ready")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(sleeper.call_count, 2)
+
+    def test_signed_ready_never_retries_authorization_denial(self):
+        import urllib.error
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        calls = []
+        def respond(req, timeout=0):
+            if "oidc.actions.example" in req.full_url:
+                return _MemoryReply({"value": "fresh.jwt.for.test"})
+            calls.append(req.full_url)
+            raise urllib.error.HTTPError(req.full_url, 403, "forbidden", {}, None)
+        with mock.patch.dict(os.environ, settings, clear=True):
+            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                with mock.patch.object(session.time, "sleep") as sleeper:
+                    with self.assertRaises(ValueError):
+                        session.assert_status("ready")
+        self.assertEqual(len(calls), 1)
+        sleeper.assert_not_called()
 
     def test_hold_rejects_bad_duration_and_does_not_extend_clock(self):
         with tempfile.TemporaryDirectory() as root:
