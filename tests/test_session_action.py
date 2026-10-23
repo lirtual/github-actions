@@ -158,6 +158,68 @@ class SessionProtocolTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0].endswith("/github/action/claim"))
 
+    def test_lost_http_200_transport_retries_with_fresh_signed_identity(self):
+        import http.client
+        import io
+        import urllib.error
+        from contextlib import redirect_stdout
+
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        for stage, failure, accepted in [
+            ("claim", ConnectionResetError("HTTP 200 reply lost"), "already_claimed"),
+            ("ready", http.client.IncompleteRead(b'{"result":', 8), "already_ready"),
+            ("claim", _MemoryReply({"result": "already_claimed"}), "already_claimed"),
+        ]:
+            # The third fixture exercises an ordinary successful response.
+            with self.subTest(stage=stage, failure=type(failure).__name__):
+                issued = []
+                calls = []
+                outcomes = [failure, _MemoryReply({"result": accepted})]
+                def respond(request, timeout=0):
+                    if "oidc.actions.example" in request.full_url:
+                        token = "signed-jwt-" + str(len(issued) + 1)
+                        issued.append(token)
+                        return _MemoryReply({"value": token})
+                    calls.append(request.get_header("Authorization"))
+                    outcome = outcomes.pop(0)
+                    if isinstance(outcome, BaseException):
+                        raise outcome
+                    return outcome
+                with mock.patch.dict(os.environ, settings, clear=True):
+                    with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                        with mock.patch.object(session.time, "sleep") as sleep:
+                            output = io.StringIO()
+                            with redirect_stdout(output):
+                                session.assert_status(stage)
+                            expected = 1 if isinstance(failure, _MemoryReply) else 2
+                            self.assertEqual(len(calls), expected)
+                            self.assertEqual(sleep.call_count, expected - 1)
+                            self.assertEqual(calls, ["Bearer " + token for token in issued])
+                            self.assertNotIn("SECRET-NEVER-LOG", output.getvalue())
+
+    def test_transport_retry_never_overrides_following_403(self):
+        import urllib.error
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        attempts = []
+        def respond(request, timeout=0):
+            if "oidc.actions.example" in request.full_url:
+                return _MemoryReply({"value": "signed.jwt"})
+            attempts.append(request.full_url)
+            if len(attempts) == 1:
+                raise ConnectionResetError("lost initial reply")
+            raise urllib.error.HTTPError(request.full_url, 403, "denied", {}, None)
+        with mock.patch.dict(os.environ, settings, clear=True):
+            with mock.patch.object(session.urllib.request, "urlopen", side_effect=respond):
+                with mock.patch.object(session.time, "sleep") as sleep:
+                    with self.assertRaises(ValueError):
+                        session.assert_status("claim")
+                    self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(len(attempts), 2)
+
     def test_ready_retries_only_transient_503_with_fresh_oidc(self):
         import urllib.error
         settings = self.settings()
