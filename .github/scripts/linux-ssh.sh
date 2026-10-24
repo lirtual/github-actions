@@ -59,8 +59,10 @@ done
 printf '%s:%s\n' "$account" "$SESSION_SYSTEM_PASSWORD" | sudo chpasswd
 unset SESSION_SYSTEM_PASSWORD
 sudo systemctl restart ssh
-if ! sudo ss -ltn '( sport = :22 )' | grep -Fq "$tailnet_ip:22"; then
-  echo 'OpenSSH is not listening on the Tailnet address' >&2
+# Reject any wildcard, public-interface, or additional SSH listener.
+ssh_listeners="$(sudo ss -H -ltn '( sport = :22 )' | awk '{print $4}')"
+if [[ "$ssh_listeners" != "$tailnet_ip:22" ]]; then
+  echo 'OpenSSH listener is not exclusively bound to the Tailnet address' >&2
   exit 1
 fi
 echo 'Tailnet-restricted Ubuntu password SSH is ready'
