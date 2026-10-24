@@ -170,6 +170,9 @@ jobs:
 
       - name: Submit small signed Task result after successful work
         if: success()
+        # This is optional metadata; a missing callback must never redefine
+        # the already-completed verification Task's native result.
+        continue-on-error: true
         shell: bash
         env:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
