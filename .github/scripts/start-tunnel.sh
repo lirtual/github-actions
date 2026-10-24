@@ -28,10 +28,10 @@ for _ in $(seq 1 60); do
   kill -0 "$pid" 2>/dev/null || { echo 'Cloudflare Tunnel exited before Ready' >&2; exit 1; }
   candidate="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$log" | head -n 1 || true)"
   if [[ -n "$candidate" ]]; then
-    # Reject transient Cloudflare 502/530 and errors before announcing Ready.
+    # Verify the app's expected unauthenticated HTTP response, not an arbitrary Cloudflare error page.
     status="$(curl --silent --show-error --max-time 4 --output /dev/null --write-out '%{http_code}' "$candidate/" 2>/dev/null || true)"
-    case "$status" in
-      200|301|302|303|307|308|401|403)
+    case "$service:$status" in
+      chrome:401|code-server:302|code-server:303|openlist:200)
         url="$candidate"
         break ;;
     esac
