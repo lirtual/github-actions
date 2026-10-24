@@ -53,11 +53,17 @@ try:
     if read("SELECT COUNT(*) FROM information_schema.schemata "
             "WHERE schema_name='" + name + "'") != "1":
         raise ValueError("target schema does not exist")
-    # Inspect both tables and views; never accept unrelated namespaces.
-    tables = read("SELECT table_name FROM information_schema.tables "
-                  "WHERE table_schema='" + name + "' ORDER BY table_name LIMIT 257").splitlines()
-    if len(tables) > 256 or any(not t.startswith("x_") for t in tables):
-        raise ValueError("unexpected tables")
+    # Treat all views as unexpected, even if they have OpenList-like names.
+    rows = read("SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_schema='" + name + "' ORDER BY table_name LIMIT 257").splitlines()
+    if len(rows) > 256:
+        raise ValueError("too many database objects")
+    tables = []
+    for row in rows:
+        parts = row.split("\t")
+        if len(parts) != 2 or not parts[0].startswith("x_") or parts[1] != "BASE TABLE":
+            raise ValueError("unexpected tables or views")
+        tables.append(parts[0])
     # A nonempty namespace must at least resemble an existing OpenList schema.
     if tables and "x_users" not in tables:
         raise ValueError("unrecognized existing x_ tables")
