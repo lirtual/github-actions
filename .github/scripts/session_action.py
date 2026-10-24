@@ -21,6 +21,10 @@ AUDIENCE = re.compile(r"^workflow-github-[a-z0-9:-]{4,120}$")
 MAX_MINUTES = 330
 
 
+class SafeProtocolError(ValueError):
+    """Whitelisted diagnostic text only; never include transport inputs."""
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     # Never forward GitHub's short-lived Bearer JWT or accept a fake success
     # body from a redirected endpoint.
@@ -43,7 +47,7 @@ def configuration():
             and url.scheme == "https" and url.hostname and url.username is None
             and url.password is None and url.path == "/github/action/claim"
             and not url.query and not url.fragment):
-        raise ValueError("Session Action identity or endpoint not configured")
+        raise SafeProtocolError("configuration_invalid")
     return attempt, audience, claim
 
 
@@ -52,17 +56,25 @@ def github_token(audience):
     secret = os.getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
     target = urllib.parse.urlsplit(url)
     if target.scheme != "https" or not target.hostname or not secret:
-        raise ValueError("GitHub OIDC credentials unavailable")
+        raise SafeProtocolError("oidc_credentials_unavailable")
     separator = "&" if "?" in url else "?"
     request = urllib.request.Request(
         url + separator + urllib.parse.urlencode({"audience": audience}),
         headers={"Authorization": "Bearer " + secret},
     )
-    with OPENER.open(request, timeout=15) as response:
-        data = json.load(response)
+    try:
+        with OPENER.open(request, timeout=15) as response:
+            data = json.load(response)
+    except urllib.error.HTTPError as failure:
+        code = failure.code
+        failure.close()
+        raise SafeProtocolError("oidc_request_http_" + str(code)) from None
+    except Exception as failure:
+        # Never print an exception message: it may contain an OIDC URL or token.
+        raise SafeProtocolError("oidc_request_" + type(failure).__name__) from None
     jwt = data.get("value")
     if not isinstance(jwt, str) or not jwt:
-        raise ValueError("GitHub identity token unavailable")
+        raise SafeProtocolError("oidc_token_missing")
     return jwt
 
 
@@ -98,7 +110,7 @@ def assert_status(stage):
             code = failure.code
             failure.close()
             if code != 503:
-                raise ValueError("signed " + stage + " denied") from None
+                raise SafeProtocolError(stage + "_request_http_" + str(code)) from None
         except (OSError, http.client.IncompleteRead, json.JSONDecodeError):
             # The server may already have committed its D1 CAS before the
             # connection broke or the HTTP 200 JSON body was truncated.
@@ -158,8 +170,14 @@ def main():
             hold()
         else:
             raise ValueError("invalid operation")
+    except SafeProtocolError as failure:
+        # SafeProtocolError carries only constant stages and numeric HTTP codes.
+        # Never echo the URL, JWT, credential, server body or traceback.
+        print("Session Action protocol step failed: " +
+              (sys.argv[1] if len(sys.argv) > 1 else "invalid") +
+              " (" + str(failure) + ")", file=sys.stderr)
+        raise SystemExit(1)
     except Exception:
-        # Never log a token, secret, physical URL response, or traceback.
         print("Session Action protocol step failed: " +
               (sys.argv[1] if len(sys.argv) > 1 else "invalid"), file=sys.stderr)
         raise SystemExit(1)
