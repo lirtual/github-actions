@@ -26,6 +26,44 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("session_action.py hold", yml)
                 self.assertEqual(len(re.findall(r"(?m)^  session:$", yml)), 1)
 
+    def test_session_claim_precedes_tailnet_and_protected_resources(self):
+        """A manual GitHub dispatch can run without a D1 Attempt; it must not
+        reach Tailnet enrollment, SSH, service credentials or Ready."""
+        pinned_tailnet = (
+            "uses: tailscale/github-action@"
+            "99a8333667fff04fdd6cffb46dfd409f8329a7bf"
+        )
+        for name in WORKFLOWS:
+            with self.subTest(workflow=name):
+                text = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
+                claim = text.index("session_action.py claim")
+                join = text.index(pinned_tailnet)
+                ready = text.index("session_action.py ready")
+                hold = text.index("session_action.py hold")
+                self.assertTrue(claim < join < ready < hold)
+                self.assertIn("id-token: write", text[:claim])
+                self.assertIn("WORKFLOW_ACTION_TYPE: session", text[:claim])
+                self.assertNotIn("tailscale set", text[:join])
+                self.assertNotIn("secrets.", text[:claim])
+                self.assertNotIn("TS_OAUTH_CLIENT_ID", text[:claim])
+                self.assertNotIn("TS_AUDIENCE", text[:claim])
+                self.assertIn("if: always()", text[hold:])
+                if name == "openlist":
+                    self.assertIn("secrets.SESSION_OPENLIST_ADMIN_PASSWORD",
+                                  text[join:ready])
+                if name == "windows":
+                    self.assertIn("vars.SESSION_SSH_PUBLIC_KEY",
+                                  text[join:ready])
+
+    def test_task_cannot_execute_before_a_signed_claim(self):
+        text = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        self.assertIn("id-token: write", text)
+        claim = text.index("Claim approved physical Run before any task work")
+        execute = text.index("Execute bounded verification Task")
+        self.assertLess(claim, execute)
+        self.assertNotIn("secrets.", text[:execute])
+        self.assertNotIn("actions/checkout", text[:execute])
+
     def test_external_packages_are_immutable(self):
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
         self.assertIn("864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48", code)
