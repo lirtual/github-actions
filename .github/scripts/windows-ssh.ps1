@@ -39,7 +39,8 @@ $Baseline = [IO.File]::ReadAllText($Config)
 $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
     'PubkeyAuthentication yes' + [Environment]::NewLine +
     'PermitEmptyPasswords no' + [Environment]::NewLine +
-    'AllowUsers sessionuser' + [Environment]::NewLine
+    'AllowUsers sessionuser' + [Environment]::NewLine +
+    ('AuthorizedKeysFile "' + $Keys + '"') + [Environment]::NewLine
 [IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
 $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 & $Sshd -t

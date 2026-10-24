@@ -76,6 +76,13 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName", text)
         self.assertIn("-RemoteAddress '100.64.0.0/10' -InterfaceAlias", text)
 
+    def test_windows_sshd_uses_absolute_authorized_keys_path(self):
+        # Newly created Windows local accounts might not have a user profile
+        # yet, so the default relative .ssh/authorized_keys can miss the key.
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("('AuthorizedKeysFile \"' + $Keys + '\"')", text)
+        self.assertIn("'AllowUsers sessionuser'", text)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
