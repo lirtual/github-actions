@@ -128,15 +128,25 @@ def start_file():
     return temp / "session-action-start"
 
 
-def start():
+def recorded_start():
+    # The workflow's first step stamps the start BEFORE checkout and setup;
+    # never allow a later step to reset or extend the Session deadline.
     location = start_file()
-    if location.exists():
-        raise ValueError("session start already recorded")
-    # First application step after a minimal pinned checkout. The GitHub job
-    # timeout is still the hard limit including checkout and preparation.
-    fd = os.open(str(location), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="ascii") as output:
-        output.write(str(int(time.time())))
+    if location.is_symlink() or not location.is_file():
+        raise ValueError("missing job start timestamp")
+    raw = location.read_text(encoding="ascii").strip()
+    if not raw.isdecimal() or len(raw) > 11:
+        raise ValueError("invalid job start timestamp")
+    started = int(raw)
+    now = int(time.time())
+    if started <= 0 or started < now - 360 * 60 or started > now + 30:
+        raise ValueError("session start timestamp invalid")
+    return started
+
+
+def start():
+    # Validate the first-step marker without overwriting it.
+    recorded_start()
 
 
 def hold():
@@ -146,10 +156,7 @@ def hold():
     minutes = int(raw)
     if not 1 <= minutes <= MAX_MINUTES:
         raise ValueError("invalid session duration")
-    start_time = int(start_file().read_text(encoding="ascii").strip())
-    now = int(time.time())
-    if start_time < now - 8 * 3600 or start_time > now + 30:
-        raise ValueError("session start timestamp invalid")
+    start_time = recorded_start()
     end = start_time + 60 * minutes
     print("Session bounded hold started; GitHub Job timeout remains authoritative")
     while time.time() < end:

@@ -27,7 +27,7 @@ permissions:
 jobs:
   session:
     runs-on: windows-latest
-    timeout-minutes: 330
+    timeout-minutes: 360
     env:
       ATTEMPT_ID: ${{ inputs.attempt_id }}
       DISPATCH_ID: ${{ inputs.dispatch_id }}
@@ -36,6 +36,10 @@ jobs:
       WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
       DURATION_MINUTES: ${{ inputs.duration_minutes }}
     steps:
+      - name: Capture job lifetime before checkout
+        shell: pwsh
+        run: |
+          [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() | Set-Content -Path (Join-Path $env:RUNNER_TEMP 'session-action-start') -NoNewline -Encoding ascii
       - name: Checkout pinned dispatched revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

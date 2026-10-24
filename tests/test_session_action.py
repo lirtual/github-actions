@@ -342,14 +342,26 @@ class SessionProtocolTests(unittest.TestCase):
                     session.hold()
                     sleep.assert_not_called()
 
-    def test_start_is_once_only_and_creates_local_timestamp(self):
+    def test_start_requires_first_step_timestamp_and_cannot_extend_it(self):
         with tempfile.TemporaryDirectory() as root:
+            marker = Path(root) / "session-action-start"
             with mock.patch.dict(os.environ, {"RUNNER_TEMP": root}, clear=True):
                 with mock.patch.object(session.time, "time", return_value=1234):
+                    with self.assertRaises(ValueError):
+                        session.start()  # No marker means checkout/setup cannot extend lifetime.
+                    marker.write_text("1200", encoding="ascii")
                     session.start()
-                self.assertEqual((Path(root) / "session-action-start").read_text(), "1234")
-                with self.assertRaises(ValueError):
-                    session.start()
+                    session.start()  # Retry validates, never resets the timestamp.
+                    self.assertEqual(marker.read_text(), "1200")
+                    with mock.patch.object(session.time, "time", return_value=1200 + 330 * 60 + 1):
+                        with mock.patch.dict(os.environ, {"DURATION_MINUTES": "330"}, clear=False):
+                            with mock.patch.object(session.time, "sleep") as sleeper:
+                                session.hold()
+                                sleeper.assert_not_called()
+                marker.write_text(str(1234 + 361 * 60), encoding="ascii")
+                with mock.patch.object(session.time, "time", return_value=1234):
+                    with self.assertRaises(ValueError):
+                        session.start()
 
 
 if __name__ == "__main__":
