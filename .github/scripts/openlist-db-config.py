@@ -60,11 +60,9 @@ def validate_ca(ca: str) -> str:
     blocks = re.findall(
         r"-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----", ca
     )
-    if not blocks or "".join(blocks) != "".join(ca.split()):
-        # Whitespace between certificates is permitted, other PEM material is not.
-        compact = re.sub(r"\\s+", "", ca)
-        if not blocks or compact != re.sub(r"\\s+", "", "".join(blocks)):
-            raise ValueError("invalid MySQL CA")
+    # Whitespace between certificates is permitted, other PEM material is not.
+    if not blocks or re.sub(r"\\s+", "", ca) != re.sub(r"\\s+", "", "".join(blocks)):
+        raise ValueError("invalid MySQL CA")
     try:
         ssl.create_default_context(cadata="\\n".join(blocks) + "\\n")
     except (ValueError, ssl.SSLError):
