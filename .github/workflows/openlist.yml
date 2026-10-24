@@ -59,6 +59,7 @@ jobs:
         shell: bash
         env:
           SESSION_SERVICE_PASSWORD: ${{ secrets.SESSION_SERVICE_PASSWORD }}
+          OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}
         run: bash .github/scripts/start-openlist.sh
       - name: Start Cloudflare Tunnel and verify HTTPS route
         shell: bash
@@ -88,4 +89,6 @@ jobs:
           fi
           docker rm --force session-chrome session-openlist >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/session-service-password" "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" "$RUNNER_TEMP/cloudflared"
+          rm -f "$RUNNER_TEMP/openlist-data/config.json"
+          rm -rf "$RUNNER_TEMP/openlist-data"
           sudo tailscale set --ssh=false || true
