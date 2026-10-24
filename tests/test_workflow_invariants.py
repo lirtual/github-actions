@@ -108,7 +108,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                                 if should_succeed:
                                     exec(compile(code, "Task Claim", "exec"), {})
                                 else:
-                                    with self.assertRaises(SystemExit):
+                                    with self.assertRaises(SystemExit) as captured:
                                         exec(compile(code, "Task Claim", "exec"), {})
                             self.assertEqual(sleep.call_count, 1 if expected_calls == 2 else 0)
                 self.assertEqual(len(observed_tokens), expected_calls)
@@ -119,7 +119,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertNotIn("jwt-", stderr.getvalue())
                 if not should_succeed:
                     self.assertIn("GitHub Action Claim claim_request HTTP",
-                                  stderr.getvalue())
+                                  str(captured.exception.code))
+                    self.assertNotIn(environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
+                                     str(captured.exception.code))
 
         # A failed GitHub token mint is distinguished from a worker Claim 403.
         # The exception message may contain a token-bearing URL: never echo it.
@@ -135,12 +137,13 @@ class SessionWorkflowInvariants(unittest.TestCase):
             with mock.patch("urllib.request.build_opener") as build_opener:
                 build_opener.return_value.open.side_effect = oidc_denied
                 with contextlib.redirect_stderr(stderr):
-                    with self.assertRaises(SystemExit):
+                    with self.assertRaises(SystemExit) as captured_oidc:
                         exec(compile(code, "Task Claim OIDC rejection", "exec"), {})
         self.assertEqual(claim_calls, [])
-        self.assertIn("GitHub Action Claim oidc_request HTTP 401", stderr.getvalue())
-        self.assertNotIn("oidc.example", stderr.getvalue())
-        self.assertNotIn("DO-NOT-PRINT-THIS-SECRET", stderr.getvalue())
+        self.assertIn("GitHub Action Claim oidc_request HTTP 401",
+                      str(captured_oidc.exception.code))
+        self.assertNotIn("oidc.example", str(captured_oidc.exception.code))
+        self.assertNotIn("DO-NOT-PRINT-THIS-SECRET", str(captured_oidc.exception.code))
 
 
 if __name__ == "__main__":
