@@ -64,9 +64,10 @@ try:
         if len(parts) != 2 or not parts[0].startswith("x_") or parts[1] != "BASE TABLE":
             raise ValueError("unexpected tables or views")
         tables.append(parts[0])
-    # A nonempty namespace must at least resemble an existing OpenList schema.
-    if tables and "x_users" not in tables:
-        raise ValueError("unrecognized existing x_ tables")
+    # A lone x_users table is not proof that this is an OpenList database.
+    # The pinned OpenList v4.2.6 migrates these three core models together.
+    if tables and not {"x_users", "x_storages", "x_setting_items"}.issubset(tables):
+        raise ValueError("incomplete or unrecognized existing OpenList schema")
 except (OSError, ValueError, KeyError, IndexError, TypeError,
         subprocess.TimeoutExpired):
     print("OpenList MySQL read-only preflight failed; initialization refused", file=sys.stderr)
