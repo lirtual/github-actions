@@ -61,7 +61,7 @@ jobs:
       - name: Configure Tailnet-only password SSH for the Windows Runner
         shell: pwsh
         env:
-          WINDOWS_ADMIN_PASSWORD: ${{ secrets.WINDOWS_ADMIN_PASSWORD }}
+          SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}
         run: ./.github/scripts/windows-ssh.ps1
       - name: Signed Ready after private SSH is listening
         shell: pwsh
