@@ -51,12 +51,22 @@ $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
 $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 & $Sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
+$EffectiveConfig = & $Sshd -T -C "user=$Username,host=localhost,addr=100.64.0.1"
+if ($LASTEXITCODE -ne 0 -or -not ($EffectiveConfig -contains 'passwordauthentication no') -or
+    -not ($EffectiveConfig -contains 'pubkeyauthentication yes')) {
+    throw 'OpenSSH effective authentication policy is not key-only'
+}
+# On hosted Windows runners sshd may already be running with a stale config.
+# Restart after writing the restricted settings; Start-Service alone won't reload them.
+if ((Get-Service sshd -ErrorAction Stop).Status -eq 'Running') {
+    Stop-Service sshd -ErrorAction Stop
+}
 Set-Service sshd -StartupType Manual
 # Disable broad stock inbound rules BEFORE opening the Tailnet-only one.
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue |
     Disable-NetFirewallRule
 New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName 'Session Actions Tailnet SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 -RemoteAddress '100.64.0.0/10' -InterfaceAlias $Tailnet[0].Name | Out-Null
-Start-Service sshd
+Start-Service sshd -ErrorAction Stop
 if (-not (Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue)) {
     throw 'OpenSSH is not listening'
 }
