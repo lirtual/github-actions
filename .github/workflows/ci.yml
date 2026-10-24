@@ -197,13 +197,24 @@ jobs:
           esac
           marker="$(cat "$RUNNER_TEMP/tunnel-expected")"
           test "$(curl --fail --silent --max-time 2 http://127.0.0.1:8080/)" = "$marker"
-          curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/tunnel-anonymous-body" \
-            --dump-header "$RUNNER_TEMP/tunnel-anonymous-headers" "$url/" >/dev/null
+          status="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/tunnel-anonymous-body" \
+            --dump-header "$RUNNER_TEMP/tunnel-anonymous-headers" --write-out '%{http_code}' "$url/")"
+          test "$status" = 302
+          grep -Eqi '^location: https://login\.trycloudflare\.com/authorize\?' "$RUNNER_TEMP/tunnel-anonymous-headers"
           if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
             echo 'Protected Quick Tunnel exposed the private test origin anonymously' >&2
             exit 1
           fi
-          echo 'Anonymous HTTPS cannot read the protected loopback origin'
+          # An unauthenticated unsafe method must be rejected by cloudflared,
+          # not forwarded to the synthetic HTTP origin.
+          post_status="$(curl --silent --show-error --max-time 15 --request POST \
+            --output "$RUNNER_TEMP/tunnel-anonymous-body" --write-out '%{http_code}' "$url/")"
+          test "$post_status" = 401
+          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
+            echo 'Protected Quick Tunnel exposed the origin on POST' >&2
+            exit 1
+          fi
+          echo 'Anonymous GET redirected to OTP and POST denied'
       - name: Close temporary Tunnel and delete fixture
         if: always()
         shell: bash
