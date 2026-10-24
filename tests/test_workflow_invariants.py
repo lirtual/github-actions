@@ -65,6 +65,10 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertNotIn("WINDOWS_ADMIN_PASSWORD", text)
                     self.assertNotIn("Remove-LocalUser", text)
                     self.assertEqual(text.count("secrets.SESSION_SYSTEM_PASSWORD"), 1)
+                if name == "openlist":
+                    self.assertIn("secrets.OPENLIST_DATABASE_URI", text[join:ready])
+                    self.assertIn("openlist-db-config.py", (ROOT / ".github/scripts/start-openlist.sh").read_text())
+                    self.assertNotIn("secrets.OPENLIST_DATABASE", text)
                 if name == "windows":
                     self.assertNotIn("SESSION_RDP_PASSWORD", text)
                     self.assertIn("windows-rdp.ps1", text[join:ready])
@@ -180,6 +184,78 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("('listenaddress ' + $TailnetAddress + ':22')", text)
         self.assertNotIn("AuthorizedKeysFile", text)
         self.assertNotIn("'AllowUsers sessionuser'", text)
+
+    def test_openlist_mysql_uri_modes_and_validation(self):
+        import runpy
+        parser = runpy.run_path(str(ROOT / ".github/scripts/openlist-db-config.py"))
+        parse = parser["parse_mysql_uri"]
+        base = "mysql://appuser:p%5Fass@db.example.invalid:18691/tenantdb?ssl-mode=REQUIRED"
+        config = parse(base)
+        self.assertEqual(config["type"], "mysql")
+        self.assertEqual(config["host"], "db.example.invalid")
+        self.assertEqual(config["port"], 18691)
+        self.assertEqual(config["name"], "tenantdb")
+        self.assertEqual(config["password"], "p_ass")
+        self.assertEqual(config["table_prefix"], "x_")
+        self.assertEqual(config["ssl_mode"], "skip-verify")
+        verified = parse(base.replace("REQUIRED", "VERIFY_IDENTITY"))
+        self.assertEqual(verified["ssl_mode"], "true")
+        for invalid in [
+            base.replace("REQUIRED", "DISABLED"),
+            base.replace("REQUIRED", "PREFERRED"),
+            base.replace("?ssl-mode=REQUIRED", ""),
+            base + "&extra=1",
+            base.replace("mysql://", "postgres://"),
+            base.replace("/tenantdb?", "/?"),
+            base.replace("appuser", "user@injected"),
+            base.replace("p%5Fass", ""),
+            base.replace("db.example.invalid", "127.0.0.1"),
+        ]:
+            with self.subTest(uri=invalid):
+                with self.assertRaises(ValueError):
+                    parse(invalid)
+
+    def test_openlist_mysql_uri_config_is_private_and_has_no_sqlite_fallback(self):
+        import json
+        import os
+        import stat
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "openlist-data"
+            target.mkdir()
+            config_path = target / "config.json"
+            env = dict(os.environ)
+            env["RUNNER_TEMP"] = temp
+            env["OPENLIST_DATABASE_URI"] = "mysql://openlist:s3cret@mysql.example.invalid:18691/testdb?ssl-mode=REQUIRED"
+            script = ROOT / ".github/scripts/openlist-db-config.py"
+            result = subprocess.run(
+                ["python", str(script), str(config_path)],
+                env=env, text=True, capture_output=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("s3cret", result.stdout + result.stderr)
+            self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
+            data = json.loads(config_path.read_text())
+            self.assertEqual(data["database"]["name"], "testdb")
+            self.assertEqual(data["database"]["ssl_mode"], "skip-verify")
+            self.assertEqual(data["database"]["password"], "s3cret")
+            self.assertNotEqual(data["jwt_secret"], "")
+            result = subprocess.run(
+                ["python", str(script), str(config_path)],
+                env=env, text=True, capture_output=True, timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("s3cret", result.stdout + result.stderr)
+        start = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        self.assertIn("OPENLIST_DATABASE_URI", start)
+        self.assertIn("openlist-db-config.py", start)
+        self.assertIn("openlist admin set", start)
+        self.assertIn("external MySQL initialization failed", start)
+        self.assertNotIn("sqlite3", start)
+        workflow = (ROOT / ".github/workflows/openlist.yml").read_text()
+        self.assertIn("OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}", workflow)
+        self.assertIn('rm -f "$RUNNER_TEMP/openlist-data/config.json"', workflow)
 
     def test_openlist_ready_requires_admin_authentication(self):
         # The real Ubuntu service smoke runs this script with an isolated,
