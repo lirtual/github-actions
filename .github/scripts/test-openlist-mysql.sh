@@ -90,6 +90,43 @@ if [[ ! "$tables" =~ ^[0-9]+$ || "$tables" -lt 1 ]]; then
   exit 1
 fi
 docker rm -f session-openlist >/dev/null
+# Verify that the real OpenList MySQL driver rejects untrusted CA certificates
+# and certificates for a different host, without exposing production Secrets.
+image='openlistteam/openlist@sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64'
+verify_rejected() {
+  local label="$1" data_dir="$2" alternate_host="${3:-}"
+  local extra=()
+  if [[ -n "$alternate_host" ]]; then
+    extra=(--add-host "$alternate_host:$gateway")
+  fi
+  if docker run --rm --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$data_dir,target=/opt/openlist/data" \
+    "${extra[@]}" \
+    --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
+    --entrypoint /bin/sh "$image" -c './openlist admin >/dev/null 2>&1' \
+    >/dev/null 2>&1; then
+    echo "OpenList accepted invalid TLS $label" >&2
+    exit 1
+  fi
+}
+mkdir -m 700 "$tmp/wrong-ca" "$tmp/wrong-host"
+cp -a "$RUNNER_TEMP/openlist-data/." "$tmp/wrong-ca/"
+cp -a "$RUNNER_TEMP/openlist-data/." "$tmp/wrong-host/"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "$tmp/untrusted-key.pem" -out "$tmp/wrong-ca/database-ca.pem" \
+  -subj '/CN=Session Actions Untrusted CI Root' >/dev/null 2>&1
+verify_rejected 'CA' "$tmp/wrong-ca"
+python3 - "$tmp/wrong-host/config.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = json.loads(path.read_text())
+config["database"]["host"] = "wrong-host.invalid"
+path.write_text(json.dumps(config))
+PY
+verify_rejected 'hostname' "$tmp/wrong-host" 'wrong-host.invalid'
+echo 'Invalid CA and hostname rejected by the real OpenList runtime'
 rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
 bash .github/scripts/start-openlist.sh
 second="$(docker exec sa-openlist-mysql-ci mysql -N -s --protocol=socket \
