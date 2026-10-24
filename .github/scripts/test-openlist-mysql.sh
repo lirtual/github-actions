@@ -47,7 +47,10 @@ docker run -d --rm --name sa-openlist-mysql-ci \
   --require-secure-transport=ON >/dev/null
 ready=''
 for attempt in $(seq 1 30); do
-  if docker exec sa-openlist-mysql-ci mysqladmin ping --protocol=socket \
+  # MySQL's entrypoint runs a temporary Unix-socket bootstrap server
+  # before the final TLS-enabled TCP server; never accept that early socket.
+  if docker exec sa-openlist-mysql-ci mysqladmin ping --protocol=tcp \
+      -h 127.0.0.1 --ssl-mode=REQUIRED \
       -u root --password=ci-temporary-root --silent >/dev/null 2>&1; then
     ready=yes
     break
