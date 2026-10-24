@@ -58,7 +58,6 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("secrets.SESSION_SSH_PASSWORD",
                                   text[join:ready])
                     self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
-                    self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
                     self.assertNotIn("WINDOWS_ADMIN_PASSWORD", text)
                     self.assertNotIn("Remove-LocalUser", text)
                     self.assertEqual(text.count("secrets.SESSION_SSH_PASSWORD"), 1)
