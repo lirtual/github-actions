@@ -92,7 +92,7 @@ def signed_status_payload(attempt, stage):
         if not locator.is_file() or locator.stat().st_size > 180:
             raise SafeProtocolError("session_locator_invalid")
         value = locator.read_text(encoding="ascii").strip()
-        if not re.fullmatch(r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.trycloudflare\\.com/?", value):
+        if not re.fullmatch(r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com/?", value):
             raise SafeProtocolError("session_locator_invalid")
         payload["sessionUrl"] = value
     return payload
