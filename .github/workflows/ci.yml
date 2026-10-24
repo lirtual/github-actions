@@ -104,8 +104,17 @@ jobs:
             (Resolve-Path '.github/scripts/windows-ssh.ps1').Path,
             [ref]$tokens, [ref]$errorsFound) | Out-Null
           if ($errorsFound.Count -ne 0) { throw 'Invalid Windows SSH configuration script' }
-          if (-not (Get-Command New-LocalUser -ErrorAction SilentlyContinue)) {
-            throw 'Local user management unavailable'
+          if (-not (Get-Command Set-LocalUser -ErrorAction SilentlyContinue)) {
+            throw 'Local password management unavailable'
+          }
+          $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $Account = Get-LocalUser -Name ([Environment]::UserName) -ErrorAction Stop
+          if ($Account.SID.Value -ne $Identity.User.Value -or -not $Account.Enabled) {
+            throw 'Default Windows Runner account is not a matching enabled local user'
+          }
+          if (-not ([Security.Principal.WindowsPrincipal]::new($Identity)).IsInRole(
+              [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            throw 'Default Windows Runner account is not an administrator'
           }
           if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
             throw 'Windows firewall tooling unavailable'
