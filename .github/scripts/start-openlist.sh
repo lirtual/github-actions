@@ -11,6 +11,62 @@ fi
 umask 077
 mkdir -p "$RUNNER_TEMP/openlist-data"
 python3 .github/scripts/openlist-db-config.py "$RUNNER_TEMP/openlist-data/config.json"
+# Read-only schema guard before OpenList CLI can create tables or reset admin.
+# Reuse the MySQL client provided by the GitHub-hosted Ubuntu Runner.
+python3 - "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["database"]
+    name = config["name"]
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", name):
+        raise ValueError("unsafe schema name")
+    # Credentials stay in subprocess environment, never command-line arguments or logs.
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ["RUNNER_TEMP"],
+        "MYSQL_PWD": config["password"],
+    }
+    client = [
+        "mysql", "--no-defaults", "--protocol=TCP",
+        "--host=" + config["host"], "--port=" + str(config["port"]),
+        "--user=" + config["user"], "--connect-timeout=8",
+        "--ssl-mode=VERIFY_IDENTITY", "--ssl-ca=" + sys.argv[2],
+        "--database=information_schema", "--batch", "--skip-column-names",
+    ]
+
+    def read(query):
+        result = subprocess.run(
+            client + ["--execute=" + query], env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=15,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ValueError("read-only schema inspection unavailable")
+        return result.stdout.strip()
+
+    if read("SELECT COUNT(*) FROM information_schema.schemata "
+            "WHERE schema_name='" + name + "'") != "1":
+        raise ValueError("target schema does not exist")
+    # Inspect both tables and views; never accept unrelated namespaces.
+    tables = read("SELECT table_name FROM information_schema.tables "
+                  "WHERE table_schema='" + name + "' ORDER BY table_name LIMIT 257").splitlines()
+    if len(tables) > 256 or any(not t.startswith("x_") for t in tables):
+        raise ValueError("unexpected tables")
+    # A nonempty namespace must at least resemble an existing OpenList schema.
+    if tables and "x_users" not in tables:
+        raise ValueError("unrecognized existing x_ tables")
+except (OSError, ValueError, KeyError, IndexError, TypeError,
+        subprocess.TimeoutExpired):
+    print("OpenList MySQL read-only preflight failed; initialization refused", file=sys.stderr)
+    sys.exit(1)
+print("OpenList MySQL read-only preflight passed")
+PY
 unset OPENLIST_DATABASE_URI OPENLIST_DATABASE_CA
 export OPENLIST_ADMIN_PASSWORD="$SESSION_SERVICE_PASSWORD"
 unset SESSION_SERVICE_PASSWORD
