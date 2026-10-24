@@ -130,6 +130,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn('ListenAddress $tailnet_ip', script)
         self.assertIn('sudo /usr/sbin/sshd -t', script)
         self.assertIn('sudo systemctl restart ssh', script)
+        self.assertIn('sudo ss -H -ltn', script)
+        self.assertIn('"$ssh_listeners" != "$tailnet_ip:22"', script)
         self.assertIn('sudo systemctl stop ssh', workflow)
         self.assertIn('SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}', workflow)
         self.assertNotIn('16 characters', script)
@@ -166,7 +168,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName", text)
         self.assertIn("-LocalAddress $TailnetAddress -RemoteAddress '100.64.0.0/10' -InterfaceAlias", text)
         self.assertIn("('ListenAddress ' + $TailnetAddress)", text)
-        self.assertIn("Get-NetTCPConnection -State Listen -LocalPort 22 -LocalAddress $TailnetAddress", text)
+        self.assertIn("Get-NetTCPConnection -State Listen -LocalPort 22", text)
+        self.assertIn("$Listeners.Count -ne 1", text)
+        self.assertIn("$Listeners[0].LocalAddress -ne $TailnetAddress", text)
         self.assertIn("Disable-NetFirewallRule", text)
 
     def test_windows_sshd_reloads_password_only_policy(self):
