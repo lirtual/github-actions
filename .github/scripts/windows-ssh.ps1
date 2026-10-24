@@ -45,12 +45,20 @@ $Baseline = [IO.File]::ReadAllText($Config)
 $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
     'PubkeyAuthentication yes' + [Environment]::NewLine +
     'PermitEmptyPasswords no' + [Environment]::NewLine +
+    'SyslogFacility LOCAL0' + [Environment]::NewLine +
+    'LogLevel DEBUG3' + [Environment]::NewLine +
     'AllowUsers sessionuser' + [Environment]::NewLine +
     ('AuthorizedKeysFile "' + $Keys + '"') + [Environment]::NewLine
 [IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
 $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 & $Sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
+# Temporary SSH diagnosis: inspect the daemon's EFFECTIVE key lookup path.
+$EffectiveKeys = @(& $Sshd -T -C 'user=sessionuser,host=localhost,addr=127.0.0.1' | Where-Object { $_ -match '^authorizedkeysfile ' })
+if ($LASTEXITCODE -ne 0 -or $EffectiveKeys.Count -ne 1) { throw 'OpenSSH effective config unavailable' }
+Write-Output ('OpenSSH effective ' + $EffectiveKeys[0])
+Write-Output ('SSH key owner = ' + (Get-Acl $Keys).Owner)
+
 Set-Service sshd -StartupType Manual
 # Disable broad stock inbound rules BEFORE opening the Tailnet-only one.
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue |
