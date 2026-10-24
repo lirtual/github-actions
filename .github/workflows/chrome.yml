@@ -48,10 +48,8 @@ jobs:
         run: python3 .github/scripts/session_action.py start
       - name: Claim pinned GitHub physical Run
         run: python3 .github/scripts/session_action.py claim
-      - name: Start password-protected chrome service
+      - name: Start loopback-only chrome service
         shell: bash
-        env:
-          SESSION_SERVICE_PASSWORD: ${{ secrets.SESSION_SERVICE_PASSWORD }}
         run: bash .github/scripts/start-chrome.sh
       - name: Start Cloudflare Tunnel and verify HTTPS route
         shell: bash
@@ -81,4 +79,4 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/session-service.pid")" 2>/dev/null || true
           fi
           docker rm --force session-chrome session-openlist >/dev/null 2>&1 || true
-          rm -f "$RUNNER_TEMP/session-service-password" "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" "$RUNNER_TEMP/cloudflared"
+          rm -f "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" "$RUNNER_TEMP/cloudflared"
