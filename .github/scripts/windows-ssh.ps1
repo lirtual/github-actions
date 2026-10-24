@@ -45,26 +45,34 @@ $Baseline = [IO.File]::ReadAllText($Config)
 $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
     'PubkeyAuthentication yes' + [Environment]::NewLine +
     'PermitEmptyPasswords no' + [Environment]::NewLine +
-    'SyslogFacility LOCAL0' + [Environment]::NewLine +
-    'LogLevel DEBUG3' + [Environment]::NewLine +
     'AllowUsers sessionuser' + [Environment]::NewLine +
     ('AuthorizedKeysFile "' + $Keys + '"') + [Environment]::NewLine
 [IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
 $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 & $Sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
-# Temporary SSH diagnosis: inspect the daemon's EFFECTIVE key lookup path.
-$EffectiveKeys = @(& $Sshd -T -C 'user=sessionuser,host=localhost,addr=127.0.0.1' | Where-Object { $_ -match '^authorizedkeysfile ' })
-if ($LASTEXITCODE -ne 0 -or $EffectiveKeys.Count -ne 1) { throw 'OpenSSH effective config unavailable' }
-Write-Output ('OpenSSH effective ' + $EffectiveKeys[0])
-Write-Output ('SSH key owner = ' + (Get-Acl $Keys).Owner)
-
+$EffectiveConfig = & $Sshd -T -C "user=$Username,host=localhost,addr=100.64.0.1"
+# Diagnostic output contains only public sshd policy names and yes/no values.
+# Do not print the SSH key, credentials, or unfiltered sshd debug logs.
+$EffectiveAuth = @($EffectiveConfig | Where-Object {
+    $_ -match '^(passwordauthentication|pubkeyauthentication)[[:space:]]'
+})
+Write-Output ('OpenSSH effective auth: ' + ($EffectiveAuth -join '; '))
+if ($LASTEXITCODE -ne 0 -or -not ($EffectiveConfig -contains 'passwordauthentication no') -or
+    -not ($EffectiveConfig -contains 'pubkeyauthentication yes')) {
+    throw 'OpenSSH effective authentication policy is not key-only'
+}
+# On hosted Windows runners sshd may already be running with a stale config.
+# Restart after writing the restricted settings; Start-Service alone won't reload them.
+if ((Get-Service sshd -ErrorAction Stop).Status -eq 'Running') {
+    Stop-Service sshd -ErrorAction Stop
+}
 Set-Service sshd -StartupType Manual
 # Disable broad stock inbound rules BEFORE opening the Tailnet-only one.
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue |
     Disable-NetFirewallRule
 New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName 'Session Actions Tailnet SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 -RemoteAddress '100.64.0.0/10' -InterfaceAlias $Tailnet[0].Name | Out-Null
-Start-Service sshd
+Start-Service sshd -ErrorAction Stop
 if (-not (Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue)) {
     throw 'OpenSSH is not listening'
 }

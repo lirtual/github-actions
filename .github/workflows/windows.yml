@@ -65,27 +65,6 @@ jobs:
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh
         run: python .github/scripts/session_action.py hold
-      - name: Read bounded SSH rejection diagnosis
-        if: always()
-        shell: pwsh
-        run: |
-          $folder = Join-Path $env:ProgramData 'ssh\logs'
-          if (-not (Test-Path $folder)) {
-            Write-Output 'OpenSSH file logs unavailable'
-          } else {
-            $logs = @(Get-ChildItem -Path $folder -Filter 'sshd*.log' -ErrorAction SilentlyContinue)
-            foreach ($log in $logs | Select-Object -First 2) {
-              $events = @(Get-Content $log.FullName -Tail 400 -ErrorAction SilentlyContinue |
-                Where-Object { $_ -match '(?i)authorized_keys|authorizedkeysfile|userauth_pubkey|bad ownership|permissions|authentication refused|failed publickey|key not found|could not open' } |
-                Select-Object -Last 35)
-              foreach ($entry in $events) {
-                $safe = $entry -replace '(\d{1,3}\.){3}\d{1,3}', '[IP]' -replace 'SHA256:[A-Za-z0-9+/=]+', 'SHA256:[REDACTED]'
-                if ($safe.Length -gt 400) { $safe = $safe.Substring(0, 400) }
-                Write-Output $safe
-              }
-              Write-Output ("SSH relevant diagnostic lines: " + $events.Count)
-            }
-          }
       - name: Clean up restricted SSH account and firewall
         if: always()
         shell: pwsh

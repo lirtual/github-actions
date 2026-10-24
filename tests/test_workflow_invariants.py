@@ -90,6 +90,26 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("icacls.exe $Directory '/setowner' $Username", text)
         self.assertIn("throw 'SSH key owner update failed'", text)
 
+    def test_windows_sshd_is_reloaded_with_key_only_policy(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        config = text.index("& $Sshd -t")
+        effective = text.index("& $Sshd -T -C")
+        stop = text.index("Stop-Service sshd -ErrorAction Stop")
+        start = text.index("Start-Service sshd -ErrorAction Stop")
+        self.assertLess(config, effective)
+        self.assertLess(effective, stop)
+        self.assertLess(stop, start)
+        self.assertIn("passwordauthentication no", text)
+        self.assertIn("pubkeyauthentication yes", text)
+
+    def test_windows_sshd_emits_only_safe_effective_policy_diagnostics(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("OpenSSH effective auth: ", text)
+        self.assertIn("passwordauthentication|pubkeyauthentication", text)
+        self.assertLess(text.index("OpenSSH effective auth: "),
+                        text.index("OpenSSH effective authentication policy is not key-only"))
+        self.assertNotIn("LogLevel DEBUG3", text)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
