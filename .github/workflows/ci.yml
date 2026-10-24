@@ -127,6 +127,83 @@ jobs:
           docker rm --force session-openlist session-chrome >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/session-service-password"
 
+  smoke-protected-quick-tunnel:
+    # No Actions Secrets, Workflow MCP access or production services. The
+    # external endpoint serves only a disposable, synthetic CI marker.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Start synthetic loopback origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tunnel-fixture"
+          python3 - <<'PY'
+          import secrets
+          import os
+          from pathlib import Path
+          temp = Path(os.environ["RUNNER_TEMP"])
+          value = "CI_ORIGIN_ONLY_" + secrets.token_hex(18)
+          (temp / "tunnel-fixture" / "index.html").write_text(value)
+          (temp / "tunnel-expected").write_text(value)
+          PY
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory "$RUNNER_TEMP/tunnel-fixture" \
+            > "$RUNNER_TEMP/tunnel-fixture.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/tunnel-fixture.pid"
+          for i in 1 2 3 4 5; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:8080/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'Synthetic origin did not start' >&2
+          exit 1
+      - name: Launch email-OTP protected Quick Tunnel
+        shell: bash
+        env:
+          SESSION_SERVICE: code-server
+          SESSION_TUNNEL_ALLOWED_EMAIL: ${{ vars.SESSION_TUNNEL_ALLOWED_EMAIL }}
+        run: bash .github/scripts/start-tunnel.sh
+      - name: Assert unauthenticated HTTPS cannot reach synthetic origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(cat "$RUNNER_TEMP/session-tunnel-url")"
+          case "$url" in
+            https://*.trycloudflare.com) ;;
+            *) echo 'Unexpected Quick Tunnel hostname' >&2; exit 1 ;;
+          esac
+          marker="$(cat "$RUNNER_TEMP/tunnel-expected")"
+          test "$(curl --fail --silent --max-time 2 http://127.0.0.1:8080/)" = "$marker"
+          curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/tunnel-anonymous-body" \
+            --dump-header "$RUNNER_TEMP/tunnel-anonymous-headers" "$url/" >/dev/null
+          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
+            echo 'Protected Quick Tunnel exposed the private test origin anonymously' >&2
+            exit 1
+          fi
+          echo 'Anonymous HTTPS cannot read the protected loopback origin'
+      - name: Close temporary Tunnel and delete fixture
+        if: always()
+        shell: bash
+        run: |
+          if test -s "$RUNNER_TEMP/session-tunnel.pid"; then
+            kill "$(cat "$RUNNER_TEMP/session-tunnel.pid")" 2>/dev/null || true
+          fi
+          if test -s "$RUNNER_TEMP/tunnel-fixture.pid"; then
+            kill "$(cat "$RUNNER_TEMP/tunnel-fixture.pid")" 2>/dev/null || true
+          fi
+          rm -f "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" \
+            "$RUNNER_TEMP/session-tunnel.pid" "$RUNNER_TEMP/cloudflared" \
+            "$RUNNER_TEMP/tunnel-expected" "$RUNNER_TEMP/tunnel-anonymous-body" \
+            "$RUNNER_TEMP/tunnel-anonymous-headers" "$RUNNER_TEMP/tunnel-fixture.pid" \
+            "$RUNNER_TEMP/tunnel-fixture.log"
+          rm -rf "$RUNNER_TEMP/tunnel-fixture"
+
   smoke-windows-prerequisites:
     runs-on: windows-latest
     timeout-minutes: 8
