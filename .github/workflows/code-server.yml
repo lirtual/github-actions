@@ -64,6 +64,7 @@ jobs:
         shell: bash
         env:
           SESSION_SERVICE: code-server
+          SESSION_TUNNEL_ALLOWED_EMAIL: ${{ vars.SESSION_TUNNEL_ALLOWED_EMAIL }}
         run: bash .github/scripts/start-tunnel.sh
       - name: Upload temporary Tunnel locator
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
