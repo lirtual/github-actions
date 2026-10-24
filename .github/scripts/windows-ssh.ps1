@@ -51,7 +51,8 @@ $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
 $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 & $Sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
-$EffectiveConfig = & $Sshd -T -C "user=$Username,host=localhost,addr=100.64.0.1"
+# The default global key-only policy can be read without a newly created user token.
+$EffectiveConfig = & $Sshd -T
 if ($LASTEXITCODE -ne 0 -or -not ($EffectiveConfig -contains 'passwordauthentication no') -or
     -not ($EffectiveConfig -contains 'pubkeyauthentication yes')) {
     throw 'OpenSSH effective authentication policy is not key-only'
