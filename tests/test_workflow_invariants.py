@@ -55,64 +55,61 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("secrets.OPENLIST_ADMIN_PASSWORD",
                                   text[join:ready])
                 if name == "windows":
-                    self.assertIn("vars.SESSION_SSH_PUBLIC_KEY",
+                    self.assertIn("secrets.WINDOWS_ADMIN_PASSWORD",
                                   text[join:ready])
+                    self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
+                    self.assertNotIn("Remove-LocalUser", text)
+                    self.assertEqual(text.count("secrets.WINDOWS_ADMIN_PASSWORD"), 1)
 
-    def test_windows_ssh_does_not_shadow_powershell_home(self):
-        # Real windows-latest failed because PowerShell treats $Home and $HOME
-        # as the same read-only automatic variable; source parsing misses it.
+    def test_windows_ssh_uses_default_runner_account_not_a_new_user(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        self.assertNotRegex(text, r"(?im)^\s*\$home\s*=")
-        self.assertIn("$UserHome = Join-Path", text)
-        self.assertIn("Join-Path $UserHome '.ssh'", text)
+        self.assertIn("$Username = [Environment]::UserName", text)
+        self.assertIn("Get-LocalUser -Name $Username", text)
+        self.assertIn("$Account.SID.Value -ne $Identity.User.Value", text)
+        self.assertIn("[Security.Principal.WindowsBuiltInRole]::Administrator", text)
+        self.assertIn("Set-LocalUser -Name $Username -Password $SecurePassword", text)
+        self.assertNotIn("New-LocalUser", text)
+        self.assertNotIn("Remove-LocalUser", text)
+        self.assertNotIn("sessionuser", text)
 
-    def test_windows_ssh_keeps_administrators_for_key_acl_setup(self):
-        # The runner must still be able to set authorized_keys permissions
-        # after disabling inheritance on the parent .ssh directory.
+    def test_windows_password_is_secret_and_fails_closed(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        self.assertIn("'*S-1-5-32-544:(OI)(CI)F'", text)
-        self.assertIn("'*S-1-5-32-544:F'", text)
-        self.assertIn("'*S-1-5-18:F'", text)
-
-    def test_windows_tailnet_firewall_rule_has_required_display_name(self):
-        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName", text)
-        self.assertIn("-RemoteAddress '100.64.0.0/10' -InterfaceAlias", text)
-
-    def test_windows_sshd_uses_absolute_authorized_keys_path(self):
-        # Newly created Windows local accounts might not have a user profile
-        # yet, so the default relative .ssh/authorized_keys can miss the key.
-        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        self.assertIn("('AuthorizedKeysFile \"' + $Keys + '\"')", text)
-        self.assertIn("'AllowUsers sessionuser'", text)
-        self.assertIn("Session local account unexpectedly disabled", text)
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("$env:WINDOWS_ADMIN_PASSWORD", text)
+        self.assertIn("$Password.Length -lt 16", text)
+        self.assertIn("$env:WINDOWS_ADMIN_PASSWORD = $null", text)
+        self.assertIn("secrets.WINDOWS_ADMIN_PASSWORD", workflow)
+        self.assertNotIn("vars.WINDOWS_ADMIN_PASSWORD", workflow)
+        self.assertNotIn("SESSION_SSH_PUBLIC_KEY", workflow + text)
+        self.assertNotIn("Write-Output $Password", text)
+        self.assertNotIn("Write-Host $Password", text)
         self.assertNotIn("LogLevel DEBUG3", text)
         self.assertNotIn("SyslogFacility LOCAL0", text)
-        self.assertNotIn("OpenSSH effective policy:", text)
-        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertNotIn("Classify bounded SSH authentication diagnostics", workflow)
 
-    def test_windows_authorized_keys_owned_by_session_user(self):
-        # Windows OpenSSH checks the owner as well as strict file ACLs.
+    def test_windows_tailnet_firewall_and_listener_are_scoped(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        self.assertIn("icacls.exe $Keys '/setowner' $Username", text)
-        self.assertIn("icacls.exe $Directory '/setowner' $Username", text)
-        self.assertIn("throw 'SSH key owner update failed'", text)
+        self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName", text)
+        self.assertIn("-LocalAddress $TailnetAddress -RemoteAddress '100.64.0.0/10' -InterfaceAlias", text)
+        self.assertIn("('ListenAddress ' + $TailnetAddress)", text)
+        self.assertIn("Get-NetTCPConnection -State Listen -LocalPort 22 -LocalAddress $TailnetAddress", text)
+        self.assertIn("Disable-NetFirewallRule", text)
 
-    def test_windows_sshd_is_reloaded_with_key_only_policy(self):
+    def test_windows_sshd_reloads_password_only_policy(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         config = text.index("& $Sshd -t")
         effective = text.index("$EffectiveConfig = & $Sshd -T")
-        self.assertNotIn("& $Sshd -T -C", text)
         stop = text.index("Stop-Service sshd -ErrorAction Stop")
         start = text.index("Start-Service sshd -ErrorAction Stop")
         self.assertLess(config, effective)
         self.assertLess(effective, stop)
         self.assertLess(stop, start)
-        self.assertIn("passwordauthentication no", text)
-        self.assertIn("pubkeyauthentication yes", text)
-        self.assertIn("'AllowGroups users'", text)
-        self.assertIn("'AllowUsers sessionuser'", text)
+        self.assertIn("'PasswordAuthentication yes'", text)
+        self.assertIn("'PubkeyAuthentication no'", text)
+        self.assertIn("'AuthenticationMethods password'", text)
+        self.assertIn("('AllowUsers ' + $Username.ToLowerInvariant())", text)
+        self.assertIn("('listenaddress ' + $TailnetAddress + ':22')", text)
+        self.assertNotIn("AuthorizedKeysFile", text)
+        self.assertNotIn("'AllowUsers sessionuser'", text)
 
     def test_openlist_ready_requires_admin_authentication(self):
         # The real Ubuntu service smoke runs this script with an isolated,
