@@ -19,8 +19,8 @@ if (Get-LocalUser -Name $Username -ErrorAction SilentlyContinue) {
 $Random = [Security.Cryptography.RandomNumberGenerator]::GetBytes(48)
 $Password = [Convert]::ToBase64String($Random) | ConvertTo-SecureString -AsPlainText -Force
 New-LocalUser -Name $Username -Password $Password -PasswordNeverExpires | Out-Null
-$Home = Join-Path $env:SystemDrive "Users\$Username"
-$Directory = Join-Path $Home '.ssh'
+$UserHome = Join-Path $env:SystemDrive "Users\$Username"
+$Directory = Join-Path $UserHome '.ssh'
 New-Item -Path $Directory -ItemType Directory -Force | Out-Null
 $Keys = Join-Path $Directory 'authorized_keys'
 [IO.File]::WriteAllText($Keys, $PublicKey + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
