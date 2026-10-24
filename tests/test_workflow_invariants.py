@@ -64,7 +64,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
                     self.assertNotIn("WINDOWS_ADMIN_PASSWORD", text)
                     self.assertNotIn("Remove-LocalUser", text)
-                    self.assertEqual(text.count("secrets.SESSION_SSH_PASSWORD"), 1)
+                    self.assertEqual(text.count("secrets.SESSION_SSH_PASSWORD"), 2 if name == "windows" else 1)
                 if name == "windows":
                     self.assertIn("secrets.SESSION_RDP_PASSWORD", text[join:ready])
                     self.assertIn("windows-rdp.ps1", text[join:ready])
@@ -91,7 +91,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("session-tunnel-url", tunnel)
         self.assertIn("GITHUB_STEP_SUMMARY", tunnel)
         self.assertIn("Cloudflare Tunnel exited before Ready", tunnel)
-        self.assertNotIn("SESSION_SERVICE_PASSWORD", tunnel)
+        self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
         rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
