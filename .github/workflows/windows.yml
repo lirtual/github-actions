@@ -61,13 +61,11 @@ jobs:
       - name: Configure Tailnet-only password SSH for the Windows Runner
         shell: pwsh
         env:
-          SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}
+          SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
         run: ./.github/scripts/windows-ssh.ps1
       - name: Enable Windows RDP using the existing Runner account
         shell: pwsh
         env:
-          SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}
-          SESSION_RDP_PASSWORD: ${{ secrets.SESSION_RDP_PASSWORD }}
         run: ./.github/scripts/windows-rdp.ps1
       - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
