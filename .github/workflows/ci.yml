@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [chrome, code-server, openlist]
+        service: [chrome, code-server]
     steps:
       - name: Checkout without retained credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
