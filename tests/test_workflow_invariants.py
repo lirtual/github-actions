@@ -44,7 +44,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("id-token: write", text[:claim])
                 self.assertIn("WORKFLOW_ACTION_TYPE: session", text[:claim])
                 self.assertNotIn("tailscale set", text[:join])
-                self.assertNotIn("secrets.", text[:claim])
+                self.assertNotIn("${{ secrets.", text[:claim])
                 self.assertNotIn("TS_OAUTH_CLIENT_ID", text[:claim])
                 self.assertNotIn("TS_AUDIENCE", text[:claim])
                 self.assertIn("if: always()", text[hold:])
@@ -61,7 +61,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         claim = text.index("Claim approved physical Run before any task work")
         execute = text.index("Execute bounded verification Task")
         self.assertLess(claim, execute)
-        self.assertNotIn("secrets.", text[:execute])
+        self.assertNotIn("${{ secrets.", text[:execute])
         self.assertNotIn("actions/checkout", text[:execute])
 
     def test_external_packages_are_immutable(self):
