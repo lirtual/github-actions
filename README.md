@@ -15,9 +15,9 @@ Before an owner-approved live acceptance, the repository owner must configure th
 
 The action retries only temporary signed Claim HTTP 503 responses with fresh OIDC tokens, accepts a signed `already_claimed` replay after a lost HTTP receipt, and permanently rejects HTTP 403. It fails closed if either variable, a valid GitHub-issued OIDC token, or the D1 Attempt claim is unavailable. It never reads application secrets or joins Tailscale.
 
-Live `workflow_dispatch` requires the workflow definition on GitHub's **default branch** and an owner-reviewed, SHA-bound Git tag. A Draft PR and passing source tests do **not** satisfy that release requirement. Do not merge, create production credentials, or deploy as part of this acceptance fixture.
+Live `workflow_dispatch` requires the workflow definition on GitHub's **default branch** and an owner-reviewed, SHA-bound Git tag. The existing protected `v0.1.1` tag covers Claim diagnostics, but a passing source CI or negative Claim test does **not** prove an approved Task execution.
 
-## Five native Session Actions (Draft)
+## Five native Session Actions
 
 Each workflow lives in its own file and uses the same minimal GitHub OIDC → Workflow MCP Claim → private network setup → verified Ready → bounded hold → cleanup sequence:
 
@@ -43,6 +43,8 @@ The three internal workflow_dispatch inputs `attempt_id`, `dispatch_id`, `capabi
 - Tailnet: configure a narrowly scoped `tag:session-actions`, an appropriate GitHub workload identity trust policy, ACL grants, and Tailscale SSH rules for the intended identities. The tag does **not** by itself grant SSH or access to other devices.
 - Workflow MCP: the signed Claim and Ready endpoints, GitHub Git ref/commit approval, physical Run identity, D1 migrations, four active slots, expiry monitoring and cancellation must be deployed and verified separately.
 
+The signed **Claim runs before** the pinned Tailscale Action, SSH authorization, service secrets and `ready`. An unregistered direct `workflow_dispatch` must stop at Claim; its GitHub Job failure is an expected security result, not proof that the private Session was started. The Tailscale federation needs a client ID, audience, `auth_keys` scope limited to `tag:session-actions`, and an explicit GitHub OIDC trust policy; Tailscale's own [workload identity guide](https://tailscale.com/docs/features/workload-identity-federation) describes the required identity exchange. Do not grant `tag:session-actions` access to unrelated nodes.
+
 Only loopback sockets are used for Chrome, code-server and OpenList. From an authenticated Tailscale SSH connection to the ephemeral node, forward `localhost:9222`, `localhost:8080` or `localhost:5244` respectively. Neither CDP nor code-server has independent HTTP authentication in these fixtures, **so never publish or forward these ports on a public interface**. Restrict Tailscale SSH in tailnet policy.
 
 Windows uses a non-admin temporary user with key-only login and a firewall scoped to the Tailscale adapter. There is no claim of interactive RDP or GUI access until proven in a real Windows-hosted Runner. The OpenList container uses ephemeral Runner-local storage; all Session data is destroyed when the GitHub Job ends. This is intentionally not a storage backup or permanent remote computer.
@@ -51,6 +53,6 @@ The GitHub Job has a literal `timeout-minutes: 330` maximum from its actual star
 
 ### Acceptance and publication gate
 
-All five workflows are **Draft code**, not provisioned devices. PR CI checks all YAML with Actionlint, Python syntax and protocol unit tests, Windows PowerShell source parsing, **actual `windows-latest` runner prerequisites**, and secret-free real Ubuntu Runner startup of Chrome, code-server and OpenList on `127.0.0.1`. Signed Ready has a bounded retry for temporary GitHub physical-status inconsistency (`503`) but fails immediately on `403`. These checks do **not** validate Tailnet OIDC grants, real SSH/port-forwarding reachability, Windows SSH account/firewall activation, OpenList login, or a real GitHub `workflow_dispatch` → signed Ready → cancellation lifecycle.
+The five Session Action definitions are merged, but **not yet verified as live Tailnet Sessions**. PR CI checks all YAML with Actionlint, Python syntax and protocol unit tests, Windows PowerShell source parsing, **actual `windows-latest` runner prerequisites**, and secret-free real Ubuntu Runner startup of Chrome, code-server and OpenList on `127.0.0.1`. Signed Ready has a bounded retry for temporary GitHub physical-status inconsistency (`503`) but fails immediately on `403`. These checks do **not** validate Tailnet OIDC grants, real SSH/port-forwarding reachability, Windows SSH account/firewall activation, OpenList login, or a real GitHub `workflow_dispatch` → signed Ready → cancellation lifecycle.
 
-No merge, protected/tag release, production Cloudflare Worker deploy, D1 migration, GitHub secrets, Tailscale trust configuration, actual physical sessions or live E2E should occur without their separate security and release review. Do not set up a public endpoint as a workaround.
+Release and acceptance are separate gates. Keep production D1 changes owner-executed, and never bypass the Worker release check for an unresolved or indeterminate Run. Before activating a Session, configure only the approved GitHub/Tailscale workload identity, narrow tag/SSH policy and required private credentials. Do not use a public endpoint as a workaround.
