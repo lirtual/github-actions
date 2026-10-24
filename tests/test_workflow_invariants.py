@@ -111,6 +111,19 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("'AllowGroups users'", text)
         self.assertIn("'AllowUsers sessionuser'", text)
 
+    def test_openlist_ready_requires_admin_authentication(self):
+        # The real Ubuntu service smoke runs this script with an isolated,
+        # non-production password; Ready cannot rely on homepage HTTP 200.
+        startup = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        self.assertIn('OPENLIST_ADMIN_PASSWORD', startup)
+        self.assertIn('/api/auth/login', startup)
+        self.assertIn('result.get("code") == 200', startup)
+        self.assertIn('get("token")', startup)
+        self.assertIn('OpenList admin login verification failed', startup)
+        self.assertNotIn('print(password)', startup)
+        self.assertNotIn('print(result)', startup)
+        self.assertNotIn('print(payload)', startup)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)

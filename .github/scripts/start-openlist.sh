@@ -17,3 +17,33 @@ for _ in $(seq 1 45); do
   sleep 2
 done
 test "$ready" = true
+# Ready must mean the configured ephemeral admin can actually log in.
+# Never emit the password, session token, or API response to Actions logs.
+python3 - <<'PY'
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+password = os.environ["OPENLIST_ADMIN_PASSWORD"]
+url = "http://127.0.0.1:5244/api/auth/login"
+payload = json.dumps({"username": "admin", "password": password}).encode()
+for attempt in range(10):
+    try:
+        request = urllib.request.Request(
+            url, data=payload, headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=4) as response:
+            result = json.load(response)
+        if result.get("code") == 200 and (result.get("data") or {}).get("token"):
+            print("OpenList admin login validated")
+            break
+    except (OSError, ValueError, TypeError):
+        pass
+    if attempt != 9:
+        time.sleep(2)
+else:
+    raise SystemExit("OpenList admin login verification failed")
+PY
