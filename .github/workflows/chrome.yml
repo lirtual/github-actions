@@ -48,13 +48,6 @@ jobs:
         run: python3 .github/scripts/session_action.py start
       - name: Claim pinned GitHub physical Run
         run: python3 .github/scripts/session_action.py claim
-      - name: Join private Tailnet
-        uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf
-        with:
-          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ vars.TS_AUDIENCE }}
-          tags: tag:session-actions
-          hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
       - name: Start password-protected chrome service
         shell: bash
         env:
@@ -89,4 +82,3 @@ jobs:
           fi
           docker rm --force session-chrome session-openlist >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/session-service-password" "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" "$RUNNER_TEMP/cloudflared"
-          sudo tailscale set --ssh=false || true
