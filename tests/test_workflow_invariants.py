@@ -54,12 +54,34 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 if name == "openlist":
                     self.assertIn("secrets.OPENLIST_ADMIN_PASSWORD",
                                   text[join:ready])
-                if name == "windows":
-                    self.assertIn("secrets.WINDOWS_ADMIN_PASSWORD",
+                if name in ("linux", "windows"):
+                    self.assertIn("secrets.SESSION_SSH_PASSWORD",
                                   text[join:ready])
                     self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
+                    self.assertNotIn("SESSION_SSH_PASSWORD", text)
                     self.assertNotIn("Remove-LocalUser", text)
-                    self.assertEqual(text.count("secrets.WINDOWS_ADMIN_PASSWORD"), 1)
+                    self.assertEqual(text.count("secrets.SESSION_SSH_PASSWORD"), 1)
+
+    def test_ubuntu_uses_existing_runner_user_and_real_password_ssh(self):
+        workflow = (ROOT / ".github/workflows/linux.yml").read_text()
+        script = (ROOT / ".github/scripts/linux-ssh.sh").read_text()
+        self.assertIn('account="$(id -un)"', script)
+        self.assertIn('printf \'%s:%s\\n\' "$account" "$SESSION_SSH_PASSWORD" | sudo chpasswd', script)
+        self.assertIn('sudo tailscale set --ssh=false', script)
+        self.assertNotIn('sudo tailscale set --ssh\n', workflow)
+        self.assertNotIn('useradd', script)
+        self.assertNotIn('adduser', script)
+        self.assertNotIn('New-LocalUser', script)
+        self.assertIn('PasswordAuthentication yes', script)
+        self.assertIn('PubkeyAuthentication no', script)
+        self.assertIn('AuthenticationMethods password', script)
+        self.assertIn('ListenAddress $tailnet_ip', script)
+        self.assertIn('sudo /usr/sbin/sshd -t', script)
+        self.assertIn('sudo systemctl restart ssh', script)
+        self.assertIn('sudo systemctl stop ssh', workflow)
+        self.assertIn('SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}', workflow)
+        self.assertNotIn('16 characters', script)
+        self.assertNotIn('Length -lt 16', script)
 
     def test_windows_ssh_uses_default_runner_account_not_a_new_user(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
@@ -75,11 +97,12 @@ class SessionWorkflowInvariants(unittest.TestCase):
     def test_windows_password_is_secret_and_fails_closed(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         workflow = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertIn("$env:WINDOWS_ADMIN_PASSWORD", text)
-        self.assertIn("$Password.Length -lt 16", text)
-        self.assertIn("$env:WINDOWS_ADMIN_PASSWORD = $null", text)
-        self.assertIn("secrets.WINDOWS_ADMIN_PASSWORD", workflow)
-        self.assertNotIn("vars.WINDOWS_ADMIN_PASSWORD", workflow)
+        self.assertIn("$env:SESSION_SSH_PASSWORD", text)
+        self.assertIn("[string]::IsNullOrEmpty($Password)", text)
+        self.assertNotIn("$Password.Length -lt 16", text)
+        self.assertIn("$env:SESSION_SSH_PASSWORD = $null", text)
+        self.assertIn("secrets.SESSION_SSH_PASSWORD", workflow)
+        self.assertNotIn("vars.SESSION_SSH_PASSWORD", workflow)
         self.assertNotIn("SESSION_SSH_PUBLIC_KEY", workflow + text)
         self.assertNotIn("Write-Output $Password", text)
         self.assertNotIn("Write-Host $Password", text)
