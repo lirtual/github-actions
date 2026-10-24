@@ -25,6 +25,13 @@ jobs:
         run: |
           python3 -m py_compile .github/scripts/session_action.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Check Ubuntu Runner password SSH prerequisites (read-only)
+        shell: bash
+        run: |
+          bash -n .github/scripts/linux-ssh.sh
+          test "$(id -un)" = runner
+          test -x /usr/sbin/sshd
+          grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\*\.conf' /etc/ssh/sshd_config
       - name: Parse Windows SSH configuration script
         shell: pwsh
         run: |
