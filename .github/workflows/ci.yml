@@ -1,5 +1,12 @@
 name: Static Workflow Contract
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/**
+      - README.md
+      - .github/scripts/**
+      - tests/**
   pull_request:
     paths:
       - .github/workflows/**
