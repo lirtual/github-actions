@@ -44,7 +44,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
             with self.subTest(workflow=name):
                 text = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
                 claim = text.index("session_action.py claim")
-                join = text.index(pinned_tailnet) if name in ("linux", "windows") else text.index("Start password-protected")
+                join = text.index(pinned_tailnet) if name in ("linux", "windows") else text.index("Start loopback-only" if name in ("chrome", "code-server") else "Start password-protected")
                 ready = text.index("session_action.py ready")
                 hold = text.index("session_action.py hold")
                 self.assertTrue(claim < join < ready < hold)
@@ -59,7 +59,11 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertNotIn("TS_AUDIENCE", text[:claim])
                 self.assertIn("if: always()", text[hold:])
                 if name in ("chrome", "code-server", "openlist"):
-                    self.assertIn("secrets.SESSION_SERVICE_PASSWORD", text[join:ready])
+                    if name == "openlist":
+                        self.assertIn("secrets.SESSION_SERVICE_PASSWORD", text[join:ready])
+                    else:
+                        self.assertNotIn("SESSION_SERVICE_PASSWORD", text)
+                        self.assertNotIn("${{ secrets.", text[join:ready])
                     self.assertIn("start-tunnel.sh", text[join:ready])
                     self.assertIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
                     self.assertIn("actions/upload-artifact@", text[join:ready])
@@ -83,19 +87,21 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("windows-rdp.ps1", text[join:ready])
                     self.assertIn("SessionActionsTailscaleRDP", text[hold:])
 
-    def test_services_use_native_auth_before_cloudflare_tunnel(self):
+    def test_web_services_use_cloudflare_otp_gate_with_openlist_admin_auth(self):
         chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
         openlist = (ROOT / ".github/scripts/start-openlist.sh").read_text()
         tunnel = (ROOT / ".github/scripts/start-tunnel.sh").read_text()
         self.assertIn("lscr.io/linuxserver/chrome@sha256:49a019a04b8d38422609d3c586636293417f61886704d516b7d5233cb4bd0b12", chrome)
-        self.assertIn("CUSTOM_USER=admin", chrome)
-        self.assertIn("FILE__PASSWORD=", chrome)
-        self.assertIn('if [[ "$status" == 401 ]]', chrome)
+        self.assertNotIn("CUSTOM_USER=", chrome)
+        self.assertNotIn("FILE__PASSWORD=", chrome)
+        self.assertNotIn("session-service-password", chrome)
+        self.assertIn('if [[ "$status" == 200 ]]', chrome)
         self.assertNotIn("remote-debugging-port", chrome)
-        self.assertIn("--auth password", code)
-        self.assertNotIn("--auth none", code)
-        self.assertIn('PASSWORD="$SESSION_SERVICE_PASSWORD"', code)
+        self.assertIn("--auth none", code)
+        self.assertNotIn("--auth password", code)
+        self.assertNotIn("SESSION_SERVICE_PASSWORD", code)
+        self.assertIn('if [[ "$status" == 200 ]]', code)
         self.assertIn('OPENLIST_ADMIN_PASSWORD="$SESSION_SERVICE_PASSWORD"', openlist)
         self.assertIn('/api/auth/login', openlist)
         self.assertIn("2026.10.3", tunnel)
@@ -111,6 +117,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn('if [[ ! "$allowed_mail" =~', tunnel)
         self.assertNotIn('tunnel --no-autoupdate --url "http://127.0.0.1:$port" >', tunnel)
 
+        self.assertIn("if [[ \"$service\" == openlist ]]", tunnel)
+        self.assertIn("email one-time PIN is the only access gate", tunnel)
+        self.assertIn("administrator credentials", tunnel)
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
