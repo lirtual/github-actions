@@ -127,6 +127,23 @@ jobs:
           docker rm --force session-openlist session-chrome >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/session-service-password"
 
+  smoke-openlist-mysql:
+    # Exercises the real startup script with a throwaway TLS MySQL Docker
+    # container. No repo Secrets, Aiven credentials, or Workflow MCP grants.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate integration test script syntax
+        shell: bash
+        run: bash -n .github/scripts/test-openlist-mysql.sh
+      - name: Test real OpenList startup and persistent TLS MySQL restart
+        shell: bash
+        run: bash .github/scripts/test-openlist-mysql.sh
+
   smoke-protected-quick-tunnel:
     # No Actions Secrets, Workflow MCP access or production services. The
     # external endpoint serves only a disposable, synthetic CI marker.
