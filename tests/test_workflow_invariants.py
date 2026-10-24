@@ -55,6 +55,14 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("vars.SESSION_SSH_PUBLIC_KEY",
                                   text[join:ready])
 
+    def test_windows_ssh_does_not_shadow_powershell_home(self):
+        # Real windows-latest failed because PowerShell treats $Home and $HOME
+        # as the same read-only automatic variable; source parsing misses it.
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertNotRegex(text, r"(?im)^\s*\$home\s*=")
+        self.assertIn("$UserHome = Join-Path", text)
+        self.assertIn("Join-Path $UserHome '.ssh'", text)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
