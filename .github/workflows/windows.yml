@@ -82,6 +82,12 @@ jobs:
             authorized_key_matched = '(?i)(matching key found|accepted key)'
             pubkey_rejected = '(?i)(failed publickey|userauth_pubkey.*failure|key not found)'
             user_rejected = '(?i)(invalid user|not allowed because)'
+            user_invalid = '(?i)(invalid user|unable to resolve user)'
+            user_not_allowlisted = '(?i)(not allowed because not listed in AllowUsers)'
+            user_account_locked = '(?i)(not allowed because.*locked)'
+            user_account_disabled = '(?i)(not allowed because.*disabled)'
+            user_group_denied = '(?i)(not allowed because.*group)'
+            user_denied_or_expired = '(?i)(not allowed because.*(denied|expired|DenyUsers))'
           }
           Write-Output ("SSH diagnostic log lines available: " + $logs.Count)
           foreach ($label in $signals.Keys) {
