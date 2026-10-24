@@ -93,7 +93,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
     def test_windows_sshd_is_reloaded_with_key_only_policy(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         config = text.index("& $Sshd -t")
-        effective = text.index("& $Sshd -T -C")
+        effective = text.index("$EffectiveConfig = & $Sshd -T")
+        self.assertNotIn("& $Sshd -T -C", text)
         stop = text.index("Stop-Service sshd -ErrorAction Stop")
         start = text.index("Start-Service sshd -ErrorAction Stop")
         self.assertLess(config, effective)
@@ -109,6 +110,19 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertLess(text.index("OpenSSH effective auth: "),
                         text.index("OpenSSH effective authentication policy is not key-only"))
         self.assertNotIn("LogLevel DEBUG3", text)
+
+    def test_windows_ssh_diagnostics_do_not_echo_raw_logs(self):
+        script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("OpenSSH effective policy:", script)
+        self.assertIn("passwordauthentication|pubkeyauthentication|authorizedkeysfile", script)
+        self.assertIn("Classify bounded SSH authentication diagnostics", workflow)
+        self.assertIn("key_file_access_denied", workflow)
+        self.assertIn("ownership_rejected", workflow)
+        self.assertNotIn("Write-Output $logs", workflow)
+        self.assertNotIn("Write-Output $file", workflow)
+        self.assertLess(workflow.index("Classify bounded SSH authentication diagnostics"),
+                        workflow.index("Clean up restricted SSH account and firewall"))
 
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
