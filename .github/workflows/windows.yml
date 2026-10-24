@@ -58,21 +58,25 @@ jobs:
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:session-actions
           hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
-      - name: Configure restricted SSH-only Windows Session
+      - name: Configure Tailnet-only password SSH for the Windows Runner
         shell: pwsh
         env:
-          SESSION_SSH_PUBLIC_KEY: ${{ vars.SESSION_SSH_PUBLIC_KEY }}
+          SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
         run: ./.github/scripts/windows-ssh.ps1
-      - name: Signed Ready after private SSH is listening
+      - name: Enable Windows RDP using the existing Runner account
+        shell: pwsh
+        run: ./.github/scripts/windows-rdp.ps1
+      - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
         run: python .github/scripts/session_action.py ready
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh
         run: python .github/scripts/session_action.py hold
-      - name: Clean up restricted SSH account and firewall
+      - name: Stop SSH and remove Tailnet firewall access
         if: always()
         shell: pwsh
         run: |
           Stop-Service sshd -ErrorAction SilentlyContinue
           Remove-NetFirewallRule -Name SessionActionsTailscaleSSH -ErrorAction SilentlyContinue
-          Remove-LocalUser -Name sessionuser -ErrorAction SilentlyContinue
+          Remove-NetFirewallRule -Name SessionActionsTailscaleRDP -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 1 -ErrorAction SilentlyContinue

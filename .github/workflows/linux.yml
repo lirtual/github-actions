@@ -58,18 +58,19 @@ jobs:
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:session-actions
           hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
-      - name: Enable Tailnet-only Linux SSH
+      - name: Configure Ubuntu Runner password SSH on Tailnet
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo tailscale set --ssh
-          tailscale ip -4 >/dev/null
+        env:
+          SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
+        run: bash .github/scripts/linux-ssh.sh
       - name: Signed Ready after private SSH is configured
         run: python3 .github/scripts/session_action.py ready
       - name: Hold until selected lifetime or GitHub cancellation
         run: python3 .github/scripts/session_action.py hold
-      - name: Disable Tailnet SSH on exit
+      - name: Stop Ubuntu SSH and remove session settings
         if: always()
         shell: bash
         run: |
+          sudo systemctl stop ssh || true
+          sudo rm -f /etc/ssh/sshd_config.d/00-session-actions.conf
           sudo tailscale set --ssh=false || true

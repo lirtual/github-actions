@@ -25,6 +25,30 @@ jobs:
         run: |
           python3 -m py_compile .github/scripts/session_action.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Verify pinned cloudflared supports protected Quick Tunnels
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$RUNNER_TEMP/cloudflared-otp"
+          curl --fail --location --proto '=https' --retry 2 --silent --show-error --tlsv1.2 \
+            'https://github.com/cloudflare/cloudflared/releases/download/2026.10.3/cloudflared-linux-amd64' \
+            --output "$binary"
+          printf '%s  %s\n' '053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0' "$binary" | sha256sum -c --status
+          chmod 0700 "$binary"
+          "$binary" --version | grep -Fq '2026.10.3'
+          "$binary" tunnel --help 2>&1 | grep -F -- '--allowed-mail'
+          # Fail closed when no explicit email recipient is configured.
+          if SESSION_SERVICE=chrome SESSION_TUNNEL_ALLOWED_EMAIL='' bash .github/scripts/start-tunnel.sh; then
+            echo 'Tunnel started without an allowed recipient' >&2
+            exit 1
+          fi
+      - name: Check Ubuntu Runner password SSH prerequisites (read-only)
+        shell: bash
+        run: |
+          bash -n .github/scripts/linux-ssh.sh
+          test "$(id -un)" = runner
+          test -x /usr/sbin/sshd
+          grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\*\.conf' /etc/ssh/sshd_config
       - name: Parse Windows SSH configuration script
         shell: pwsh
         run: |
@@ -37,11 +61,11 @@ jobs:
     # This executes only isolated, loopback-bound services. It intentionally
     # has NO repository/Tailnet secrets, OIDC, dispatch or Workflow MCP grants.
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        service: [chrome, code-server, openlist]
+        service: [chrome, code-server]
     steps:
       - name: Checkout without retained credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -53,7 +77,7 @@ jobs:
       - name: Start the same local service script used by the Session
         shell: bash
         env:
-          OPENLIST_ADMIN_PASSWORD: ci-ephemeral-loopback-only
+          SESSION_SERVICE_PASSWORD: ci-ephemeral-loopback-only
         run: bash ".github/scripts/start-${{ matrix.service }}.sh"
       - name: Ensure no service listens on wildcard/public addresses
         shell: bash
@@ -62,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$SERVICE" in
-            chrome) PORT=9222 ;;
+            chrome) PORT=3000 ;;
             code-server) PORT=8080 ;;
             openlist) PORT=5244 ;;
             *) exit 1 ;;
@@ -72,6 +96,27 @@ jobs:
             echo "Service must not listen on a public interface" >&2
             exit 1
           fi
+      - name: Assert native password login accepts the shared credential
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+          SESSION_SERVICE_PASSWORD: ci-ephemeral-loopback-only
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            chrome)
+              test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)" = 401
+              test "$(curl --silent --user "admin:$SESSION_SERVICE_PASSWORD" --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)" = 200
+              ;;
+            code-server)
+              response="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)"
+              test "$response" = 302 -o "$response" = 303
+              cookies="$RUNNER_TEMP/code-server-login-cookies"
+              curl --silent --location --cookie-jar "$cookies" --cookie "$cookies" --data-urlencode "password=$SESSION_SERVICE_PASSWORD"                 --output /dev/null http://127.0.0.1:8080/login
+              test "$(curl --silent --cookie "$cookies" --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)" = 200
+              ;;
+            openlist) echo "OpenList native admin password was verified during startup" ;;
+          esac
       - name: Remove transient local service
         if: always()
         shell: bash
@@ -79,7 +124,113 @@ jobs:
           if test -s "$RUNNER_TEMP/session-service.pid"; then
             kill "$(cat "$RUNNER_TEMP/session-service.pid")" 2>/dev/null || true
           fi
-          docker rm --force session-openlist >/dev/null 2>&1 || true
+          docker rm --force session-openlist session-chrome >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/session-service-password"
+
+  smoke-openlist-mysql:
+    # Exercises the real startup script with a throwaway TLS MySQL Docker
+    # container. No repo Secrets, Aiven credentials, or Workflow MCP grants.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate integration test script syntax
+        shell: bash
+        run: bash -n .github/scripts/test-openlist-mysql.sh
+      - name: Test real OpenList startup and persistent TLS MySQL restart
+        shell: bash
+        run: bash .github/scripts/test-openlist-mysql.sh
+
+  smoke-protected-quick-tunnel:
+    # No Actions Secrets, Workflow MCP access or production services. The
+    # external endpoint serves only a disposable, synthetic CI marker.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Start synthetic loopback origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tunnel-fixture"
+          python3 - <<'PY'
+          import secrets
+          import os
+          from pathlib import Path
+          temp = Path(os.environ["RUNNER_TEMP"])
+          value = "CI_ORIGIN_ONLY_" + secrets.token_hex(18)
+          (temp / "tunnel-fixture" / "index.html").write_text(value)
+          (temp / "tunnel-expected").write_text(value)
+          PY
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory "$RUNNER_TEMP/tunnel-fixture" \
+            > "$RUNNER_TEMP/tunnel-fixture.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/tunnel-fixture.pid"
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:8080/ >/dev/null; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 5 ]]; then sleep 1; fi
+          done
+          echo 'Synthetic origin did not start' >&2
+          exit 1
+      - name: Launch email-OTP protected Quick Tunnel
+        shell: bash
+        env:
+          SESSION_SERVICE: code-server
+          SESSION_TUNNEL_ALLOWED_EMAIL: ${{ vars.SESSION_TUNNEL_ALLOWED_EMAIL }}
+        run: bash .github/scripts/start-tunnel.sh
+      - name: Assert unauthenticated HTTPS cannot reach synthetic origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(cat "$RUNNER_TEMP/session-tunnel-url")"
+          case "$url" in
+            https://*.trycloudflare.com) ;;
+            *) echo 'Unexpected Quick Tunnel hostname' >&2; exit 1 ;;
+          esac
+          marker="$(cat "$RUNNER_TEMP/tunnel-expected")"
+          test "$(curl --fail --silent --max-time 2 http://127.0.0.1:8080/)" = "$marker"
+          status="$(curl --silent --show-error --max-time 15 --output "$RUNNER_TEMP/tunnel-anonymous-body" \
+            --dump-header "$RUNNER_TEMP/tunnel-anonymous-headers" --write-out '%{http_code}' "$url/")"
+          test "$status" = 302
+          grep -Eqi '^location: https://login\.trycloudflare\.com/authorize\?' "$RUNNER_TEMP/tunnel-anonymous-headers"
+          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
+            echo 'Protected Quick Tunnel exposed the private test origin anonymously' >&2
+            exit 1
+          fi
+          # An unauthenticated unsafe method must be rejected by cloudflared,
+          # not forwarded to the synthetic HTTP origin.
+          post_status="$(curl --silent --show-error --max-time 15 --request POST \
+            --output "$RUNNER_TEMP/tunnel-anonymous-body" --write-out '%{http_code}' "$url/")"
+          test "$post_status" = 401
+          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
+            echo 'Protected Quick Tunnel exposed the origin on POST' >&2
+            exit 1
+          fi
+          echo 'Anonymous GET redirected to OTP and POST denied'
+      - name: Close temporary Tunnel and delete fixture
+        if: always()
+        shell: bash
+        run: |
+          if test -s "$RUNNER_TEMP/session-tunnel.pid"; then
+            kill "$(cat "$RUNNER_TEMP/session-tunnel.pid")" 2>/dev/null || true
+          fi
+          if test -s "$RUNNER_TEMP/tunnel-fixture.pid"; then
+            kill "$(cat "$RUNNER_TEMP/tunnel-fixture.pid")" 2>/dev/null || true
+          fi
+          rm -f "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" \
+            "$RUNNER_TEMP/session-tunnel.pid" "$RUNNER_TEMP/cloudflared" \
+            "$RUNNER_TEMP/tunnel-expected" "$RUNNER_TEMP/tunnel-anonymous-body" \
+            "$RUNNER_TEMP/tunnel-anonymous-headers" "$RUNNER_TEMP/tunnel-fixture.pid" \
+            "$RUNNER_TEMP/tunnel-fixture.log"
+          rm -rf "$RUNNER_TEMP/tunnel-fixture"
 
   smoke-windows-prerequisites:
     runs-on: windows-latest
@@ -104,8 +255,25 @@ jobs:
             (Resolve-Path '.github/scripts/windows-ssh.ps1').Path,
             [ref]$tokens, [ref]$errorsFound) | Out-Null
           if ($errorsFound.Count -ne 0) { throw 'Invalid Windows SSH configuration script' }
-          if (-not (Get-Command New-LocalUser -ErrorAction SilentlyContinue)) {
-            throw 'Local user management unavailable'
+          $errorsFound = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/scripts/windows-rdp.ps1').Path,
+            [ref]$tokens, [ref]$errorsFound) | Out-Null
+          if ($errorsFound.Count -ne 0) { throw 'Invalid Windows RDP configuration script' }
+          if (-not (Get-Service TermService -ErrorAction SilentlyContinue)) {
+            throw 'Windows Remote Desktop Services unavailable'
+          }
+          if (-not (Get-Command Set-LocalUser -ErrorAction SilentlyContinue)) {
+            throw 'Local password management unavailable'
+          }
+          $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $Account = Get-LocalUser -Name ([Environment]::UserName) -ErrorAction Stop
+          if ($Account.SID.Value -ne $Identity.User.Value -or -not $Account.Enabled) {
+            throw 'Default Windows Runner account is not a matching enabled local user'
+          }
+          if (-not ([Security.Principal.WindowsPrincipal]::new($Identity)).IsInRole(
+              [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            throw 'Default Windows Runner account is not an administrator'
           }
           if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
             throw 'Windows firewall tooling unavailable'
