@@ -62,7 +62,7 @@ if ($LASTEXITCODE -ne 0 -or
     -not ($EffectiveConfig -contains 'passwordauthentication yes') -or
     -not ($EffectiveConfig -contains 'pubkeyauthentication no') -or
     -not ($EffectiveConfig -contains 'authenticationmethods password') -or
-    -not ($EffectiveConfig -contains ('listenaddress ' + $TailnetAddress))) {
+    -not ($EffectiveConfig -contains ('listenaddress ' + $TailnetAddress + ':22'))) {
     throw 'OpenSSH effective authentication or interface policy is not restricted'
 }
 # An already running sshd could still have the previous configuration.
