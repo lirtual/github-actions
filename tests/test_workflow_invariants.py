@@ -99,11 +99,12 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     return Reply({"result": result})
 
                 stdout = io.StringIO()
+                stderr = io.StringIO()
                 with mock.patch.dict(os.environ, environment, clear=True):
                     with mock.patch("urllib.request.build_opener") as build_opener:
                         build_opener.return_value.open.side_effect = respond
                         with mock.patch("time.sleep") as sleep:
-                            with contextlib.redirect_stdout(stdout):
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                                 if should_succeed:
                                     exec(compile(code, "Task Claim", "exec"), {})
                                 else:
@@ -114,7 +115,32 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertEqual(claim_tokens,
                                  ["Bearer " + value for value in observed_tokens])
                 self.assertNotIn(environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
-                                 stdout.getvalue())
+                                 stdout.getvalue() + stderr.getvalue())
+                self.assertNotIn("jwt-", stderr.getvalue())
+                if not should_succeed:
+                    self.assertIn("GitHub Action Claim claim_request HTTP",
+                                  stderr.getvalue())
+
+        # A failed GitHub token mint is distinguished from a worker Claim 403.
+        # The exception message may contain a token-bearing URL: never echo it.
+        stderr = io.StringIO()
+        claim_calls = []
+        def oidc_denied(request, timeout=0):
+            if "oidc.example" not in request.full_url:
+                claim_calls.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 401,
+                                         "sensitive URL and bearer must not print",
+                                         {}, None)
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with mock.patch("urllib.request.build_opener") as build_opener:
+                build_opener.return_value.open.side_effect = oidc_denied
+                with contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit):
+                        exec(compile(code, "Task Claim OIDC rejection", "exec"), {})
+        self.assertEqual(claim_calls, [])
+        self.assertIn("GitHub Action Claim oidc_request HTTP 401", stderr.getvalue())
+        self.assertNotIn("oidc.example", stderr.getvalue())
+        self.assertNotIn("DO-NOT-PRINT-THIS-SECRET", stderr.getvalue())
 
 
 if __name__ == "__main__":
