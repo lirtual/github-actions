@@ -103,18 +103,12 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("passwordauthentication no", text)
         self.assertIn("pubkeyauthentication yes", text)
 
-    def test_windows_sshd_emits_only_safe_effective_policy_diagnostics(self):
-        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        self.assertIn("OpenSSH effective auth: ", text)
-        self.assertIn("passwordauthentication|pubkeyauthentication", text)
-        self.assertLess(text.index("OpenSSH effective auth: "),
-                        text.index("OpenSSH effective authentication policy is not key-only"))
-        self.assertNotIn("LogLevel DEBUG3", text)
-
     def test_windows_ssh_diagnostics_do_not_echo_raw_logs(self):
         script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         workflow = (ROOT / ".github/workflows/windows.yml").read_text()
         self.assertIn("OpenSSH effective policy:", script)
+        self.assertLess(script.index("OpenSSH effective policy:"),
+                        script.index("OpenSSH effective authentication policy is not key-only"))
         self.assertIn("passwordauthentication|pubkeyauthentication|authorizedkeysfile", script)
         self.assertIn("Classify bounded SSH authentication diagnostics", workflow)
         self.assertIn("key_file_access_denied", workflow)
