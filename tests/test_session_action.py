@@ -286,6 +286,46 @@ class SessionProtocolTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         sleeper.assert_not_called()
 
+    def test_claim_failure_diagnostics_expose_only_safe_stage_and_code(self):
+        import io
+        import urllib.error
+        from contextlib import redirect_stderr
+
+        settings = self.settings()
+        settings["ACTIONS_ID_TOKEN_REQUEST_URL"] = "https://oidc.actions.example/token?sensitive_url_value=PRIVATE"
+        settings["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = "SECRET-NEVER-LOG"
+        tests = (
+            ("oidc_401", "oidc_request_http_401"),
+            ("claim_403", "claim_request_http_403"),
+            ("oidc_network_error", "oidc_request_ConnectionResetError"),
+        )
+        for kind, expected in tests:
+            with self.subTest(kind=kind):
+                requested = []
+                def respond(req, timeout=0):
+                    requested.append(req.full_url)
+                    if "oidc.actions.example" in req.full_url:
+                        if kind == "oidc_401":
+                            raise urllib.error.HTTPError(req.full_url, 401, "SECRET-NEVER-LOG", {}, None)
+                        if kind == "oidc_network_error":
+                            raise ConnectionResetError("SECRET-NEVER-LOG " + req.full_url)
+                        return _MemoryReply({"value": "SIGNED.JWT.PRIVATE"})
+                    raise urllib.error.HTTPError(req.full_url, 403, "SIGNED.JWT.PRIVATE", {}, None)
+
+                output = io.StringIO()
+                with mock.patch.dict(os.environ, settings, clear=True):
+                    with mock.patch.object(session.OPENER, "open", side_effect=respond):
+                        with mock.patch.object(session.sys, "argv", ["session_action.py", "claim"]):
+                            with redirect_stderr(output), self.assertRaises(SystemExit) as exit_status:
+                                session.main()
+                self.assertEqual(exit_status.exception.code, 1)
+                self.assertIn(expected, output.getvalue())
+                self.assertNotIn("SECRET-NEVER-LOG", output.getvalue())
+                self.assertNotIn("SIGNED.JWT.PRIVATE", output.getvalue())
+                self.assertNotIn("oidc.actions.example", output.getvalue())
+                self.assertNotIn("https://", output.getvalue())
+                self.assertEqual(len(requested), 2 if kind == "claim_403" else 1)
+
     def test_hold_rejects_bad_duration_and_does_not_extend_clock(self):
         with tempfile.TemporaryDirectory() as root:
             started = Path(root) / "session-action-start"
