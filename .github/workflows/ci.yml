@@ -155,11 +155,11 @@ jobs:
           python3 -m http.server 8080 --bind 127.0.0.1 --directory "$RUNNER_TEMP/tunnel-fixture" \
             > "$RUNNER_TEMP/tunnel-fixture.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/tunnel-fixture.pid"
-          for i in 1 2 3 4 5; do
+          for attempt in 1 2 3 4 5; do
             if curl --fail --silent --max-time 2 http://127.0.0.1:8080/ >/dev/null; then
               exit 0
             fi
-            sleep 1
+            if [[ "$attempt" -lt 5 ]]; then sleep 1; fi
           done
           echo 'Synthetic origin did not start' >&2
           exit 1
