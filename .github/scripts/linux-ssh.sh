@@ -40,6 +40,8 @@ PermitRootLogin no
 AllowUsers $account
 ListenAddress $tailnet_ip
 EOF
+# GitHub's fresh Ubuntu image may have ssh.socket without an sshd runtime dir.
+sudo install -d -m 0755 /run/sshd
 sudo /usr/sbin/sshd -t
 effective="$(sudo /usr/sbin/sshd -T)"
 for setting in \
@@ -58,7 +60,15 @@ done
 # chpasswd applies the image's actual local password policy. Never log the secret.
 printf '%s:%s\n' "$account" "$SESSION_SYSTEM_PASSWORD" | sudo chpasswd
 unset SESSION_SYSTEM_PASSWORD
-sudo systemctl restart ssh
+# Ubuntu 24.04 uses systemd socket activation; its stock ssh.socket binds
+# wildcard addresses even if sshd_config specifies ListenAddress.
+# A Runner-local override limits the actual systemd socket to Tailnet IPv4.
+sudo install -d -m 0755 /run/systemd/system/ssh.socket.d
+printf '[Socket]\nListenStream=\nListenStream=%s:22\n' "$tailnet_ip" |
+  sudo tee /run/systemd/system/ssh.socket.d/00-session-actions.conf >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket
+sudo systemctl restart ssh.service
 # Reject any wildcard, public-interface, or additional SSH listener.
 ssh_listeners="$(sudo ss -H -ltn '( sport = :22 )' | awk '{print $4}')"
 if [[ "$ssh_listeners" != "$tailnet_ip:22" ]]; then
