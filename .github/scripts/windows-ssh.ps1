@@ -16,9 +16,34 @@ if ($Username -notmatch '^[A-Za-z][A-Za-z0-9_-]{0,31}$' -or
 }
 
 $Password = $env:SESSION_SYSTEM_PASSWORD
-if ([string]::IsNullOrEmpty($Password) -or
+if ([string]::IsNullOrEmpty($Password) -or $Password.Length -lt 8 -or
     $Password.Contains([char]10) -or $Password.Contains([char]13)) {
-    throw 'SESSION_SYSTEM_PASSWORD must be a non-empty single-line password accepted by Windows local policy'
+    throw 'SESSION_SYSTEM_PASSWORD must contain at least 8 characters on one line'
+}
+# This job uses a disposable GitHub-hosted Windows Runner. Do not alter the
+# local account policy on any persistent/self-hosted Windows machine.
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
+    -not (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
+    throw 'Windows password policy adjustment requires a GitHub-hosted Runner'
+}
+$PolicyFile = Join-Path $env:RUNNER_TEMP 'session-actions-password.inf'
+$PolicyDb = Join-Path $env:RUNNER_TEMP 'session-actions-password.sdb'
+$PolicyLog = Join-Path $env:RUNNER_TEMP 'session-actions-password.log'
+@'
+[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[System Access]
+MinimumPasswordLength = 8
+PasswordComplexity = 0
+'@ | Set-Content -LiteralPath $PolicyFile -Encoding Ascii
+try {
+    & secedit.exe /configure /db $PolicyDb /cfg $PolicyFile /areas SECURITYPOLICY /log $PolicyLog /quiet
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to apply 8-character Windows Runner password policy' }
+} finally {
+    Remove-Item -LiteralPath $PolicyFile -Force -ErrorAction SilentlyContinue
 }
 $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
 Remove-Variable Password
