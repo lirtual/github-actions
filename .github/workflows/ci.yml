@@ -25,6 +25,23 @@ jobs:
         run: |
           python3 -m py_compile .github/scripts/session_action.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Verify pinned cloudflared supports protected Quick Tunnels
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$RUNNER_TEMP/cloudflared-otp"
+          curl --fail --location --proto '=https' --retry 2 --silent --show-error --tlsv1.2 \
+            'https://github.com/cloudflare/cloudflared/releases/download/2026.10.3/cloudflared-linux-amd64' \
+            --output "$binary"
+          printf '%s  %s\n' '053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0' "$binary" | sha256sum -c --status
+          chmod 0700 "$binary"
+          "$binary" --version | grep -Fq '2026.10.3'
+          "$binary" tunnel --help 2>&1 | grep -F -- '--allowed-mail'
+          # Fail closed when no explicit email recipient is configured.
+          if SESSION_SERVICE=chrome SESSION_TUNNEL_ALLOWED_EMAIL='' bash .github/scripts/start-tunnel.sh; then
+            echo 'Tunnel started without an allowed recipient' >&2
+            exit 1
+          fi
       - name: Check Ubuntu Runner password SSH prerequisites (read-only)
         shell: bash
         run: |
