@@ -43,8 +43,8 @@ docker run -d --rm --name sa-openlist-mysql-ci \
   --ssl-key=/ci/certs/server-key.pem \
   --require-secure-transport=ON >/dev/null
 ready=''
-for attempt in $(seq 1 90); do
-  if docker exec sa-openlist-mysql-ci mysqladmin ping -h 127.0.0.1 \
+for attempt in $(seq 1 30); do
+  if docker exec sa-openlist-mysql-ci mysqladmin ping --protocol=socket \
       -u root --password=ci-temporary-root --silent >/dev/null 2>&1; then
     ready=yes
     break
@@ -53,6 +53,8 @@ for attempt in $(seq 1 90); do
 done
 if [[ "$ready" != yes ]]; then
   echo 'Disposable MySQL did not become ready' >&2
+  # CI fixture only: contains no production Secrets or remote connection data.
+  docker logs --tail 35 sa-openlist-mysql-ci 2>&1 | grep -E 'ERROR|error|Warning|ready|InnoDB|SSL|TLS|Entrypoint' | tail -n 18 || true
   exit 1
 fi
 
@@ -61,7 +63,7 @@ export OPENLIST_DATABASE_CA
 OPENLIST_DATABASE_CA="$(cat "$tmp/certs/ca.pem")"
 bash .github/scripts/start-openlist.sh
 
-tables="$(docker exec sa-openlist-mysql-ci mysql -N -s -h 127.0.0.1 \
+tables="$(docker exec sa-openlist-mysql-ci mysql -N -s --protocol=socket \
   -u root --password=ci-temporary-root \
   -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='tenantdb' AND table_name LIKE 'x_%'")"
 if [[ ! "$tables" =~ ^[0-9]+$ || "$tables" -lt 1 ]]; then
@@ -71,7 +73,7 @@ fi
 docker rm -f session-openlist >/dev/null
 rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
 bash .github/scripts/start-openlist.sh
-second="$(docker exec sa-openlist-mysql-ci mysql -N -s -h 127.0.0.1 \
+second="$(docker exec sa-openlist-mysql-ci mysql -N -s --protocol=socket \
   -u root --password=ci-temporary-root \
   -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='tenantdb' AND table_name LIKE 'x_%'")"
 if [[ "$second" != "$tables" ]]; then
