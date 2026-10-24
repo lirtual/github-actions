@@ -93,7 +93,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
     def test_windows_sshd_is_reloaded_with_key_only_policy(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         config = text.index("& $Sshd -t")
-        effective = text.index("& $Sshd -T -C")
+        effective = text.index("$EffectiveConfig = & $Sshd -T")
+        self.assertNotIn("& $Sshd -T -C", text)
         stop = text.index("Stop-Service sshd -ErrorAction Stop")
         start = text.index("Start-Service sshd -ErrorAction Stop")
         self.assertLess(config, effective)
