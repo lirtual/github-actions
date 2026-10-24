@@ -39,6 +39,7 @@ class SessionProtocolTests(unittest.TestCase):
             "CAPABILITY_ID": "github.action",
             "WORKFLOW_ACTION_CLAIM_URL": "https://example.test/github/action/claim",
             "WORKFLOW_ACTION_OIDC_AUDIENCE": AUDIENCE,
+            "RUNNER_TEMP": tempfile.gettempdir(),
         }
 
     def test_configuration_checks_strict_server_identity(self):
