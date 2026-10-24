@@ -82,6 +82,12 @@ class SessionWorkflowInvariants(unittest.TestCase):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         self.assertIn("('AuthorizedKeysFile \"' + $Keys + '\"')", text)
         self.assertIn("'AllowUsers sessionuser'", text)
+        self.assertIn("Session local account unexpectedly disabled", text)
+        self.assertNotIn("LogLevel DEBUG3", text)
+        self.assertNotIn("SyslogFacility LOCAL0", text)
+        self.assertNotIn("OpenSSH effective policy:", text)
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertNotIn("Classify bounded SSH authentication diagnostics", workflow)
 
     def test_windows_authorized_keys_owned_by_session_user(self):
         # Windows OpenSSH checks the owner as well as strict file ACLs.
@@ -104,33 +110,6 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("pubkeyauthentication yes", text)
         self.assertIn("'AllowGroups users'", text)
         self.assertIn("'AllowUsers sessionuser'", text)
-
-    def test_windows_ssh_diagnostics_do_not_echo_raw_logs(self):
-        script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertIn("OpenSSH effective policy:", script)
-        self.assertLess(script.index("OpenSSH effective policy:"),
-                        script.index("OpenSSH effective authentication policy is not key-only"))
-        self.assertIn("passwordauthentication|pubkeyauthentication|authorizedkeysfile", script)
-        self.assertIn("Classify bounded SSH authentication diagnostics", workflow)
-        self.assertIn("key_file_access_denied", workflow)
-        self.assertIn("ownership_rejected", workflow)
-        self.assertNotIn("Write-Output $logs", workflow)
-        self.assertNotIn("Write-Output $file", workflow)
-        self.assertLess(workflow.index("Classify bounded SSH authentication diagnostics"),
-                        workflow.index("Clean up restricted SSH account and firewall"))
-
-    def test_windows_account_diagnostics_are_narrow_and_secret_free(self):
-        script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
-        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertIn("Session local account enabled:", script)
-        self.assertIn("Session local account unexpectedly disabled", script)
-        self.assertIn("authorizedkeysfile)\\s", script)
-        self.assertIn("user_not_allowlisted", workflow)
-        self.assertIn("user_account_locked", workflow)
-        self.assertIn("user_account_disabled", workflow)
-        self.assertIn("user_invalid", workflow)
-        self.assertNotIn("Write-Output $logs", workflow)
 
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
