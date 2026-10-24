@@ -58,16 +58,16 @@ def validate_ca(ca: str) -> str:
         raise ValueError("invalid MySQL CA")
     # Support Aiven certificate-rotation bundles (multiple PEM certificates).
     blocks = re.findall(
-        r"-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----", ca
+        r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----", ca
     )
     # Whitespace between certificates is permitted, other PEM material is not.
-    if not blocks or re.sub(r"\\s+", "", ca) != re.sub(r"\\s+", "", "".join(blocks)):
+    if not blocks or re.sub(r"\s+", "", ca) != re.sub(r"\s+", "", "".join(blocks)):
         raise ValueError("invalid MySQL CA")
     try:
-        ssl.create_default_context(cadata="\\n".join(blocks) + "\\n")
+        ssl.create_default_context(cadata="\n".join(blocks) + "\n")
     except (ValueError, ssl.SSLError):
         raise ValueError("invalid MySQL CA") from None
-    return "\\n".join(blocks) + "\\n"
+    return "\n".join(blocks) + "\n"
 
 
 def main() -> int:
