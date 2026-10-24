@@ -99,22 +99,51 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     return Reply({"result": result})
 
                 stdout = io.StringIO()
+                stderr = io.StringIO()
                 with mock.patch.dict(os.environ, environment, clear=True):
                     with mock.patch("urllib.request.build_opener") as build_opener:
                         build_opener.return_value.open.side_effect = respond
                         with mock.patch("time.sleep") as sleep:
-                            with contextlib.redirect_stdout(stdout):
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                                 if should_succeed:
                                     exec(compile(code, "Task Claim", "exec"), {})
                                 else:
-                                    with self.assertRaises(SystemExit):
+                                    with self.assertRaises(SystemExit) as captured:
                                         exec(compile(code, "Task Claim", "exec"), {})
                             self.assertEqual(sleep.call_count, 1 if expected_calls == 2 else 0)
                 self.assertEqual(len(observed_tokens), expected_calls)
                 self.assertEqual(claim_tokens,
                                  ["Bearer " + value for value in observed_tokens])
                 self.assertNotIn(environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
-                                 stdout.getvalue())
+                                 stdout.getvalue() + stderr.getvalue())
+                self.assertNotIn("jwt-", stderr.getvalue())
+                if not should_succeed:
+                    self.assertIn("GitHub Action Claim claim_request HTTP",
+                                  str(captured.exception.code))
+                    self.assertNotIn(environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
+                                     str(captured.exception.code))
+
+        # A failed GitHub token mint is distinguished from a worker Claim 403.
+        # The exception message may contain a token-bearing URL: never echo it.
+        stderr = io.StringIO()
+        claim_calls = []
+        def oidc_denied(request, timeout=0):
+            if "oidc.example" not in request.full_url:
+                claim_calls.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 401,
+                                         "sensitive URL and bearer must not print",
+                                         {}, None)
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with mock.patch("urllib.request.build_opener") as build_opener:
+                build_opener.return_value.open.side_effect = oidc_denied
+                with contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as captured_oidc:
+                        exec(compile(code, "Task Claim OIDC rejection", "exec"), {})
+        self.assertEqual(claim_calls, [])
+        self.assertIn("GitHub Action Claim oidc_request HTTP 401",
+                      str(captured_oidc.exception.code))
+        self.assertNotIn("oidc.example", str(captured_oidc.exception.code))
+        self.assertNotIn("DO-NOT-PRINT-THIS-SECRET", str(captured_oidc.exception.code))
 
 
 if __name__ == "__main__":
