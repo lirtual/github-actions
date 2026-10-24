@@ -61,7 +61,7 @@ jobs:
       - name: Start local-only OpenList container
         shell: bash
         env:
-          OPENLIST_ADMIN_PASSWORD: ${{ secrets.SESSION_OPENLIST_ADMIN_PASSWORD }}
+          OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASSWORD }}
         run: bash .github/scripts/start-openlist.sh
       - name: Signed Ready after local OpenList health check
         run: python3 .github/scripts/session_action.py ready

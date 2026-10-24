@@ -39,7 +39,7 @@ The three internal workflow_dispatch inputs `attempt_id`, `dispatch_id`, `capabi
 
 - Actions variables: `WORKFLOW_ACTION_CLAIM_URL` (HTTPS, exactly ending `/github/action/claim`), `WORKFLOW_ACTION_OIDC_AUDIENCE` (exact server-owned Action OIDC audience), and `SESSION_SSH_PUBLIC_KEY` (one Ed25519 key, for Windows only).
 - Actions variables: `TS_OAUTH_CLIENT_ID` (Tailscale workload identity client ID), `TS_AUDIENCE` (Tailscale OIDC federation audience). These are non-secret identifiers; Tailscale identity binding and tag authorization are enforced by the Tailnet trust policy.
-- Actions secret: `SESSION_OPENLIST_ADMIN_PASSWORD` (OpenList only). Do not paste secret values into Workflow YAML or logs.
+- Actions secret: `OPENLIST_ADMIN_PASSWORD` (OpenList only). Do not paste secret values into Workflow YAML or logs.
 - Tailnet: configure a narrowly scoped `tag:session-actions`, an appropriate GitHub workload identity trust policy, ACL grants, and Tailscale SSH rules for the intended identities. The tag does **not** by itself grant SSH or access to other devices.
 - Workflow MCP: the signed Claim and Ready endpoints, GitHub Git ref/commit approval, physical Run identity, D1 migrations, four active slots, expiry monitoring and cancellation must be deployed and verified separately.
 
