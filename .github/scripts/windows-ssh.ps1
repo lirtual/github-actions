@@ -19,6 +19,9 @@ if (Get-LocalUser -Name $Username -ErrorAction SilentlyContinue) {
 $Random = [Security.Cryptography.RandomNumberGenerator]::GetBytes(48)
 $Password = [Convert]::ToBase64String($Random) | ConvertTo-SecureString -AsPlainText -Force
 New-LocalUser -Name $Username -Password $Password -PasswordNeverExpires | Out-Null
+$Account = Get-LocalUser -Name $Username -ErrorAction Stop
+if (-not $Account.Enabled) { throw 'Session local account unexpectedly disabled' }
+Write-Output ('Session local account enabled: ' + $Account.Enabled)
 $UserHome = Join-Path $env:SystemDrive "Users\$Username"
 $Directory = Join-Path $UserHome '.ssh'
 New-Item -Path $Directory -ItemType Directory -Force | Out-Null
@@ -57,7 +60,7 @@ if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
 $EffectiveConfig = & $Sshd -T
 # Emit only known, non-secret sshd policy fields; never dump keys or tokens.
 $SafePolicy = @($EffectiveConfig | Where-Object {
-    $_ -match '^(passwordauthentication|pubkeyauthentication|authorizedkeysfile)[[:space:]]'
+    $_ -match '^(passwordauthentication|pubkeyauthentication|authorizedkeysfile)\s'
 })
 Write-Output ('OpenSSH effective policy: ' + ($SafePolicy -join '; '))
 if ($LASTEXITCODE -ne 0 -or -not ($EffectiveConfig -contains 'passwordauthentication no') -or
