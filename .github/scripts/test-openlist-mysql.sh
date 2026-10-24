@@ -67,6 +67,30 @@ fi
 export OPENLIST_DATABASE_URI="mysql://openlist:$db_password@$gateway:3307/tenantdb?ssl-mode=REQUIRED"
 export OPENLIST_DATABASE_CA
 OPENLIST_DATABASE_CA="$(cat "$tmp/certs/ca.pem")"
+# Reject an occupied non-OpenList schema before OpenList can create x_ tables.
+docker exec sa-openlist-mysql-ci mysql --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e 'CREATE TABLE tenantdb.unrelated_ci_guard (id INT PRIMARY KEY)' >/dev/null 2>&1
+if bash .github/scripts/start-openlist.sh >"$tmp/guard-stdout" 2>"$tmp/guard-stderr"; then
+  echo 'OpenList allowed unrelated existing database tables' >&2
+  exit 1
+fi
+if ! grep -Fq 'OpenList MySQL read-only preflight failed' "$tmp/guard-stderr"; then
+  echo 'OpenList failed for a reason other than the schema guard' >&2
+  exit 1
+fi
+unexpected="$(docker exec sa-openlist-mysql-ci mysql -N -s --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='tenantdb' AND table_name LIKE 'x_%'")"
+if [[ "$unexpected" != 0 ]]; then
+  echo 'OpenList created tables despite rejected preflight' >&2
+  exit 1
+fi
+docker exec sa-openlist-mysql-ci mysql --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e 'DROP TABLE tenantdb.unrelated_ci_guard' >/dev/null 2>&1
+rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
+echo 'Read-only schema collision guard rejected unrelated tables'
 if ! bash .github/scripts/start-openlist.sh; then
   # This diagnostic uses the CI-only dummy database/password and is never
   # enabled in the production Session workflow.
