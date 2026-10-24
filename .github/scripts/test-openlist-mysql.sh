@@ -108,6 +108,30 @@ docker exec sa-openlist-mysql-ci mysql --protocol=socket \
   -e 'DROP VIEW tenantdb.x_users' >/dev/null 2>&1
 rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
 echo 'Read-only schema collision guard rejected disguised view'
+# A single real x_users table is not sufficient evidence of an OpenList DB.
+docker exec sa-openlist-mysql-ci mysql --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e 'CREATE TABLE tenantdb.x_users (id INT PRIMARY KEY)' >/dev/null 2>&1
+if bash .github/scripts/start-openlist.sh >"$tmp/partial-stdout" 2>"$tmp/partial-stderr"; then
+  echo 'OpenList accepted a partial existing schema' >&2
+  exit 1
+fi
+if ! grep -Fq 'OpenList MySQL read-only preflight failed' "$tmp/partial-stderr"; then
+  echo 'OpenList did not reject the partial schema during preflight' >&2
+  exit 1
+fi
+partial_tables="$(docker exec sa-openlist-mysql-ci mysql -N -s --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='tenantdb' AND table_name LIKE 'x_%'")"
+if [[ "$partial_tables" != 1 ]]; then
+  echo 'OpenList modified schema despite rejected partial preflight' >&2
+  exit 1
+fi
+docker exec sa-openlist-mysql-ci mysql --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e 'DROP TABLE tenantdb.x_users' >/dev/null 2>&1
+rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
+echo 'Read-only schema guard rejected a partial x_users table'
 if ! bash .github/scripts/start-openlist.sh; then
   # This diagnostic uses the CI-only dummy database/password and is never
   # enabled in the production Session workflow.
