@@ -91,6 +91,23 @@ docker exec sa-openlist-mysql-ci mysql --protocol=socket \
   -e 'DROP TABLE tenantdb.unrelated_ci_guard' >/dev/null 2>&1
 rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
 echo 'Read-only schema collision guard rejected unrelated tables'
+# A view named like an OpenList table must never pass the ownership guard.
+docker exec sa-openlist-mysql-ci mysql --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e 'CREATE VIEW tenantdb.x_users AS SELECT 1 AS id' >/dev/null 2>&1
+if bash .github/scripts/start-openlist.sh >"$tmp/view-stdout" 2>"$tmp/view-stderr"; then
+  echo 'OpenList allowed a misleading x_users view' >&2
+  exit 1
+fi
+if ! grep -Fq 'OpenList MySQL read-only preflight failed' "$tmp/view-stderr"; then
+  echo 'OpenList did not reject the unexpected view during preflight' >&2
+  exit 1
+fi
+docker exec sa-openlist-mysql-ci mysql --protocol=socket \
+  -u root --password=ci-temporary-root \
+  -e 'DROP VIEW tenantdb.x_users' >/dev/null 2>&1
+rm -f "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem"
+echo 'Read-only schema collision guard rejected disguised view'
 if ! bash .github/scripts/start-openlist.sh; then
   # This diagnostic uses the CI-only dummy database/password and is never
   # enabled in the production Session workflow.
