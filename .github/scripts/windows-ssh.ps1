@@ -48,7 +48,7 @@ Set-Service sshd -StartupType Manual
 # Disable broad stock inbound rules BEFORE opening the Tailnet-only one.
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue |
     Disable-NetFirewallRule
-New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 -RemoteAddress '100.64.0.0/10' -InterfaceAlias $Tailnet[0].Name | Out-Null
+New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName 'Session Actions Tailnet SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 -RemoteAddress '100.64.0.0/10' -InterfaceAlias $Tailnet[0].Name | Out-Null
 Start-Service sshd
 if (-not (Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue)) {
     throw 'OpenSSH is not listening'
