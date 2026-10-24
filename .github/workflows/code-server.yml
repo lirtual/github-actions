@@ -55,24 +55,37 @@ jobs:
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:session-actions
           hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
-      - name: Enable Tailnet SSH for authenticated port forwarding
+      - name: Start password-protected code-server service
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo tailscale set --ssh
-          tailscale ip -4 >/dev/null
-      - name: Install fixed code-server release and bind only loopback
-        shell: bash
+        env:
+          SESSION_SERVICE_PASSWORD: ${{ secrets.SESSION_SERVICE_PASSWORD }}
         run: bash .github/scripts/start-code-server.sh
+      - name: Start Cloudflare Tunnel and verify HTTPS route
+        shell: bash
+        env:
+          SESSION_SERVICE: code-server
+        run: bash .github/scripts/start-tunnel.sh
+      - name: Upload temporary Tunnel locator
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: session-tunnel-url
+          path: ${{ runner.temp }}/session-tunnel-url
+          if-no-files-found: error
+          retention-days: 1
       - name: Signed Ready after local service health check
         run: python3 .github/scripts/session_action.py ready
       - name: Hold until Runner-local lifetime or GitHub cancellation
         run: python3 .github/scripts/session_action.py hold
-      - name: Cleanup and disable Tailnet SSH
+      - name: Stop service and Cloudflare Tunnel
         if: always()
         shell: bash
         run: |
+          if test -s "$RUNNER_TEMP/session-tunnel.pid"; then
+            kill "$(cat "$RUNNER_TEMP/session-tunnel.pid")" 2>/dev/null || true
+          fi
           if test -s "$RUNNER_TEMP/session-service.pid"; then
             kill "$(cat "$RUNNER_TEMP/session-service.pid")" 2>/dev/null || true
           fi
+          docker rm --force session-chrome session-openlist >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/session-service-password" "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" "$RUNNER_TEMP/cloudflared"
           sudo tailscale set --ssh=false || true
