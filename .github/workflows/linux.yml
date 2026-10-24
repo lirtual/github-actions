@@ -71,6 +71,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          sudo systemctl stop ssh || true
+          sudo systemctl stop ssh.service ssh.socket || true
           sudo rm -f /etc/ssh/sshd_config.d/00-session-actions.conf
+          sudo rm -f /run/systemd/system/ssh.socket.d/00-session-actions.conf
+          sudo systemctl daemon-reload || true
           sudo tailscale set --ssh=false || true
