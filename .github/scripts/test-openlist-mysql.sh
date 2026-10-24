@@ -61,7 +61,20 @@ fi
 export OPENLIST_DATABASE_URI="mysql://openlist:$db_password@$gateway:3307/tenantdb?ssl-mode=REQUIRED"
 export OPENLIST_DATABASE_CA
 OPENLIST_DATABASE_CA="$(cat "$tmp/certs/ca.pem")"
-bash .github/scripts/start-openlist.sh
+if ! bash .github/scripts/start-openlist.sh; then
+  # This diagnostic uses the CI-only dummy database/password and is never
+  # enabled in the production Session workflow.
+  echo 'CI-only OpenList bootstrap diagnostics:' >&2
+  image='openlistteam/openlist@sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64'
+  docker run --rm --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$RUNNER_TEMP/openlist-data,target=/opt/openlist/data" \
+    --env "OPENLIST_ADMIN_PASSWORD=$SESSION_SERVICE_PASSWORD" \
+    --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
+    --entrypoint /bin/sh "$image" -c './openlist admin' 2>&1 | tail -n 18 || true
+  echo 'CI-only MySQL server diagnostics:' >&2
+  docker logs --tail 18 sa-openlist-mysql-ci 2>&1 | tail -n 18 || true
+  exit 1
+fi
 
 tables="$(docker exec sa-openlist-mysql-ci mysql -N -s --protocol=socket \
   -u root --password=ci-temporary-root \
