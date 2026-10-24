@@ -13,13 +13,17 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 yml = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
                 self.assertIn("ref: ${{ github.sha }}", yml)
                 self.assertIn("persist-credentials: false", yml)
-                self.assertIn("hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}", yml)
+                if name in ("linux", "windows"):
+                    self.assertIn("hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}", yml)
+                else:
+                    self.assertNotIn("tailscale/github-action@", yml)
                 self.assertIn("timeout-minutes: 360", yml)
                 self.assertIn("Capture job lifetime before checkout", yml)
                 self.assertLess(yml.index("Capture job lifetime before checkout"),
                                 yml.index("Checkout pinned dispatched revision"))
-                self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
-                self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
+                if name in ("linux", "windows"):
+                    self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
+                    self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
                 self.assertNotIn("secrets.TS_OAUTH_CLIENT_ID", yml)
                 self.assertNotIn("secrets.TS_AUDIENCE", yml)
 
@@ -40,13 +44,16 @@ class SessionWorkflowInvariants(unittest.TestCase):
             with self.subTest(workflow=name):
                 text = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
                 claim = text.index("session_action.py claim")
-                join = text.index(pinned_tailnet)
+                join = text.index(pinned_tailnet) if name in ("linux", "windows") else text.index("Start password-protected")
                 ready = text.index("session_action.py ready")
                 hold = text.index("session_action.py hold")
                 self.assertTrue(claim < join < ready < hold)
                 self.assertIn("id-token: write", text[:claim])
                 self.assertIn("WORKFLOW_ACTION_TYPE: session", text[:claim])
                 self.assertNotIn("tailscale set", text[:join])
+                if name not in ("linux", "windows"):
+                    self.assertNotIn(pinned_tailnet, text)
+                    self.assertNotIn("sudo tailscale set", text)
                 self.assertNotIn("${{ secrets.", text[:claim])
                 self.assertNotIn("TS_OAUTH_CLIENT_ID", text[:claim])
                 self.assertNotIn("TS_AUDIENCE", text[:claim])
