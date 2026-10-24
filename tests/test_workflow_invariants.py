@@ -209,7 +209,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
             base.replace("/tenantdb?", "/?"),
             base.replace("appuser", "user@injected"),
             base.replace("p%5Fass", ""),
-            base.replace("db.example.invalid", "127.0.0.1"),
+            base.replace("db.example.invalid", "bad host"),
         ]:
             with self.subTest(uri=invalid):
                 with self.assertRaises(ValueError):
