@@ -118,6 +118,18 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertLess(workflow.index("Classify bounded SSH authentication diagnostics"),
                         workflow.index("Clean up restricted SSH account and firewall"))
 
+    def test_windows_account_diagnostics_are_narrow_and_secret_free(self):
+        script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("Session local account enabled:", script)
+        self.assertIn("Session local account unexpectedly disabled", script)
+        self.assertIn("authorizedkeysfile)\\s", script)
+        self.assertIn("user_not_allowlisted", workflow)
+        self.assertIn("user_account_locked", workflow)
+        self.assertIn("user_account_disabled", workflow)
+        self.assertIn("user_invalid", workflow)
+        self.assertNotIn("Write-Output $logs", workflow)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
