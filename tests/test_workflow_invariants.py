@@ -51,9 +51,13 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertNotIn("TS_OAUTH_CLIENT_ID", text[:claim])
                 self.assertNotIn("TS_AUDIENCE", text[:claim])
                 self.assertIn("if: always()", text[hold:])
-                if name == "openlist":
-                    self.assertIn("secrets.OPENLIST_ADMIN_PASSWORD",
-                                  text[join:ready])
+                if name in ("chrome", "code-server", "openlist"):
+                    self.assertIn("secrets.SESSION_SERVICE_PASSWORD", text[join:ready])
+                    self.assertIn("start-tunnel.sh", text[join:ready])
+                    self.assertIn("actions/upload-artifact@", text[join:ready])
+                    self.assertNotIn("sudo tailscale set --ssh\\n", text[join:ready])
+                    self.assertNotIn("secrets.OPENLIST_ADMIN_PASSWORD", text)
+                    self.assertLess(text.index("start-tunnel.sh"), ready)
                 if name in ("linux", "windows"):
                     self.assertIn("secrets.SESSION_SSH_PASSWORD",
                                   text[join:ready])
@@ -61,6 +65,49 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertNotIn("WINDOWS_ADMIN_PASSWORD", text)
                     self.assertNotIn("Remove-LocalUser", text)
                     self.assertEqual(text.count("secrets.SESSION_SSH_PASSWORD"), 1)
+                if name == "windows":
+                    self.assertIn("secrets.SESSION_RDP_PASSWORD", text[join:ready])
+                    self.assertIn("windows-rdp.ps1", text[join:ready])
+                    self.assertIn("SessionActionsTailscaleRDP", text[hold:])
+
+    def test_services_use_native_auth_before_cloudflare_tunnel(self):
+        chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
+        code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
+        openlist = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        tunnel = (ROOT / ".github/scripts/start-tunnel.sh").read_text()
+        self.assertIn("lscr.io/linuxserver/chrome@sha256:49a019a04b8d38422609d3c586636293417f61886704d516b7d5233cb4bd0b12", chrome)
+        self.assertIn("CUSTOM_USER=admin", chrome)
+        self.assertIn("FILE__PASSWORD=", chrome)
+        self.assertIn('if [[ "$status" == 401 ]]', chrome)
+        self.assertNotIn("remote-debugging-port", chrome)
+        self.assertIn("--auth password", code)
+        self.assertNotIn("--auth none", code)
+        self.assertIn('PASSWORD="$SESSION_SERVICE_PASSWORD"', code)
+        self.assertIn('OPENLIST_ADMIN_PASSWORD="$SESSION_SERVICE_PASSWORD"', openlist)
+        self.assertIn('/api/auth/login', openlist)
+        self.assertIn("2026.8.2", tunnel)
+        self.assertIn("fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2", tunnel)
+        self.assertIn("trycloudflare", tunnel)
+        self.assertIn("session-tunnel-url", tunnel)
+        self.assertIn("GITHUB_STEP_SUMMARY", tunnel)
+        self.assertIn("Cloudflare Tunnel exited before Ready", tunnel)
+        self.assertNotIn("SESSION_SERVICE_PASSWORD", tunnel)
+
+    def test_windows_rdp_uses_existing_account_and_private_firewall(self):
+        rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
+        self.assertIn("$RdpPassword -cne $SshPassword", rdp)
+        self.assertIn("SESSION_RDP_PASSWORD", rdp)
+        self.assertIn("SESSION_SSH_PASSWORD", rdp)
+        self.assertIn("Get-LocalUser -Name ([Environment]::UserName)", rdp)
+        self.assertNotIn("New-LocalUser", rdp)
+        self.assertIn("UserAuthentication -Value 1", rdp)
+        self.assertIn("fDenyTSConnections -Value 0", rdp)
+        self.assertIn("-LocalPort 3389 -LocalAddress $TailnetAddress", rdp)
+        self.assertIn("Start-Service TermService", rdp)
+        windows = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("SESSION_RDP_PASSWORD: ${{ secrets.SESSION_RDP_PASSWORD }}", windows)
+        self.assertIn("Remove-NetFirewallRule -Name SessionActionsTailscaleRDP", windows)
+        self.assertIn("fDenyTSConnections -Value 1", windows)
 
     def test_ubuntu_uses_existing_runner_user_and_real_password_ssh(self):
         workflow = (ROOT / ".github/workflows/linux.yml").read_text()
