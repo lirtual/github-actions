@@ -60,6 +60,7 @@ jobs:
         env:
           SESSION_SERVICE_PASSWORD: ${{ secrets.SESSION_SERVICE_PASSWORD }}
           OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}
+          OPENLIST_DATABASE_CA: ${{ secrets.OPENLIST_DATABASE_CA }}
         run: bash .github/scripts/start-openlist.sh
       - name: Start Cloudflare Tunnel and verify HTTPS route
         shell: bash
