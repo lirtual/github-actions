@@ -63,6 +63,14 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("$UserHome = Join-Path", text)
         self.assertIn("Join-Path $UserHome '.ssh'", text)
 
+    def test_windows_ssh_keeps_administrators_for_key_acl_setup(self):
+        # The runner must still be able to set authorized_keys permissions
+        # after disabling inheritance on the parent .ssh directory.
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("'*S-1-5-32-544:(OI)(CI)F'", text)
+        self.assertIn("'*S-1-5-32-544:F'", text)
+        self.assertIn("'*S-1-5-18:F'", text)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
