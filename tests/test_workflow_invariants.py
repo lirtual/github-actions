@@ -102,6 +102,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertLess(stop, start)
         self.assertIn("passwordauthentication no", text)
         self.assertIn("pubkeyauthentication yes", text)
+        self.assertIn("'AllowGroups users'", text)
+        self.assertIn("'AllowUsers sessionuser'", text)
 
     def test_windows_ssh_diagnostics_do_not_echo_raw_logs(self):
         script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
