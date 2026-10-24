@@ -28,8 +28,8 @@ $Keys = Join-Path $Directory 'authorized_keys'
 if ($LASTEXITCODE -ne 0) { throw 'SSH directory ACL failed' }
 & icacls.exe $Keys '/inheritance:r' "/grant:r" "$($Username):R" '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'SSH key ACL failed' }
-// Windows sshd StrictModes also validates the owner, not only the ACL.
-// GitHub Runner initially creates these files as its admin account.
+# Windows sshd StrictModes also validates the owner, not only the ACL.
+# GitHub Runner initially creates these files as its admin account.
 & icacls.exe $Keys '/setowner' $Username | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'SSH key owner update failed' }
 & icacls.exe $Directory '/setowner' $Username | Out-Null
