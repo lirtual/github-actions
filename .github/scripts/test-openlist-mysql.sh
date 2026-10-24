@@ -28,6 +28,9 @@ openssl x509 -req -in "$tmp/certs/server-csr.pem" -days 1 \
   -CA "$tmp/certs/ca.pem" -CAkey "$tmp/certs/ca-key.pem" -CAcreateserial \
   -extfile "$tmp/certs/san.ext" -out "$tmp/certs/server.pem" >/dev/null 2>&1
 # Disposable test-only credentials, readable by the container's MySQL UID.
+# The host directory is bound at /ci/certs; MySQL runs as UID 999 and
+# needs directory execute permission to read the public CA and server files.
+chmod 755 "$tmp/certs"
 chmod 644 "$tmp/certs/ca.pem" "$tmp/certs/server.pem" "$tmp/certs/server-key.pem"
 
 docker run -d --rm --name sa-openlist-mysql-ci \
