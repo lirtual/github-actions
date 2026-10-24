@@ -14,7 +14,10 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("ref: ${{ github.sha }}", yml)
                 self.assertIn("persist-credentials: false", yml)
                 self.assertIn("hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}", yml)
-                self.assertIn("timeout-minutes: 330", yml)
+                self.assertIn("timeout-minutes: 360", yml)
+                self.assertIn("Capture job lifetime before checkout", yml)
+                self.assertLess(yml.index("Capture job lifetime before checkout"),
+                                yml.index("Checkout pinned dispatched revision"))
                 self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
                 self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
                 self.assertNotIn("secrets.TS_OAUTH_CLIENT_ID", yml)
