@@ -67,6 +67,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertEqual(text.count("secrets.SESSION_SYSTEM_PASSWORD"), 1)
                 if name == "openlist":
                     self.assertIn("secrets.OPENLIST_DATABASE_URI", text[join:ready])
+                    self.assertIn("secrets.OPENLIST_DATABASE_CA", text[join:ready])
                     self.assertIn("openlist-db-config.py", (ROOT / ".github/scripts/start-openlist.sh").read_text())
                     self.assertNotIn("secrets.OPENLIST_DATABASE }}", text)
                 if name == "windows":
@@ -197,7 +198,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertEqual(config["name"], "tenantdb")
         self.assertEqual(config["password"], "p_ass")
         self.assertEqual(config["table_prefix"], "x_")
-        self.assertEqual(config["ssl_mode"], "skip-verify")
+        self.assertEqual(config["ssl_mode"], "true")
         verified = parse(base.replace("REQUIRED", "VERIFY_IDENTITY"))
         self.assertEqual(verified["ssl_mode"], "true")
         for invalid in [
@@ -215,6 +216,18 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     parse(invalid)
 
+    def test_aiven_ca_pem_bundle_validation(self):
+        import runpy
+        module = runpy.run_path(str(ROOT / ".github/scripts/openlist-db-config.py"))
+        validate_ca = module["validate_ca"]
+        ca = (ROOT / "tests/fixtures/test-ca.pem").read_text()
+        self.assertEqual(validate_ca(ca), ca)
+        self.assertEqual(validate_ca(ca + ca), ca + ca)
+        for invalid in ("", "not a PEM certificate", ca + "\\nsecret", ca.replace("CERTIFICATE", "PRIVATE KEY")):
+            with self.subTest(invalid=invalid[:30]):
+                with self.assertRaises(ValueError):
+                    validate_ca(invalid)
+
     def test_openlist_mysql_uri_config_is_private_and_has_no_sqlite_fallback(self):
         import json
         import os
@@ -228,6 +241,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
             env = dict(os.environ)
             env["RUNNER_TEMP"] = temp
             env["OPENLIST_DATABASE_URI"] = "mysql://openlist:s3cret@mysql.example.invalid:18691/testdb?ssl-mode=REQUIRED"
+            ca = (ROOT / "tests/fixtures/test-ca.pem").read_text()
+            env["OPENLIST_DATABASE_CA"] = ca
             script = ROOT / ".github/scripts/openlist-db-config.py"
             result = subprocess.run(
                 ["python", str(script), str(config_path)],
@@ -239,8 +254,13 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
             data = json.loads(config_path.read_text())
             self.assertEqual(data["database"]["name"], "testdb")
-            self.assertEqual(data["database"]["ssl_mode"], "skip-verify")
+            self.assertEqual(data["database"]["ssl_mode"], "true")
             self.assertEqual(data["database"]["password"], "s3cret")
+            self.assertEqual(data["database"]["ssl_mode"], "true")
+            pem_path = target / "database-ca.pem"
+            self.assertEqual(pem_path.read_text(), ca)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(pem_path.stat().st_mode), 0o600)
             self.assertNotEqual(data["jwt_secret"], "")
             result = subprocess.run(
                 ["python", str(script), str(config_path)],
@@ -248,14 +268,29 @@ class SessionWorkflowInvariants(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("s3cret", result.stdout + result.stderr)
+            # A missing/invalid CA must fail without creating any secret files.
+            config_path.unlink()
+            pem_path.unlink()
+            env["OPENLIST_DATABASE_CA"] = "not a PEM certificate"
+            rejected = subprocess.run(
+                ["python", str(script), str(config_path)],
+                env=env, text=True, capture_output=True, timeout=10,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertNotIn("s3cret", rejected.stdout + rejected.stderr)
+            self.assertFalse(config_path.exists())
+            self.assertFalse(pem_path.exists())
         start = (ROOT / ".github/scripts/start-openlist.sh").read_text()
         self.assertIn("OPENLIST_DATABASE_URI", start)
         self.assertIn("openlist-db-config.py", start)
         self.assertIn("openlist admin set", start)
+        self.assertIn("SSL_CERT_FILE=/opt/openlist/data/database-ca.pem", start)
+        self.assertIn("unset OPENLIST_DATABASE_URI OPENLIST_DATABASE_CA", start)
         self.assertIn("external MySQL initialization failed", start)
         self.assertNotIn("sqlite3", start)
         workflow = (ROOT / ".github/workflows/openlist.yml").read_text()
         self.assertIn("OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}", workflow)
+        self.assertIn("OPENLIST_DATABASE_CA: ${{ secrets.OPENLIST_DATABASE_CA }}", workflow)
         self.assertIn('rm -f "$RUNNER_TEMP/openlist-data/config.json"', workflow)
 
     def test_openlist_ready_requires_admin_authentication(self):
