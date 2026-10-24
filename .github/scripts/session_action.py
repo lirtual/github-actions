@@ -78,6 +78,26 @@ def github_token(audience):
     return jwt
 
 
+def signed_status_payload(attempt, stage):
+    payload = {"attemptId": attempt}
+    if stage != "ready":
+        return payload
+    # The tunnel script is the sole source; never take a caller input or
+    # synthesize a public URL. Tailnet-only Sessions have no such file.
+    temp = pathlib.Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+    locator = temp / "session-tunnel-url"
+    if locator.is_symlink():
+        raise SafeProtocolError("session_locator_invalid")
+    if locator.exists():
+        if not locator.is_file() or locator.stat().st_size > 180:
+            raise SafeProtocolError("session_locator_invalid")
+        value = locator.read_text(encoding="ascii").strip()
+        if not re.fullmatch(r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com/?", value):
+            raise SafeProtocolError("session_locator_invalid")
+        payload["sessionUrl"] = value
+    return payload
+
+
 def assert_status(stage):
     attempt, audience, claim = configuration()
     url = claim if stage == "claim" else claim[:-len("/claim")] + "/ready"
@@ -92,7 +112,7 @@ def assert_status(stage):
         jwt = github_token(audience)
         request = urllib.request.Request(
             url, method="POST",
-            data=json.dumps({"attemptId": attempt}).encode("utf-8"),
+            data=json.dumps(signed_status_payload(attempt, stage)).encode("utf-8"),
             headers={"Authorization": "Bearer " + jwt, "Content-Type": "application/json"},
         )
         try:

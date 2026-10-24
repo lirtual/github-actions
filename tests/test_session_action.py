@@ -39,6 +39,7 @@ class SessionProtocolTests(unittest.TestCase):
             "CAPABILITY_ID": "github.action",
             "WORKFLOW_ACTION_CLAIM_URL": "https://example.test/github/action/claim",
             "WORKFLOW_ACTION_OIDC_AUDIENCE": AUDIENCE,
+            "RUNNER_TEMP": tempfile.gettempdir(),
         }
 
     def test_configuration_checks_strict_server_identity(self):
@@ -362,6 +363,35 @@ class SessionProtocolTests(unittest.TestCase):
                 with mock.patch.object(session.time, "time", return_value=1234):
                     with self.assertRaises(ValueError):
                         session.start()
+
+
+    def test_signed_ready_attaches_only_the_verified_temporary_web_url(self):
+        with tempfile.TemporaryDirectory() as path:
+            settings = self.settings()
+            settings["RUNNER_TEMP"] = path
+            locator = Path(path) / "session-tunnel-url"
+            with mock.patch.dict(os.environ, settings, clear=True):
+                self.assertEqual(session.signed_status_payload(ATTEMPT, "claim"),
+                                 {"attemptId": ATTEMPT})
+                self.assertEqual(session.signed_status_payload(ATTEMPT, "ready"),
+                                 {"attemptId": ATTEMPT})
+                url = "https://example-temp-session.trycloudflare.com"
+                locator.write_text(url + "\n", encoding="ascii")
+                self.assertEqual(session.signed_status_payload(ATTEMPT, "ready"),
+                                 {"attemptId": ATTEMPT, "sessionUrl": url})
+                self.assertEqual(session.signed_status_payload(ATTEMPT, "claim"),
+                                 {"attemptId": ATTEMPT})
+                for invalid in ["http://example.trycloudflare.com",
+                                "https://example.trycloudflare.com.evil.org",
+                                "https://example.trycloudflare.com/?token=bad",
+                                "https://127.0.0.1/"]:
+                    locator.write_text(invalid, encoding="ascii")
+                    with self.subTest(value=invalid), self.assertRaises(ValueError):
+                        session.signed_status_payload(ATTEMPT, "ready")
+                locator.unlink()
+                locator.symlink_to(Path(path) / "missing-file")
+                with self.assertRaises(ValueError):
+                    session.signed_status_payload(ATTEMPT, "ready")
 
 
 if __name__ == "__main__":
