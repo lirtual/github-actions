@@ -83,8 +83,6 @@ jobs:
         run: bash -n .github/scripts/start-*.sh
       - name: Start the same local service script used by the Session
         shell: bash
-        env:
-          SESSION_SERVICE_PASSWORD: ci-ephemeral-loopback-only
         run: bash ".github/scripts/start-${{ matrix.service }}.sh"
       - name: Ensure no service listens on wildcard/public addresses
         shell: bash
@@ -103,27 +101,21 @@ jobs:
             echo "Service must not listen on a public interface" >&2
             exit 1
           fi
-      - name: Assert native password login accepts the shared credential
+      - name: Assert password-free loopback GUI is ready for the protected Tunnel
         shell: bash
         env:
           SERVICE: ${{ matrix.service }}
-          SESSION_SERVICE_PASSWORD: ci-ephemeral-loopback-only
         run: |
           set -euo pipefail
           case "$SERVICE" in
-            chrome)
-              test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)" = 401
-              test "$(curl --silent --user "admin:$SESSION_SERVICE_PASSWORD" --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)" = 200
-              ;;
-            code-server)
-              response="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)"
-              test "$response" = 302 -o "$response" = 303
-              cookies="$RUNNER_TEMP/code-server-login-cookies"
-              curl --silent --location --cookie-jar "$cookies" --cookie "$cookies" --data-urlencode "password=$SESSION_SERVICE_PASSWORD"                 --output /dev/null http://127.0.0.1:8080/login
-              test "$(curl --silent --cookie "$cookies" --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)" = 200
-              ;;
-            openlist) echo "OpenList native admin password was verified during startup" ;;
+            chrome) PORT=3000 ;;
+            code-server) PORT=8080 ;;
+            *) exit 1 ;;
           esac
+          test "$(curl --silent --max-time 5 --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$PORT/")" = 200
+          # Verify no native login page/auth challenge survives.
+          ! curl --silent --max-time 5 -D - -o /dev/null "http://127.0.0.1:$PORT/" | grep -Eiq '^www-authenticate:'
+
       - name: Remove transient local service
         if: always()
         shell: bash
