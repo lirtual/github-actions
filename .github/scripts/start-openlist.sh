@@ -11,7 +11,7 @@ fi
 umask 077
 mkdir -p "$RUNNER_TEMP/openlist-data"
 python3 .github/scripts/openlist-db-config.py "$RUNNER_TEMP/openlist-data/config.json"
-unset OPENLIST_DATABASE_URI
+unset OPENLIST_DATABASE_URI OPENLIST_DATABASE_CA
 export OPENLIST_ADMIN_PASSWORD="$SESSION_SERVICE_PASSWORD"
 unset SESSION_SERVICE_PASSWORD
 
@@ -22,6 +22,7 @@ mount="type=bind,source=$RUNNER_TEMP/openlist-data,target=/opt/openlist/data"
 # Suppress all CLI diagnostic output: driver connection errors may embed credentials.
 if ! docker run --rm --user "$(id -u):$(id -g)" \
     --mount "$mount" --env OPENLIST_ADMIN_PASSWORD \
+    --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
     --entrypoint /bin/sh "$image" -c \
     './openlist admin >/dev/null 2>&1 && ./openlist admin set "$OPENLIST_ADMIN_PASSWORD" >/dev/null 2>&1' \
     >/dev/null 2>&1; then
@@ -34,6 +35,7 @@ docker run --detach --rm --name session-openlist \
   --publish 127.0.0.1:5244:5244 \
   --mount "$mount" \
   --env OPENLIST_ADMIN_PASSWORD \
+  --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
   "$image" >/dev/null
 ready=false
 for _ in $(seq 1 45); do
