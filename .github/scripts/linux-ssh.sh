@@ -2,10 +2,10 @@
 # Use the existing Ubuntu GitHub Runner account with password SSH over Tailscale.
 set -euo pipefail
 
-if [[ -z "${SESSION_SSH_PASSWORD:-}" ||
-      "$SESSION_SSH_PASSWORD" == *$'\n'* ||
-      "$SESSION_SSH_PASSWORD" == *$'\r'* ]]; then
-  echo 'SESSION_SSH_PASSWORD must be a non-empty single-line password' >&2
+if [[ -z "${SESSION_SYSTEM_PASSWORD:-}" ||
+      "$SESSION_SYSTEM_PASSWORD" == *$'\n'* ||
+      "$SESSION_SYSTEM_PASSWORD" == *$'\r'* ]]; then
+  echo 'SESSION_SYSTEM_PASSWORD must be a non-empty single-line password' >&2
   exit 1
 fi
 account="$(id -un)"
@@ -56,8 +56,8 @@ for setting in \
 done
 
 # chpasswd applies the image's actual local password policy. Never log the secret.
-printf '%s:%s\n' "$account" "$SESSION_SSH_PASSWORD" | sudo chpasswd
-unset SESSION_SSH_PASSWORD
+printf '%s:%s\n' "$account" "$SESSION_SYSTEM_PASSWORD" | sudo chpasswd
+unset SESSION_SYSTEM_PASSWORD
 sudo systemctl restart ssh
 if ! sudo ss -ltn '( sport = :22 )' | grep -Fq "$tailnet_ip:22"; then
   echo 'OpenSSH is not listening on the Tailnet address' >&2
