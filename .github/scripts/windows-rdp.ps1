@@ -1,15 +1,6 @@
 # Enable native Windows RDP on the existing Runner administrator, via Tailscale only.
-# Windows has one password per local account: SSH and RDP secrets must match.
+# SSH and RDP authenticate the same Windows local account and SESSION_SYSTEM_PASSWORD.
 $ErrorActionPreference = 'Stop'
-$RdpPassword = $env:SESSION_RDP_PASSWORD
-$SshPassword = $env:SESSION_SSH_PASSWORD
-if ([string]::IsNullOrEmpty($RdpPassword) -or $RdpPassword.Contains([char]10) -or
-    $RdpPassword.Contains([char]13) -or $RdpPassword -cne $SshPassword) {
-    throw 'SESSION_RDP_PASSWORD must match SESSION_SSH_PASSWORD for the same Windows local account'
-}
-Remove-Variable RdpPassword, SshPassword
-$env:SESSION_RDP_PASSWORD = $null
-$env:SESSION_SSH_PASSWORD = $null
 $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $Account = Get-LocalUser -Name ([Environment]::UserName) -ErrorAction Stop
 if ($Account.SID.Value -ne $Identity.User.Value -or -not $Account.Enabled) {
