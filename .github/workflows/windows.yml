@@ -58,10 +58,10 @@ jobs:
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:session-actions
           hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
-      - name: Configure restricted SSH-only Windows Session
+      - name: Configure Tailnet-only password SSH for the Windows Runner
         shell: pwsh
         env:
-          SESSION_SSH_PUBLIC_KEY: ${{ vars.SESSION_SSH_PUBLIC_KEY }}
+          WINDOWS_ADMIN_PASSWORD: ${{ secrets.WINDOWS_ADMIN_PASSWORD }}
         run: ./.github/scripts/windows-ssh.ps1
       - name: Signed Ready after private SSH is listening
         shell: pwsh
@@ -69,10 +69,9 @@ jobs:
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh
         run: python .github/scripts/session_action.py hold
-      - name: Clean up restricted SSH account and firewall
+      - name: Stop SSH and remove Tailnet firewall access
         if: always()
         shell: pwsh
         run: |
           Stop-Service sshd -ErrorAction SilentlyContinue
           Remove-NetFirewallRule -Name SessionActionsTailscaleSSH -ErrorAction SilentlyContinue
-          Remove-LocalUser -Name sessionuser -ErrorAction SilentlyContinue
