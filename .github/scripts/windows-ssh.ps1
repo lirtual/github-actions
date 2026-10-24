@@ -15,14 +15,14 @@ if ($Username -notmatch '^[A-Za-z][A-Za-z0-9_-]{0,31}$' -or
     throw 'Unexpected Windows Runner account'
 }
 
-$Password = $env:SESSION_SSH_PASSWORD
+$Password = $env:SESSION_SYSTEM_PASSWORD
 if ([string]::IsNullOrEmpty($Password) -or
     $Password.Contains([char]10) -or $Password.Contains([char]13)) {
-    throw 'SESSION_SSH_PASSWORD must be a non-empty single-line password accepted by Windows local policy'
+    throw 'SESSION_SYSTEM_PASSWORD must be a non-empty single-line password accepted by Windows local policy'
 }
 $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
 Remove-Variable Password
-$env:SESSION_SSH_PASSWORD = $null
+$env:SESSION_SYSTEM_PASSWORD = $null
 Set-LocalUser -Name $Username -Password $SecurePassword -ErrorAction Stop
 Remove-Variable SecurePassword
 
