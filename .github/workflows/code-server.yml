@@ -1,4 +1,4 @@
-name: code-server Session
+name: code-server
 on:
   workflow_dispatch:
     inputs:
