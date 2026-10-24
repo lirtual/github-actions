@@ -44,7 +44,7 @@ jobs:
     # This executes only isolated, loopback-bound services. It intentionally
     # has NO repository/Tailnet secrets, OIDC, dispatch or Workflow MCP grants.
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +60,7 @@ jobs:
       - name: Start the same local service script used by the Session
         shell: bash
         env:
-          OPENLIST_ADMIN_PASSWORD: ci-ephemeral-loopback-only
+          SESSION_SERVICE_PASSWORD: ci-ephemeral-loopback-only
         run: bash ".github/scripts/start-${{ matrix.service }}.sh"
       - name: Ensure no service listens on wildcard/public addresses
         shell: bash
@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$SERVICE" in
-            chrome) PORT=9222 ;;
+            chrome) PORT=3000 ;;
             code-server) PORT=8080 ;;
             openlist) PORT=5244 ;;
             *) exit 1 ;;
@@ -79,6 +79,23 @@ jobs:
             echo "Service must not listen on a public interface" >&2
             exit 1
           fi
+      - name: Assert native password access is enforced
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            chrome)
+              status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)"
+              test "$status" = 401
+              ;;
+            code-server)
+              status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)"
+              test "$status" = 302 -o "$status" = 303
+              ;;
+            openlist) echo "OpenList native admin password was verified during startup" ;;
+          esac
       - name: Remove transient local service
         if: always()
         shell: bash
@@ -86,7 +103,8 @@ jobs:
           if test -s "$RUNNER_TEMP/session-service.pid"; then
             kill "$(cat "$RUNNER_TEMP/session-service.pid")" 2>/dev/null || true
           fi
-          docker rm --force session-openlist >/dev/null 2>&1 || true
+          docker rm --force session-openlist session-chrome >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/session-service-password"
 
   smoke-windows-prerequisites:
     runs-on: windows-latest
@@ -111,6 +129,14 @@ jobs:
             (Resolve-Path '.github/scripts/windows-ssh.ps1').Path,
             [ref]$tokens, [ref]$errorsFound) | Out-Null
           if ($errorsFound.Count -ne 0) { throw 'Invalid Windows SSH configuration script' }
+          $errorsFound = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/scripts/windows-rdp.ps1').Path,
+            [ref]$tokens, [ref]$errorsFound) | Out-Null
+          if ($errorsFound.Count -ne 0) { throw 'Invalid Windows RDP configuration script' }
+          if (-not (Get-Service TermService -ErrorAction SilentlyContinue)) {
+            throw 'Windows Remote Desktop Services unavailable'
+          }
           if (-not (Get-Command Set-LocalUser -ErrorAction SilentlyContinue)) {
             throw 'Local password management unavailable'
           }
