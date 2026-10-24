@@ -15,14 +15,14 @@ if ($Username -notmatch '^[A-Za-z][A-Za-z0-9_-]{0,31}$' -or
     throw 'Unexpected Windows Runner account'
 }
 
-$Password = $env:WINDOWS_ADMIN_PASSWORD
-if ([string]::IsNullOrEmpty($Password) -or $Password.Length -lt 16 -or
+$Password = $env:SESSION_SSH_PASSWORD
+if ([string]::IsNullOrEmpty($Password) -or
     $Password.Contains([char]10) -or $Password.Contains([char]13)) {
-    throw 'WINDOWS_ADMIN_PASSWORD must be a single-line password of at least 16 characters'
+    throw 'SESSION_SSH_PASSWORD must be a non-empty single-line password accepted by Windows local policy'
 }
 $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
 Remove-Variable Password
-$env:WINDOWS_ADMIN_PASSWORD = $null
+$env:SESSION_SSH_PASSWORD = $null
 Set-LocalUser -Name $Username -Password $SecurePassword -ErrorAction Stop
 Remove-Variable SecurePassword
 
