@@ -65,35 +65,6 @@ jobs:
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh
         run: python .github/scripts/session_action.py hold
-      - name: Classify bounded SSH authentication diagnostics
-        if: always()
-        shell: pwsh
-        run: |
-          $folder = Join-Path $env:ProgramData 'ssh\logs'
-          $logs = @()
-          if (Test-Path $folder) {
-            foreach ($file in @(Get-ChildItem $folder -Filter 'sshd*.log' -ErrorAction SilentlyContinue | Select-Object -First 2)) {
-              $logs += @(Get-Content $file.FullName -Tail 500 -ErrorAction SilentlyContinue)
-            }
-          }
-          $signals = [ordered]@{
-            key_file_access_denied = '(?i)(authorized_keys.*(permission denied|access denied|cannot open)|could not open .*authorized)'
-            ownership_rejected = '(?i)(bad ownership|bad modes|authentication refused)'
-            authorized_key_matched = '(?i)(matching key found|accepted key)'
-            pubkey_rejected = '(?i)(failed publickey|userauth_pubkey.*failure|key not found)'
-            user_rejected = '(?i)(invalid user|not allowed because)'
-            user_invalid = '(?i)(invalid user|unable to resolve user)'
-            user_not_allowlisted = '(?i)(not allowed because not listed in AllowUsers)'
-            user_account_locked = '(?i)(not allowed because.*locked)'
-            user_account_disabled = '(?i)(not allowed because.*disabled)'
-            user_group_denied = '(?i)(not allowed because.*group)'
-            user_denied_or_expired = '(?i)(not allowed because.*(denied|expired|DenyUsers))'
-          }
-          Write-Output ("SSH diagnostic log lines available: " + $logs.Count)
-          foreach ($label in $signals.Keys) {
-            $hits = @($logs | Where-Object { $_ -match $signals[$label] }).Count
-            Write-Output ("SSH diagnostic " + $label + ": " + $hits)
-          }
       - name: Clean up restricted SSH account and firewall
         if: always()
         shell: pwsh
