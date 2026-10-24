@@ -96,6 +96,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("session-tunnel-url", tunnel)
         self.assertIn("GITHUB_STEP_SUMMARY", tunnel)
         self.assertIn("Cloudflare Tunnel exited before Ready", tunnel)
+        self.assertIn("chrome:401|code-server:302|code-server:303|openlist:200", tunnel)
+        self.assertNotIn("200|301|302|303|307|308|401|403", tunnel)
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
