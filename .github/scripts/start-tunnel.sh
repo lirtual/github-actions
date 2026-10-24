@@ -37,19 +37,21 @@ for _ in $(seq 1 60); do
   kill -0 "$pid" 2>/dev/null || { echo 'Cloudflare Tunnel exited before Ready' >&2; exit 1; }
   candidate="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$log" | head -n 1 || true)"
   if [[ -n "$candidate" ]]; then
-    # Creation succeeded only with --allowed-mail; the unauthenticated
-    # HTTPS response is now Cloudflare's email-OTP gate, not the origin app.
-    status="$(curl --silent --show-error --max-time 4 --output /dev/null --write-out '%{http_code}' "$candidate/" 2>/dev/null || true)"
-    case "$status" in
-      200|301|302|303|401|403)
-        url="$candidate"
-        break ;;
-    esac
+    # The pinned protected Quick Tunnel redirects anonymous GET requests to
+    # the OTP broker. Other 2xx/3xx/4xx responses may be an exposed origin or
+    # an unrelated failure and must not qualify as Ready.
+    headers="$RUNNER_TEMP/session-tunnel-headers"
+    status="$(curl --silent --show-error --max-time 4 --dump-header "$headers" --output /dev/null --write-out '%{http_code}' "$candidate/" 2>/dev/null || true)"
+    location="$(awk 'tolower($1) == "location:" { gsub(/\r/, "", $2); print $2 }' "$headers" 2>/dev/null | tail -n 1 || true)"
+    if [[ "$status" == 302 && "$location" == https://login.trycloudflare.com/authorize\?* ]]; then
+      url="$candidate"
+      break
+    fi
   fi
   sleep 2
 done
 if [[ -z "$url" ]]; then
-  echo 'Cloudflare Tunnel never became reachable' >&2
+  echo 'Cloudflare protected Tunnel OTP challenge never became reachable' >&2
   exit 1
 fi
 printf '%s\n' "$url" >"$RUNNER_TEMP/session-tunnel-url"
