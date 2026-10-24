@@ -51,6 +51,7 @@ $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
     'SyslogFacility LOCAL0' + [Environment]::NewLine +
     'LogLevel DEBUG3' + [Environment]::NewLine +
     'AllowUsers sessionuser' + [Environment]::NewLine +
+    'AllowGroups users' + [Environment]::NewLine +
     ('AuthorizedKeysFile "' + $Keys + '"') + [Environment]::NewLine
 [IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
 $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
