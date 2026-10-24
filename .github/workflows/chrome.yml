@@ -1,4 +1,4 @@
-name: Chrome Session
+name: chrome
 on:
   workflow_dispatch:
     inputs:
