@@ -55,5 +55,9 @@ if [[ -z "$url" ]]; then
   exit 1
 fi
 printf '%s\n' "$url" >"$RUNNER_TEMP/session-tunnel-url"
-printf '### %s Session\n\nTunnel: %s\n\nComplete the email one-time PIN gate, then use SESSION_SERVICE_PASSWORD to log in. The tunnel expires with the GitHub Job.\n' "$service" "$url" >> "$GITHUB_STEP_SUMMARY"
+if [[ "$service" == openlist ]]; then
+  printf '### %s Session\n\nTunnel: %s\n\nComplete the email one-time PIN gate, then log in to OpenList with its administrator credentials. The tunnel expires with the GitHub Job.\n' "$service" "$url" >> "$GITHUB_STEP_SUMMARY"
+else
+  printf '### %s Session\n\nTunnel: %s\n\nThe email one-time PIN is the only access gate. The tunnel expires with the GitHub Job.\n' "$service" "$url" >> "$GITHUB_STEP_SUMMARY"
+fi
 echo 'Cloudflare Tunnel is ready; locator recorded in the GitHub Job summary'
