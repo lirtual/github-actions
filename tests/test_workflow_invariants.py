@@ -54,6 +54,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 if name in ("chrome", "code-server", "openlist"):
                     self.assertIn("secrets.SESSION_SERVICE_PASSWORD", text[join:ready])
                     self.assertIn("start-tunnel.sh", text[join:ready])
+                    self.assertIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
                     self.assertIn("actions/upload-artifact@", text[join:ready])
                     self.assertNotIn("sudo tailscale set --ssh\\n", text[join:ready])
                     self.assertNotIn("secrets.OPENLIST_ADMIN_PASSWORD", text)
@@ -90,14 +91,19 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn('PASSWORD="$SESSION_SERVICE_PASSWORD"', code)
         self.assertIn('OPENLIST_ADMIN_PASSWORD="$SESSION_SERVICE_PASSWORD"', openlist)
         self.assertIn('/api/auth/login', openlist)
-        self.assertIn("2026.8.2", tunnel)
-        self.assertIn("fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2", tunnel)
+        self.assertIn("2026.10.3", tunnel)
+        self.assertIn("053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0", tunnel)
         self.assertIn("trycloudflare", tunnel)
         self.assertIn("session-tunnel-url", tunnel)
         self.assertIn("GITHUB_STEP_SUMMARY", tunnel)
         self.assertIn("Cloudflare Tunnel exited before Ready", tunnel)
-        self.assertIn("chrome:401|code-server:302|code-server:303|openlist:200", tunnel)
-        self.assertNotIn("200|301|302|303|307|308|401|403", tunnel)
+        self.assertIn('SESSION_TUNNEL_ALLOWED_EMAIL must be one explicit email address', tunnel)
+        self.assertIn('SESSION_TUNNEL_ALLOWED_EMAIL', tunnel)
+        self.assertIn("--allowed-mail", tunnel)
+        self.assertIn('"$binary" tunnel --help', tunnel)
+        self.assertIn('if [[ ! "$allowed_mail" =~', tunnel)
+        self.assertNotIn('tunnel --no-autoupdate --url "http://127.0.0.1:$port" >', tunnel)
+
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
