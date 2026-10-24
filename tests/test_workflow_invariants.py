@@ -59,14 +59,14 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertNotIn("secrets.OPENLIST_ADMIN_PASSWORD", text)
                     self.assertLess(text.index("start-tunnel.sh"), ready)
                 if name in ("linux", "windows"):
-                    self.assertIn("secrets.SESSION_SSH_PASSWORD",
+                    self.assertIn("secrets.SESSION_SYSTEM_PASSWORD",
                                   text[join:ready])
                     self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
                     self.assertNotIn("WINDOWS_ADMIN_PASSWORD", text)
                     self.assertNotIn("Remove-LocalUser", text)
-                    self.assertEqual(text.count("secrets.SESSION_SSH_PASSWORD"), 2 if name == "windows" else 1)
+                    self.assertEqual(text.count("secrets.SESSION_SYSTEM_PASSWORD"), 1)
                 if name == "windows":
-                    self.assertIn("secrets.SESSION_RDP_PASSWORD", text[join:ready])
+                    self.assertNotIn("SESSION_RDP_PASSWORD", text)
                     self.assertIn("windows-rdp.ps1", text[join:ready])
                     self.assertIn("SessionActionsTailscaleRDP", text[hold:])
 
@@ -95,9 +95,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
 
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
         rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
-        self.assertIn("$RdpPassword -cne $SshPassword", rdp)
-        self.assertIn("SESSION_RDP_PASSWORD", rdp)
-        self.assertIn("SESSION_SSH_PASSWORD", rdp)
+        self.assertNotIn("Set-LocalUser", rdp)
+        self.assertNotIn("SESSION_RDP_PASSWORD", rdp)
+        self.assertIn("SESSION_SYSTEM_PASSWORD", rdp)
         self.assertIn("Get-LocalUser -Name ([Environment]::UserName)", rdp)
         self.assertNotIn("New-LocalUser", rdp)
         self.assertIn("UserAuthentication -Value 1", rdp)
@@ -105,7 +105,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("-LocalPort 3389 -LocalAddress $TailnetAddress", rdp)
         self.assertIn("Start-Service TermService", rdp)
         windows = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertIn("SESSION_RDP_PASSWORD: ${{ secrets.SESSION_RDP_PASSWORD }}", windows)
+        self.assertNotIn("secrets.SESSION_RDP_PASSWORD", windows)
         self.assertIn("Remove-NetFirewallRule -Name SessionActionsTailscaleRDP", windows)
         self.assertIn("fDenyTSConnections -Value 1", windows)
 
@@ -113,7 +113,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/linux.yml").read_text()
         script = (ROOT / ".github/scripts/linux-ssh.sh").read_text()
         self.assertIn('account="$(id -un)"', script)
-        self.assertIn('printf \'%s:%s\\n\' "$account" "$SESSION_SSH_PASSWORD" | sudo chpasswd', script)
+        self.assertIn('printf \'%s:%s\\n\' "$account" "$SESSION_SYSTEM_PASSWORD" | sudo chpasswd', script)
         self.assertIn('sudo tailscale set --ssh=false', script)
         self.assertNotIn('sudo tailscale set --ssh\n', workflow)
         self.assertNotIn('useradd', script)
@@ -126,7 +126,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn('sudo /usr/sbin/sshd -t', script)
         self.assertIn('sudo systemctl restart ssh', script)
         self.assertIn('sudo systemctl stop ssh', workflow)
-        self.assertIn('SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}', workflow)
+        self.assertIn('SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}', workflow)
         self.assertNotIn('16 characters', script)
         self.assertNotIn('Length -lt 16', script)
 
@@ -144,12 +144,12 @@ class SessionWorkflowInvariants(unittest.TestCase):
     def test_windows_password_is_secret_and_fails_closed(self):
         text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         workflow = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertIn("$env:SESSION_SSH_PASSWORD", text)
+        self.assertIn("$env:SESSION_SYSTEM_PASSWORD", text)
         self.assertIn("[string]::IsNullOrEmpty($Password)", text)
         self.assertNotIn("$Password.Length -lt 16", text)
-        self.assertIn("$env:SESSION_SSH_PASSWORD = $null", text)
-        self.assertIn("secrets.SESSION_SSH_PASSWORD", workflow)
-        self.assertNotIn("vars.SESSION_SSH_PASSWORD", workflow)
+        self.assertIn("$env:SESSION_SYSTEM_PASSWORD = $null", text)
+        self.assertIn("secrets.SESSION_SYSTEM_PASSWORD", workflow)
+        self.assertNotIn("vars.SESSION_SYSTEM_PASSWORD", workflow)
         self.assertNotIn("SESSION_SSH_PUBLIC_KEY", workflow + text)
         self.assertNotIn("Write-Output $Password", text)
         self.assertNotIn("Write-Host $Password", text)
