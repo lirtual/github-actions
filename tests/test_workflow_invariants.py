@@ -68,7 +68,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 if name == "openlist":
                     self.assertIn("secrets.OPENLIST_DATABASE_URI", text[join:ready])
                     self.assertIn("openlist-db-config.py", (ROOT / ".github/scripts/start-openlist.sh").read_text())
-                    self.assertNotIn("secrets.OPENLIST_DATABASE", text)
+                    self.assertNotIn("secrets.OPENLIST_DATABASE }}", text)
                 if name == "windows":
                     self.assertNotIn("SESSION_RDP_PASSWORD", text)
                     self.assertIn("windows-rdp.ps1", text[join:ready])
