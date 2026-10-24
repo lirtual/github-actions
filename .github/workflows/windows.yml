@@ -63,7 +63,13 @@ jobs:
         env:
           SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}
         run: ./.github/scripts/windows-ssh.ps1
-      - name: Signed Ready after private SSH is listening
+      - name: Enable Windows RDP using the existing Runner account
+        shell: pwsh
+        env:
+          SESSION_SSH_PASSWORD: ${{ secrets.SESSION_SSH_PASSWORD }}
+          SESSION_RDP_PASSWORD: ${{ secrets.SESSION_RDP_PASSWORD }}
+        run: ./.github/scripts/windows-rdp.ps1
+      - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
         run: python .github/scripts/session_action.py ready
       - name: Hold until selected lifetime or GitHub cancellation
@@ -75,3 +81,5 @@ jobs:
         run: |
           Stop-Service sshd -ErrorAction SilentlyContinue
           Remove-NetFirewallRule -Name SessionActionsTailscaleSSH -ErrorAction SilentlyContinue
+          Remove-NetFirewallRule -Name SessionActionsTailscaleRDP -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 1 -ErrorAction SilentlyContinue
