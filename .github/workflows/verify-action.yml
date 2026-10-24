@@ -90,6 +90,7 @@ jobs:
                   return None
 
           opener = urllib.request.build_opener(NoRedirect())
+          phase = "oidc_request"
           try:
               # The GitHub Job may start before the dispatch ACK is stored in
               # D1, or its first successful Claim HTTP response may be lost.
@@ -100,6 +101,7 @@ jobs:
                   )
                   with opener.open(request, timeout=15) as response:
                       issued = json.load(response)
+                  phase = "oidc_response"
                   jwt = issued.get("value")
                   if not isinstance(jwt, str) or not jwt:
                       raise ValueError("missing signed token")
@@ -112,8 +114,10 @@ jobs:
                       },
                       method="POST",
                   )
+                  phase = "claim_request"
                   try:
                       with opener.open(request, timeout=20) as response:
+                          phase = "claim_response"
                           accepted = response.status == 200 and json.load(response) in (
                               {"result": "claimed"}, {"result": "already_claimed"}
                           )
@@ -133,9 +137,15 @@ jobs:
                   if retry == 11:
                       raise ValueError("claim unavailable")
                   time.sleep(5)
-          except Exception:
-              # Do not echo GitHub credentials, issued JWTs, or HTTP response bodies.
-              sys.exit("GitHub Action owner claim denied or unavailable")
+          except urllib.error.HTTPError as failure:
+              # Report only the safe protocol phase and numeric HTTP code.
+              # Never print the destination URL, response, JWT or credential.
+              status = failure.code
+              failure.close()
+              sys.exit("GitHub Action Claim " + phase + " HTTP " + str(status))
+          except Exception as failure:
+              # Exception class is safe; repr/str may contain token-bearing URLs.
+              sys.exit("GitHub Action Claim " + phase + " " + type(failure).__name__)
           print("GitHub physical Run ownership verified")
           PY
 
