@@ -24,9 +24,9 @@ $Directory = Join-Path $UserHome '.ssh'
 New-Item -Path $Directory -ItemType Directory -Force | Out-Null
 $Keys = Join-Path $Directory 'authorized_keys'
 [IO.File]::WriteAllText($Keys, $PublicKey + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-& icacls.exe $Directory '/inheritance:r' "/grant:r" "$($Username):(OI)(CI)F" 'SYSTEM:(OI)(CI)F' | Out-Null
+& icacls.exe $Directory '/inheritance:r' "/grant:r" "$($Username):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'SSH directory ACL failed' }
-& icacls.exe $Keys '/inheritance:r' "/grant:r" "$($Username):R" 'SYSTEM:F' | Out-Null
+& icacls.exe $Keys '/inheritance:r' "/grant:r" "$($Username):R" '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'SSH key ACL failed' }
 $Capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
 if ($Capability.State -ne 'Installed') {
