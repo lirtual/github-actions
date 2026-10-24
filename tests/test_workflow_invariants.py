@@ -83,6 +83,13 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("('AuthorizedKeysFile \"' + $Keys + '\"')", text)
         self.assertIn("'AllowUsers sessionuser'", text)
 
+    def test_windows_authorized_keys_owned_by_session_user(self):
+        # Windows OpenSSH checks the owner as well as strict file ACLs.
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("icacls.exe $Keys '/setowner' $Username", text)
+        self.assertIn("icacls.exe $Directory '/setowner' $Username", text)
+        self.assertIn("throw 'SSH key owner update failed'", text)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
