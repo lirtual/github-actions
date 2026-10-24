@@ -71,6 +71,11 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("'*S-1-5-32-544:F'", text)
         self.assertIn("'*S-1-5-18:F'", text)
 
+    def test_windows_tailnet_firewall_rule_has_required_display_name(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName", text)
+        self.assertIn("-RemoteAddress '100.64.0.0/10' -InterfaceAlias", text)
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
