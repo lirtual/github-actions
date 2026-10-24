@@ -49,7 +49,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertNotIn("TS_AUDIENCE", text[:claim])
                 self.assertIn("if: always()", text[hold:])
                 if name == "openlist":
-                    self.assertIn("secrets.SESSION_OPENLIST_ADMIN_PASSWORD",
+                    self.assertIn("secrets.OPENLIST_ADMIN_PASSWORD",
                                   text[join:ready])
                 if name == "windows":
                     self.assertIn("vars.SESSION_SSH_PUBLIC_KEY",
