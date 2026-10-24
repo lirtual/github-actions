@@ -75,7 +75,8 @@ Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue 
     Disable-NetFirewallRule
 New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName 'Session Actions Tailnet SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 -LocalAddress $TailnetAddress -RemoteAddress '100.64.0.0/10' -InterfaceAlias $Tailnet[0].Name | Out-Null
 Start-Service sshd -ErrorAction Stop
-if (-not (Get-NetTCPConnection -State Listen -LocalPort 22 -LocalAddress $TailnetAddress -ErrorAction SilentlyContinue)) {
-    throw 'OpenSSH is not listening on the Tailnet address'
+$Listeners = @(Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue)
+if ($Listeners.Count -ne 1 -or $Listeners[0].LocalAddress -ne $TailnetAddress) {
+    throw 'OpenSSH must listen only on the assigned Tailnet IPv4 address'
 }
 Write-Output 'Tailnet-restricted Windows password SSH is ready'
