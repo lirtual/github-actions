@@ -235,7 +235,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn("s3cret", result.stdout + result.stderr)
-            self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
             data = json.loads(config_path.read_text())
             self.assertEqual(data["database"]["name"], "testdb")
             self.assertEqual(data["database"]["ssl_mode"], "skip-verify")
