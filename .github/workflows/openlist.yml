@@ -1,4 +1,4 @@
-name: OpenList Session
+name: openlist
 on:
   workflow_dispatch:
     inputs:
