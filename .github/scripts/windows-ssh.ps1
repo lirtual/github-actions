@@ -45,6 +45,8 @@ $Baseline = [IO.File]::ReadAllText($Config)
 $Guard = 'PasswordAuthentication no' + [Environment]::NewLine +
     'PubkeyAuthentication yes' + [Environment]::NewLine +
     'PermitEmptyPasswords no' + [Environment]::NewLine +
+    'SyslogFacility LOCAL0' + [Environment]::NewLine +
+    'LogLevel DEBUG3' + [Environment]::NewLine +
     'AllowUsers sessionuser' + [Environment]::NewLine +
     ('AuthorizedKeysFile "' + $Keys + '"') + [Environment]::NewLine
 [IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
@@ -53,6 +55,11 @@ $Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
 # The default global key-only policy can be read without a newly created user token.
 $EffectiveConfig = & $Sshd -T
+# Emit only known, non-secret sshd policy fields; never dump keys or tokens.
+$SafePolicy = @($EffectiveConfig | Where-Object {
+    $_ -match '^(passwordauthentication|pubkeyauthentication|authorizedkeysfile)[[:space:]]'
+})
+Write-Output ('OpenSSH effective policy: ' + ($SafePolicy -join '; '))
 if ($LASTEXITCODE -ne 0 -or -not ($EffectiveConfig -contains 'passwordauthentication no') -or
     -not ($EffectiveConfig -contains 'pubkeyauthentication yes')) {
     throw 'OpenSSH effective authentication policy is not key-only'

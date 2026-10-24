@@ -103,6 +103,21 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("passwordauthentication no", text)
         self.assertIn("pubkeyauthentication yes", text)
 
+    def test_windows_ssh_diagnostics_do_not_echo_raw_logs(self):
+        script = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("OpenSSH effective policy:", script)
+        self.assertLess(script.index("OpenSSH effective policy:"),
+                        script.index("OpenSSH effective authentication policy is not key-only"))
+        self.assertIn("passwordauthentication|pubkeyauthentication|authorizedkeysfile", script)
+        self.assertIn("Classify bounded SSH authentication diagnostics", workflow)
+        self.assertIn("key_file_access_denied", workflow)
+        self.assertIn("ownership_rejected", workflow)
+        self.assertNotIn("Write-Output $logs", workflow)
+        self.assertNotIn("Write-Output $file", workflow)
+        self.assertLess(workflow.index("Classify bounded SSH authentication diagnostics"),
+                        workflow.index("Clean up restricted SSH account and firewall"))
+
     def test_task_cannot_execute_before_a_signed_claim(self):
         text = (ROOT / ".github/workflows/verify-action.yml").read_text()
         self.assertIn("id-token: write", text)
