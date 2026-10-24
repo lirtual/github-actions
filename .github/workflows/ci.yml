@@ -79,20 +79,24 @@ jobs:
             echo "Service must not listen on a public interface" >&2
             exit 1
           fi
-      - name: Assert native password access is enforced
+      - name: Assert native password login accepts the shared credential
         shell: bash
         env:
           SERVICE: ${{ matrix.service }}
+          SESSION_SERVICE_PASSWORD: ci-ephemeral-loopback-only
         run: |
           set -euo pipefail
           case "$SERVICE" in
             chrome)
-              status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)"
-              test "$status" = 401
+              test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)" = 401
+              test "$(curl --silent --user "admin:$SESSION_SERVICE_PASSWORD" --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/)" = 200
               ;;
             code-server)
-              status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)"
-              test "$status" = 302 -o "$status" = 303
+              response="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)"
+              test "$response" = 302 -o "$response" = 303
+              cookies="$RUNNER_TEMP/code-server-login-cookies"
+              curl --silent --location --cookie-jar "$cookies" --cookie "$cookies" --data-urlencode "password=$SESSION_SERVICE_PASSWORD"                 --output /dev/null http://127.0.0.1:8080/login
+              test "$(curl --silent --cookie "$cookies" --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/)" = 200
               ;;
             openlist) echo "OpenList native admin password was verified during startup" ;;
           esac
