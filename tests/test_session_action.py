@@ -343,6 +343,37 @@ class SessionProtocolTests(unittest.TestCase):
                     session.hold()
                     sleep.assert_not_called()
 
+    def test_windows_hold_refreshes_uu_without_exposing_output_or_extending_lifetime(self):
+        import types
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "session-action-start").write_text("1000", encoding="ascii")
+            credential = Path(root) / "session-actions" / "uu-remote.json"
+            credential.parent.mkdir()
+            credential.write_text("{}", encoding="utf-8")
+            clock = {"wall": 1000.0, "mono": 0.0}
+            def sleep(seconds):
+                clock["wall"] += seconds
+                clock["mono"] += seconds
+            fake_os = types.SimpleNamespace(name="nt", getenv=os.getenv)
+            env = {"RUNNER_TEMP": root, "LOCALAPPDATA": root, "DURATION_MINUTES": "1"}
+            with mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(session, "os", fake_os), mock.patch.object(
+                    session.time, "time", side_effect=lambda: clock["wall"]
+                ), mock.patch.object(
+                    session.time, "monotonic", side_effect=lambda: clock["mono"]
+                ), mock.patch.object(
+                    session.time, "sleep", side_effect=sleep
+                ), mock.patch.object(session.subprocess, "run") as runner:
+                    session.hold()
+            self.assertEqual(runner.call_count, 1)
+            args, kwargs = runner.call_args
+            self.assertEqual(args[0][-1], "-Refresh")
+            self.assertEqual(kwargs["stdout"], session.subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], session.subprocess.DEVNULL)
+            self.assertFalse(kwargs["check"])
+            self.assertLessEqual(kwargs["timeout"], 15)
+            self.assertEqual(clock["wall"], 1060.0)
+
     def test_start_requires_first_step_timestamp_and_cannot_extend_it(self):
         with tempfile.TemporaryDirectory() as root:
             marker = Path(root) / "session-action-start"
