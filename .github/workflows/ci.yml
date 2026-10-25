@@ -251,12 +251,18 @@ jobs:
             throw 'Hidden PowerShell exposed a main window'
           }
           Write-Output "Hidden PowerShell main window absent; Windows SessionId=$($Process.SessionId)"
+          $Native = Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);' -Name NativeConsole -Namespace SessionActions -PassThru
+          $ConsoleHandle = $Native::GetConsoleWindow()
+          Write-Output "Console API: handlePresent=$($ConsoleHandle -ne [IntPtr]::Zero) visible=$($Native::IsWindowVisible($ConsoleHandle))"
       - name: Check OpenSSH and Windows host prerequisites without configuring access
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $NormalShell = [System.Diagnostics.Process]::GetCurrentProcess()
           Write-Output "Default PowerShell window handle=$($NormalShell.MainWindowHandle); Windows SessionId=$($NormalShell.SessionId)"
+          $Native = Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);' -Name NativeConsole -Namespace SessionActions -PassThru
+          $ConsoleHandle = $Native::GetConsoleWindow()
+          Write-Output "Console API: handlePresent=$($ConsoleHandle -ne [IntPtr]::Zero) visible=$($Native::IsWindowVisible($ConsoleHandle))"
           $tokens = $null
           $errorsFound = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
