@@ -354,7 +354,7 @@ class SessionProtocolTests(unittest.TestCase):
             def sleep(seconds):
                 clock["wall"] += seconds
                 clock["mono"] += seconds
-            fake_os = types.SimpleNamespace(name="nt", getenv=os.getenv)
+            fake_os = types.SimpleNamespace(name="nt", getenv=os.getenv, environ=os.environ)
             env = {"RUNNER_TEMP": root, "LOCALAPPDATA": root, "DURATION_MINUTES": "1"}
             with mock.patch.dict(os.environ, env, clear=True):
                 with mock.patch.object(session, "os", fake_os), mock.patch.object(
