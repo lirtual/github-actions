@@ -410,6 +410,8 @@ jobs:
                 $Unavailable.PSObject.Properties.Name -contains 'verification_code') {
               throw 'UU Lite unavailable status failed closed'
             }
+            # The preceding nonzero native exit was expected and asserted.
+            $global:LASTEXITCODE = 0
             Write-Output 'UU_LITE_MISSING_PROCESS_STATUS=true'
             Write-Output 'UU_LITE_REFRESH_IDEMPOTENT=true'
             Write-Output 'UU_LITE_PRIVATE_CREDENTIAL_CAPTURE=true'
