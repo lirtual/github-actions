@@ -73,6 +73,31 @@ jobs:
       - name: Enable Windows RDP using the existing Runner account
         shell: pwsh
         run: ./.github/scripts/windows-rdp.ps1
+      - name: Hide pre-existing Windows Terminal window without stopping the Runner
+        shell: pwsh
+        run: |
+          $StartedAt = [DateTimeOffset]::FromUnixTimeSeconds(
+            [long](Get-Content (Join-Path $env:RUNNER_TEMP 'session-action-start') -Raw).Trim()).UtcDateTime
+          $SessionId = (Get-Process -Id $PID).SessionId
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class SessionWindow {
+              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+              [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+          }
+          '@
+          Get-Process -Name WindowsTerminal -ErrorAction SilentlyContinue | Where-Object {
+            $_.SessionId -eq $SessionId -and
+            $_.StartTime.ToUniversalTime() -lt $StartedAt -and
+            $_.MainWindowHandle -ne [IntPtr]::Zero
+          } | ForEach-Object {
+            [void][SessionWindow]::ShowWindow($_.MainWindowHandle, 0)
+            if ([SessionWindow]::IsWindowVisible($_.MainWindowHandle)) {
+              throw 'Pre-existing Windows Terminal window could not be hidden'
+            }
+            Write-Output 'Pre-existing Windows Terminal window hidden without stopping its process'
+          }
       - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
         run: python .github/scripts/session_action.py ready
