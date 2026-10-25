@@ -19,6 +19,14 @@ on:
         type: number
         default: 330
         required: false
+      session_mode:
+        description: Fixed or temporary Tailnet hostname
+        type: choice
+        options:
+          - temporary
+          - fixed
+        default: temporary
+        required: false
 env:
   WORKFLOW_ACTION_TYPE: session
 permissions:
@@ -35,6 +43,7 @@ jobs:
       WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
       WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
       DURATION_MINUTES: ${{ inputs.duration_minutes }}
+      SESSION_TAILSCALE_HOSTNAME: ${{ inputs.session_mode == 'fixed' && 'session-windows' || format('sa-{0}-a{1}', github.run_id, github.run_attempt) }}
     steps:
       - name: Capture job lifetime before checkout
         shell: pwsh
@@ -63,7 +72,10 @@ jobs:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:session-actions
-          hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}
+          hostname: ${{ env.SESSION_TAILSCALE_HOSTNAME }}
+      - name: Verify allocated Tailnet name before privileged access
+        shell: pwsh
+        run: python .github/scripts/verify-tailnet-name.py
       - name: Configure Tailnet-only password SSH for the Windows Runner
         shell: pwsh
         env:
