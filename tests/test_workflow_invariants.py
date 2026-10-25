@@ -84,7 +84,10 @@ class SessionWorkflowInvariants(unittest.TestCase):
                         self.assertNotIn("SESSION_SERVICE_PASSWORD", text)
                         self.assertNotIn("${{ secrets.", text[join:ready])
                     self.assertIn("start-tunnel.sh", text[join:ready])
-                    self.assertIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
+                    if name == "openlist":
+                        self.assertNotIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
+                    else:
+                        self.assertIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
                     self.assertIn("actions/upload-artifact@", text[join:ready])
                     self.assertNotIn("sudo tailscale set --ssh\\n", text[join:ready])
                     self.assertNotIn("secrets.OPENLIST_ADMIN_PASSWORD", text)
@@ -134,7 +137,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("Stop-Process", snippet)
         self.assertNotIn("taskkill", snippet)
 
-    def test_web_services_use_cloudflare_otp_gate_with_openlist_admin_auth(self):
+    def test_web_service_tunnels_keep_otp_only_for_chrome_and_code_server(self):
         chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
         openlist = (ROOT / ".github/scripts/start-openlist.sh").read_text()
@@ -162,11 +165,16 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("--allowed-mail", tunnel)
         self.assertIn('"$binary" tunnel --help', tunnel)
         self.assertIn('if [[ ! "$allowed_mail" =~', tunnel)
-        self.assertNotIn('tunnel --no-autoupdate --url "http://127.0.0.1:$port" >', tunnel)
+        self.assertIn('tunnel --no-autoupdate --url "http://127.0.0.1:$port" >', tunnel)
 
-        self.assertIn("if [[ \"$service\" == openlist ]]", tunnel)
+        self.assertIn('if [[ "$service" != openlist ]]', tunnel)
+        self.assertIn('if [[ "$service" == openlist ]]', tunnel)
+        self.assertIn('"$candidate/api/public/settings"', tunnel)
+        self.assertIn('r.get("code")==200', tunnel)
+        self.assertIn('login.trycloudflare.com/authorize', tunnel)
         self.assertIn("email one-time PIN is the only access gate", tunnel)
-        self.assertIn("administrator credentials", tunnel)
+        self.assertIn("OpenList handles user login and guest permissions", tunnel)
+        self.assertNotIn("Complete the email one-time PIN gate", tunnel)
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
