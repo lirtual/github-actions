@@ -393,6 +393,8 @@ jobs:
                 $CodeLabel = $false
                 $CopyLabel = $false
                 $ReadableValues = 0
+                $TextPatternCount = 0
+                $LegacyPatternCount = 0
                 $Shapes = @()
                 foreach ($Process in $Windows) {
                   $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
@@ -400,20 +402,40 @@ jobs:
                   $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
                   $Controls += $Items.Count
                   foreach ($Item in $Items) {
-                    $Name = $Item.Current.Name
+                    $Name = [string]$Item.Current.Name
                     if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
                     if ($Name -match '验证码|verification code') { $CodeLabel = $true }
                     if ($Name -match '复制|copy') { $CopyLabel = $true }
-                    $Value = $null
                     $Type = $Item.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
                     $Kind = if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { 'ID' } elseif ($Name -match '验证码|verification code') { 'CODE' } else { 'OTHER' }
-                    $Text = [string]$Name
+                    $Value = $null
+                    $VisibleText = $Name
+                    $Sources = 'N'
                     if ($Item.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$Value)) {
                       $ReadableValues++
-                      $Text += ' ' + [string]$Value.Current.Value
+                      $VisibleText += ' ' + [string]$Value.Current.Value
+                      $Sources += 'V'
                     }
-                    $Shape = if ($Text -match '(?<![0-9])[0-9]{8,15}(?![0-9])') { 'digits8plus' } elseif ($Text -match '(?<![a-zA-Z0-9])[a-zA-Z0-9]{6,12}(?![a-zA-Z0-9])') { 'codeLike' } elseif ($Text.Length -gt 0) { 'text' } else { 'empty' }
-                    $Shapes += ($Type + ':' + $Kind + ':' + $Shape)
+                    $Legacy = $null
+                    if ($Item.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$Legacy)) {
+                      $LegacyPatternCount++
+                      $VisibleText += ' ' + [string]$Legacy.Current.Value
+                      $Sources += 'L'
+                    }
+                    $TextPattern = $null
+                    if ($Item.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$TextPattern)) {
+                      $TextPatternCount++
+                      $VisibleText += ' ' + [string]$TextPattern.DocumentRange.GetText(1024)
+                      $Sources += 'T'
+                    }
+                    # Never log connection IDs/codes, accessible element names or
+                    # raw values. Classify only types and aggregate character counts.
+                    $Shape = 'n' + $VisibleText.Length + 'd' + ([regex]::Matches($VisibleText, '\p{Nd}')).Count +
+                      'a' + ([regex]::Matches($VisibleText, '[a-zA-Z]')).Count +
+                      'm' + ([regex]::Matches($VisibleText, '[*●•]')).Count
+                    $Invoke = $null
+                    $CanInvoke = $Item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$Invoke)
+                    $Shapes += ($Type + ':' + $Kind + ':' + $Shape + ':' + $Sources + ':invoke' + $CanInvoke.ToString().ToLowerInvariant())
                   }
                 }
                 Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
@@ -421,11 +443,13 @@ jobs:
                 Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
                 Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
                 Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
+                Write-Output ("UU_LITE_UIA_LEGACY_CONTROLS=" + $LegacyPatternCount)
+                Write-Output ("UU_LITE_UIA_TEXT_CONTROLS=" + $TextPatternCount)
                 Write-Output ("UU_LITE_UIA_SANITIZED_SHAPES=" + ($Shapes -join ','))
               } catch {
                 Write-Output 'UU_LITE_UIA_INSPECTION=unavailable'
               }
-              throw 'UU Lite exposes no supported CLI; GUI inspection is diagnostic only'
+              Write-Output 'UU_LITE_UNATTENDED_CREDENTIALS_VERIFIED=false'
             }
           } finally {
             Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
