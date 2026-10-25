@@ -339,132 +339,32 @@ jobs:
           }
           Write-Output "Windows prerequisites passed; SSH was NOT enabled"
 
-      - name: Probe officially signed UU Lite on disposable Windows Runner
+      - name: Verify real UU Lite startup and private credential extraction
         shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $Executable = Join-Path $env:RUNNER_TEMP 'GameViewerLite-session-probe.exe'
+          $Dir = Join-Path $env:LOCALAPPDATA 'session-actions'
+          $File = Join-Path $Dir 'uu-remote.json'
           try {
-            # Resolve the current Lite binary via NetEase's own download channel.
-            $Channel = Invoke-WebRequest -UseBasicParsing -TimeoutSec 20 'https://adl.netease.com/d/g/uuremote/c/greengw/js'
-            $Match = [regex]::Match($Channel.Content, 'var\s+pc_link\s*=\s*"([^"]+)"')
-            if (-not $Match.Success) { throw 'Official UU Lite channel has no Windows binary' }
-            $Url = [uri]$Match.Groups[1].Value
-            if ($Url.Scheme -ne 'https' -or $Url.Host -notmatch '^a[0-9]+\.gdl\.netease\.com$' -or
-                [IO.Path]::GetFileName($Url.AbsolutePath) -notmatch '^GameViewerLite_[a-zA-Z0-9_.-]+\.exe$') {
-              throw 'Unexpected UU Lite download origin or filename'
+            ./.github/scripts/windows-uu.ps1
+            if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
+              throw 'UU Lite private credential file missing'
             }
-            & curl.exe --fail --location --silent --show-error --retry 2 --retry-all-errors --retry-delay 2 --max-time 90 --proto '=https' --proto-redir '=https' --output $Executable $Url.AbsoluteUri
-            if ($LASTEXITCODE -ne 0) { throw 'UU Lite official download failed after bounded retries' }
-            $Signature = Get-AuthenticodeSignature -FilePath $Executable
-            if ($Signature.Status -ne 'Valid' -or
-                $Signature.SignerCertificate.Subject -notlike '*NetEase (Hangzhou) Network Co., Ltd*') {
-              throw 'Downloaded UU Lite did not pass NetEase Authenticode validation'
+            $Access = Get-Acl -LiteralPath $Dir
+            if (-not $Access.AreAccessRulesProtected) {
+              throw 'UU Lite credential directory inherits unrelated access rules'
             }
-            Write-Output 'UU_LITE_SIGNED=true'
-            Start-Process -FilePath $Executable | Out-Null
-            Start-Sleep -Seconds 20
-            $Running = @(Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer -ErrorAction SilentlyContinue)
-            if ($Running.Count -eq 0) { throw 'UU Lite did not stay running on Windows Runner' }
-            Write-Output 'UU_LITE_RUNNING=true'
-            # Only use supported CLI; never expose a device ID/code in public CI logs.
-            $CliPaths = @(
-              @($Running | Where-Object { $_.Path } | ForEach-Object { Join-Path (Split-Path $_.Path) 'uuyc-cli.exe' }),
-              (Join-Path $env:RUNNER_TEMP 'uuyc-cli.exe'),
-              'C:\Program Files\Netease\GameViewer\bin\uuyc-cli.exe',
-              'C:\Program Files (x86)\Netease\GameViewer\bin\uuyc-cli.exe'
-            )
-            $Cli = $CliPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-            if ($Cli) {
-              $DeviceId = (& $Cli -d 2>&1 | Out-String).Trim()
-              if ($LASTEXITCODE -ne 0 -or $DeviceId.Length -lt 4 -or $DeviceId.Length -gt 120) {
-                throw 'UU Lite device ID is not available without interaction'
-              }
-              Write-Output 'UU_LITE_DEVICE_ID_AVAILABLE=true'
-            } else {
-              Write-Output 'UU_LITE_CLI_PRESENT=false'
-              # Read only automation metadata. Never log actual UI element names,
-              # text, device IDs, or verification codes on a public CI job.
-              $Windows = @($Running | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
-              Write-Output ("UU_LITE_WINDOW_AVAILABLE=" + ($Windows.Count -gt 0).ToString().ToLowerInvariant())
-              try {
-                Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes -ErrorAction Stop
-                $Controls = 0
-                $IdLabel = $false
-                $CodeLabel = $false
-                $CopyLabel = $false
-                $ReadableValues = 0
-                $TextPatternCount = 0
-                $Shapes = @()
-                $IdCandidates = @()
-                $CodeCandidates = @()
-                foreach ($Process in $Windows) {
-                  $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
-                  if (-not $Root) { continue }
-                  $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-                  $Controls += $Items.Count
-                  foreach ($Item in $Items) {
-                    $Name = [string]$Item.Current.Name
-                    if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
-                    if ($Name -match '验证码|verification code') { $CodeLabel = $true }
-                    if ($Name -match '复制|copy') { $CopyLabel = $true }
-                    $Type = $Item.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
-                    $Kind = if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { 'ID' } elseif ($Name -match '验证码|verification code') { 'CODE' } else { 'OTHER' }
-                    $Value = $null
-                    $VisibleText = $Name
-                    $Sources = 'N'
-                    if ($Item.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$Value)) {
-                      $ReadableValues++
-                      $VisibleText += ' ' + [string]$Value.Current.Value
-                      $Sources += 'V'
-                    }
-                    $TextPattern = $null
-                    if ($Item.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$TextPattern)) {
-                      $TextPatternCount++
-                      $VisibleText += ' ' + [string]$TextPattern.DocumentRange.GetText(1024)
-                      $Sources += 'T'
-                    }
-                    # Never log connection IDs/codes, accessible element names or
-                    # raw values. Classify only types and aggregate character counts.
-                    $Shape = 'n' + $VisibleText.Length + 'd' + ([regex]::Matches($VisibleText, '\p{Nd}')).Count +
-                      'a' + ([regex]::Matches($VisibleText, '[a-zA-Z]')).Count +
-                      'm' + ([regex]::Matches($VisibleText, '[*●•]')).Count
-                    $Invoke = $null
-                    $CanInvoke = $Item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$Invoke)
-                    $Shapes += ($Type + ':' + $Kind + ':' + $Shape + ':' + $Sources + ':invoke' + $CanInvoke.ToString().ToLowerInvariant())
-                    if ($Type -eq 'Text') {
-                      $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
-                      if ($Normalized -match '^[0-9]{9}$') {
-                        $IdCandidates += @{ Element = $Item; Value = $Normalized }
-                      }
-                      if ($Normalized -match '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
-                        $CodeCandidates += @{ Element = $Item; Value = $Normalized }
-                      }
-                    }
-                  }
-                }
-                Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
-                Write-Output ("UU_LITE_UIA_ID_LABEL=" + $IdLabel.ToString().ToLowerInvariant())
-                Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
-                Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
-                Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
-                Write-Output ("UU_LITE_UIA_TEXT_CONTROLS=" + $TextPatternCount)
-                Write-Output ("UU_LITE_UIA_SANITIZED_SHAPES=" + ($Shapes -join ','))
-                $Unique = $IdCandidates.Count -eq 1 -and $CodeCandidates.Count -eq 1 -and $IdLabel -and $CodeLabel
-                Write-Output ("UU_LITE_CREDENTIAL_PATTERN_UNIQUE=" + $Unique.ToString().ToLowerInvariant())
-                if ($Unique) {
-                  Start-Sleep -Seconds 2
-                  $IdReadback = [regex]::Replace(([string]$IdCandidates[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
-                  $CodeReadback = [regex]::Replace(([string]$CodeCandidates[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
-                  $Stable = $IdReadback -ceq $IdCandidates[0].Value -and $CodeReadback -ceq $CodeCandidates[0].Value
-                  Write-Output ("UU_LITE_CREDENTIAL_TEXT_STABLE=" + $Stable.ToString().ToLowerInvariant())
-                }
-              } catch {
-                Write-Output 'UU_LITE_UIA_INSPECTION=unavailable'
-              }
-              Write-Output 'UU_LITE_UNATTENDED_CREDENTIALS_VERIFIED=false'
+            $Data = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+            if ($Data.device_id -notmatch '^[0-9]{9}$' -or
+                $Data.verification_code -notmatch '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
+              throw 'UU Lite extracted credential shape invalid'
             }
+            Write-Output 'UU_LITE_PRIVATE_CREDENTIAL_CAPTURE=true'
           } finally {
-            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $Executable -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'GameViewerLite-session.exe') -Force -ErrorAction SilentlyContinue
           }
