@@ -395,7 +395,6 @@ jobs:
                 $CopyLabel = $false
                 $ReadableValues = 0
                 $TextPatternCount = 0
-                $LegacyPatternCount = 0
                 $Shapes = @()
                 foreach ($Process in $Windows) {
                   $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
@@ -416,12 +415,6 @@ jobs:
                       $ReadableValues++
                       $VisibleText += ' ' + [string]$Value.Current.Value
                       $Sources += 'V'
-                    }
-                    $Legacy = $null
-                    if ($Item.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$Legacy)) {
-                      $LegacyPatternCount++
-                      $VisibleText += ' ' + [string]$Legacy.Current.Value
-                      $Sources += 'L'
                     }
                     $TextPattern = $null
                     if ($Item.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$TextPattern)) {
@@ -444,7 +437,6 @@ jobs:
                 Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
                 Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
                 Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
-                Write-Output ("UU_LITE_UIA_LEGACY_CONTROLS=" + $LegacyPatternCount)
                 Write-Output ("UU_LITE_UIA_TEXT_CONTROLS=" + $TextPatternCount)
                 Write-Output ("UU_LITE_UIA_SANITIZED_SHAPES=" + ($Shapes -join ','))
               } catch {
