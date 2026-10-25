@@ -255,6 +255,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $NormalShell = [System.Diagnostics.Process]::GetCurrentProcess()
+          Write-Output "Default PowerShell window handle=$($NormalShell.MainWindowHandle); Windows SessionId=$($NormalShell.SessionId)"
           $tokens = $null
           $errorsFound = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
