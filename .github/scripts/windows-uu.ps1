@@ -10,6 +10,7 @@ $Binary = Join-Path $env:RUNNER_TEMP 'GameViewerLite-session.exe'
 $Dir = Join-Path $env:LOCALAPPDATA 'session-actions'
 $CredentialPath = Join-Path $Dir 'uu-remote.json'
 $Ready = $false
+$Failure = 'capture_failed'
 
 try {
     if (-not $Refresh) {
@@ -32,41 +33,80 @@ try {
         Start-Sleep -Seconds 20
     }
     $SessionId = (Get-Process -Id $PID).SessionId
+    $Failure = 'process_missing'
     $Processes = @(Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
-        Where-Object { $_.SessionId -eq $SessionId -and $_.MainWindowHandle -ne [IntPtr]::Zero })
-    if ($Processes.Count -eq 0) { throw 'UU Lite interactive window missing' }
+        Where-Object { $_.SessionId -eq $SessionId })
+    if ($Processes.Count -eq 0) { throw 'UU Lite process missing' }
+
+    # Process.MainWindowHandle is zero for tray-hidden windows. Enumerate actual
+    # top-level handles owned by the approved UU processes in this Session.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class UULiteWindows {
+    private delegate bool WindowCallback(IntPtr window, IntPtr param);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(WindowCallback callback, IntPtr param);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    public static IntPtr[] ForPids(int[] pids) {
+        var allowed = new HashSet<int>(pids);
+        var found = new List<IntPtr>();
+        WindowCallback callback = (window, param) => {
+            uint pid;
+            GetWindowThreadProcessId(window, out pid);
+            if (allowed.Contains((int)pid)) found.Add(window);
+            return true;
+        };
+        if (!EnumWindows(callback, IntPtr.Zero)) throw new InvalidOperationException("UU window enumeration failed");
+        return found.ToArray();
+    }
+}
+'@ -ErrorAction Stop
+    $Failure = 'window_unavailable'
+    $Handles = [UULiteWindows]::ForPids([int[]]@($Processes | ForEach-Object Id))
+    if ($Handles.Count -eq 0) { throw 'UU Lite top-level window missing' }
 
     Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes -ErrorAction Stop
-    $IdLabel = $false
-    $CodeLabel = $false
-    $Ids = @()
-    $Codes = @()
-    foreach ($Process in $Processes) {
-        $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
-        if (-not $Root) { continue }
-        $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-            [System.Windows.Automation.Condition]::TrueCondition)
-        foreach ($Item in $Items) {
-            $Name = [string]$Item.Current.Name
-            if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
-            if ($Name -match '验证码|verification code') { $CodeLabel = $true }
-            if ($Item.Current.ControlType.ProgrammaticName -ne 'ControlType.Text') { continue }
-            $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
-            if ($Normalized -match '^[0-9]{9}$') {
-                $Ids += @{ Element = $Item; Value = $Normalized }
+    $Failure = 'code_unavailable'
+    $Pairs = @()
+    foreach ($Handle in $Handles) {
+        try {
+            $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+            if (-not $Root) { continue }
+            $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition)
+            $IdLabel = $false
+            $CodeLabel = $false
+            $Ids = @()
+            $Codes = @()
+            foreach ($Item in $Items) {
+                $Name = [string]$Item.Current.Name
+                if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
+                if ($Name -match '验证码|verification code') { $CodeLabel = $true }
+                if ($Item.Current.ControlType.ProgrammaticName -ne 'ControlType.Text') { continue }
+                $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
+                if ($Normalized -match '^[0-9]{9}$') {
+                    $Ids += @{ Element = $Item; Value = $Normalized }
+                }
+                if ($Normalized -match '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
+                    $Codes += @{ Element = $Item; Value = $Normalized }
+                }
             }
-            if ($Normalized -match '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
-                $Codes += @{ Element = $Item; Value = $Normalized }
+            if ($IdLabel -and $CodeLabel -and $Ids.Count -eq 1 -and $Codes.Count -eq 1) {
+                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0] }
             }
+        } catch {
+            # A window may close or cease exposing UIA during a remote disconnect.
+            # Never publish partial or inferred credentials.
+            continue
         }
     }
-    if (-not $IdLabel -or -not $CodeLabel -or $Ids.Count -ne 1 -or $Codes.Count -ne 1) {
-        throw 'UU Lite device ID or verification code not uniquely accessible'
-    }
+    if ($Pairs.Count -ne 1) { throw 'UU Lite connection data not uniquely accessible' }
     Start-Sleep -Seconds 2
-    $IdAgain = [regex]::Replace(([string]$Ids[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
-    $CodeAgain = [regex]::Replace(([string]$Codes[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
-    if ($IdAgain -cne $Ids[0].Value -or $CodeAgain -cne $Codes[0].Value) {
+    $Failure = 'code_unstable'
+    $IdAgain = [regex]::Replace(([string]$Pairs[0].Id.Element.Current.Name).Trim(), '[\s\-–—]', '')
+    $CodeAgain = [regex]::Replace(([string]$Pairs[0].Code.Element.Current.Name).Trim(), '[\s\-–—]', '')
+    if ($IdAgain -cne $Pairs[0].Id.Value -or $CodeAgain -cne $Pairs[0].Code.Value) {
         throw 'UU Lite connection data changed during capture'
     }
 
@@ -81,9 +121,11 @@ try {
         [Security.AccessControl.AccessControlType]::Allow)
     $Acl.SetAccessRule($Rule)
     Set-Acl -LiteralPath $Dir -AclObject $Acl
+    $Failure = 'write_failed'
     $Json = [ordered]@{
-        device_id = $Ids[0].Value
-        verification_code = $Codes[0].Value
+        status = 'ready'
+        device_id = $Pairs[0].Id.Value
+        verification_code = $Pairs[0].Code.Value
     } | ConvertTo-Json -Compress
     # Avoid needless writes while the code is unchanged; replace atomically when it rotates.
     if ($Refresh -and (Test-Path -LiteralPath $CredentialPath -PathType Leaf) -and
@@ -104,8 +146,24 @@ try {
     }
 } finally {
     if (-not $Ready) {
-        # Stale codes must not remain advertised after a failed refresh.
+        # Fail closed: never advertise a code that may have rotated. Keep a
+        # private, secret-free explanation instead of an unexplained missing file.
         Remove-Item -LiteralPath $CredentialPath -Force -ErrorAction SilentlyContinue
+        if ($Refresh -and (Test-Path -LiteralPath $Dir -PathType Container)) {
+            $StatusTemp = Join-Path $Dir ('uu-' + [guid]::NewGuid().ToString('N') + '.tmp')
+            try {
+                $Status = [ordered]@{
+                    status = 'unavailable'
+                    reason = $Failure
+                } | ConvertTo-Json -Compress
+                [IO.File]::WriteAllText($StatusTemp, $Status, [Text.UTF8Encoding]::new($false))
+                Move-Item -LiteralPath $StatusTemp -Destination $CredentialPath -Force
+            } catch {
+                # Never disrupt the existing Session hold, SSH or RDP.
+            } finally {
+                Remove-Item -LiteralPath $StatusTemp -Force -ErrorAction SilentlyContinue
+            }
+        }
         if (-not $Refresh) {
             Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
                 Stop-Process -Force -ErrorAction SilentlyContinue
