@@ -87,6 +87,17 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("windows-rdp.ps1", text[join:ready])
                     self.assertIn("SessionActionsTailscaleRDP", text[hold:])
 
+    def test_windows_hold_is_hidden_but_remains_owned_by_the_github_step(self):
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        hold = workflow.split(
+            "      - name: Hold until selected lifetime or GitHub cancellation\n", 1
+        )[1].split("      - name: Stop SSH and remove Tailnet firewall access\n", 1)[0]
+        self.assertIn('shell: pwsh -WindowStyle Hidden -Command ". \\'{0}\\'"', hold)
+        self.assertIn("python .github/scripts/session_action.py hold", hold)
+        self.assertIn("exit $LASTEXITCODE", hold)
+        self.assertNotIn("Start-Process", hold)
+        self.assertNotIn("Start-Job", hold)
+
     def test_web_services_use_cloudflare_otp_gate_with_openlist_admin_auth(self):
         chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
