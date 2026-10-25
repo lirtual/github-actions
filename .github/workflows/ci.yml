@@ -354,7 +354,8 @@ jobs:
                 [IO.Path]::GetFileName($Url.AbsolutePath) -notmatch '^GameViewerLite_[a-zA-Z0-9_.-]+\.exe$') {
               throw 'Unexpected UU Lite download origin or filename'
             }
-            Invoke-WebRequest -UseBasicParsing -TimeoutSec 90 -Uri $Url.AbsoluteUri -OutFile $Executable
+            & curl.exe --fail --location --silent --show-error --retry 2 --retry-all-errors --retry-delay 2 --max-time 90 --proto '=https' --proto-redir '=https' --output $Executable $Url.AbsoluteUri
+            if ($LASTEXITCODE -ne 0) { throw 'UU Lite official download failed after bounded retries' }
             $Signature = Get-AuthenticodeSignature -FilePath $Executable
             if ($Signature.Status -ne 'Valid' -or
                 $Signature.SignerCertificate.Subject -notlike '*NetEase (Hangzhou) Network Co., Ltd*') {
