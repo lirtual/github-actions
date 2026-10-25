@@ -396,6 +396,8 @@ jobs:
                 $ReadableValues = 0
                 $TextPatternCount = 0
                 $Shapes = @()
+                $IdCandidates = @()
+                $CodeCandidates = @()
                 foreach ($Process in $Windows) {
                   $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
                   if (-not $Root) { continue }
@@ -430,6 +432,62 @@ jobs:
                     $Invoke = $null
                     $CanInvoke = $Item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$Invoke)
                     $Shapes += ($Type + ':' + $Kind + ':' + $Shape + ':' + $Sources + ':invoke' + $CanInvoke.ToString().ToLowerInvariant())
+                    if ($Type -eq 'Text') {
+                      $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
+                      if ($Normalized -match '^[0-9]{9}
+                  }
+                }
+                Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
+                Write-Output ("UU_LITE_UIA_ID_LABEL=" + $IdLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
+                Write-Output ("UU_LITE_UIA_TEXT_CONTROLS=" + $TextPatternCount)
+                Write-Output ("UU_LITE_UIA_SANITIZED_SHAPES=" + ($Shapes -join ','))
+                $Unique = $IdCandidates.Count -eq 1 -and $CodeCandidates.Count -eq 1 -and $IdLabel -and $CodeLabel
+                Write-Output ("UU_LITE_CREDENTIAL_PATTERN_UNIQUE=" + $Unique.ToString().ToLowerInvariant())
+                if ($Unique) {
+                  Start-Sleep -Seconds 2
+                  $IdReadback = [regex]::Replace(([string]$IdCandidates[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
+                  $CodeReadback = [regex]::Replace(([string]$CodeCandidates[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
+                  $Stable = $IdReadback -ceq $IdCandidates[0].Value -and $CodeReadback -ceq $CodeCandidates[0].Value
+                  Write-Output ("UU_LITE_CREDENTIAL_TEXT_STABLE=" + $Stable.ToString().ToLowerInvariant())
+                }
+              } catch {
+                Write-Output 'UU_LITE_UIA_INSPECTION=unavailable'
+              }
+              Write-Output 'UU_LITE_UNATTENDED_CREDENTIALS_VERIFIED=false'
+            }
+          } finally {
+            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $Executable -Force -ErrorAction SilentlyContinue
+          }
+) {
+                        $IdCandidates += @{ Element = $Item; Value = $Normalized }
+                      }
+                      if ($Normalized -match '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}
+                  }
+                }
+                Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
+                Write-Output ("UU_LITE_UIA_ID_LABEL=" + $IdLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
+                Write-Output ("UU_LITE_UIA_TEXT_CONTROLS=" + $TextPatternCount)
+                Write-Output ("UU_LITE_UIA_SANITIZED_SHAPES=" + ($Shapes -join ','))
+              } catch {
+                Write-Output 'UU_LITE_UIA_INSPECTION=unavailable'
+              }
+              Write-Output 'UU_LITE_UNATTENDED_CREDENTIALS_VERIFIED=false'
+            }
+          } finally {
+            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $Executable -Force -ErrorAction SilentlyContinue
+          }
+) {
+                        $CodeCandidates += @{ Element = $Item; Value = $Normalized }
+                      }
+                    }
                   }
                 }
                 Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
