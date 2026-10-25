@@ -268,7 +268,7 @@ jobs:
 
   smoke-windows-prerequisites:
     runs-on: windows-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - name: Checkout without retained credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -338,3 +338,33 @@ jobs:
             throw 'OpenSSH Server capability unavailable'
           }
           Write-Output "Windows prerequisites passed; SSH was NOT enabled"
+
+      - name: Verify real UU Lite startup and private credential extraction
+        shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Dir = Join-Path $env:LOCALAPPDATA 'session-actions'
+          $File = Join-Path $Dir 'uu-remote.json'
+          try {
+            ./.github/scripts/windows-uu.ps1
+            if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
+              throw 'UU Lite private credential file missing'
+            }
+            $Access = Get-Acl -LiteralPath $Dir
+            if (-not $Access.AreAccessRulesProtected) {
+              throw 'UU Lite credential directory inherits unrelated access rules'
+            }
+            $Data = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+            if ($Data.device_id -notmatch '^[0-9]{9}$' -or
+                $Data.verification_code -notmatch '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
+              throw 'UU Lite extracted credential shape invalid'
+            }
+            Write-Output 'UU_LITE_PRIVATE_CREDENTIAL_CAPTURE=true'
+          } finally {
+            Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'GameViewerLite-session.exe') -Force -ErrorAction SilentlyContinue
+          }

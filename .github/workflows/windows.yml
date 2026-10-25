@@ -85,6 +85,12 @@ jobs:
       - name: Enable Windows RDP using the existing Runner account
         shell: pwsh
         run: ./.github/scripts/windows-rdp.ps1
+      - name: Start optional UU Lite remote access
+        shell: pwsh
+        continue-on-error: true
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: ./.github/scripts/windows-uu.ps1
       - name: Hide pre-existing Windows Terminal window without stopping the Runner
         shell: pwsh
         run: |
@@ -120,6 +126,10 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'session-actions\uu-remote.json') -Force -ErrorAction SilentlyContinue
+          Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'GameViewerLite-session.exe') -Force -ErrorAction SilentlyContinue
           Stop-Service sshd -ErrorAction SilentlyContinue
           Remove-NetFirewallRule -Name SessionActionsTailscaleSSH -ErrorAction SilentlyContinue
           Remove-NetFirewallRule -Name SessionActionsTailscaleRDP -ErrorAction SilentlyContinue
