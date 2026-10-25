@@ -214,6 +214,37 @@ jobs:
             exit 1
           fi
           echo 'Anonymous GET redirected to OTP and POST denied'
+      - name: Verify public OpenList Quick Tunnel uses native auth only
+        shell: bash
+        env:
+          SESSION_SERVICE: openlist
+          SESSION_TUNNEL_ALLOWED_EMAIL: ''
+        run: |
+          set -euo pipefail
+          kill "$(cat "$RUNNER_TEMP/session-tunnel.pid")" 2>/dev/null || true
+          mkdir -p "$RUNNER_TEMP/tunnel-fixture/api/public"
+          printf '%s\n' '{"code":200,"message":"success","data":{"fixture":"openlist"}}' \
+            > "$RUNNER_TEMP/tunnel-fixture/api/public/settings"
+          python3 -m http.server 5244 --bind 127.0.0.1 --directory "$RUNNER_TEMP/tunnel-fixture" \
+            > "$RUNNER_TEMP/openlist-fixture.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/openlist-fixture.pid"
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:5244/api/public/settings >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo 'Synthetic OpenList origin did not start' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          bash .github/scripts/start-tunnel.sh
+          url="$(cat "$RUNNER_TEMP/session-tunnel-url")"
+          marker="$(cat "$RUNNER_TEMP/tunnel-expected")"
+          test "$(curl --fail --silent --max-time 15 "$url/")" = "$marker"
+          test "$(curl --fail --silent --max-time 15 "$url/api/public/settings")" = \
+            '{"code":200,"message":"success","data":{"fixture":"openlist"}}'
+          echo 'Unauthenticated OpenList public routes reach the origin'
       - name: Close temporary Tunnel and delete fixture
         if: always()
         shell: bash
@@ -224,11 +255,15 @@ jobs:
           if test -s "$RUNNER_TEMP/tunnel-fixture.pid"; then
             kill "$(cat "$RUNNER_TEMP/tunnel-fixture.pid")" 2>/dev/null || true
           fi
+          if test -s "$RUNNER_TEMP/openlist-fixture.pid"; then
+            kill "$(cat "$RUNNER_TEMP/openlist-fixture.pid")" 2>/dev/null || true
+          fi
           rm -f "$RUNNER_TEMP/session-tunnel-url" "$RUNNER_TEMP/session-tunnel.log" \
             "$RUNNER_TEMP/session-tunnel.pid" "$RUNNER_TEMP/cloudflared" \
             "$RUNNER_TEMP/tunnel-expected" "$RUNNER_TEMP/tunnel-anonymous-body" \
             "$RUNNER_TEMP/tunnel-anonymous-headers" "$RUNNER_TEMP/tunnel-fixture.pid" \
-            "$RUNNER_TEMP/tunnel-fixture.log"
+            "$RUNNER_TEMP/tunnel-fixture.log" "$RUNNER_TEMP/openlist-fixture.pid" \
+            "$RUNNER_TEMP/openlist-fixture.log"
           rm -rf "$RUNNER_TEMP/tunnel-fixture"
 
   smoke-windows-prerequisites:
