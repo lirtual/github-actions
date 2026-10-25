@@ -374,12 +374,51 @@ jobs:
               'C:\Program Files (x86)\Netease\GameViewer\bin\uuyc-cli.exe'
             )
             $Cli = $CliPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-            if (-not $Cli) { throw 'UU Lite has no detectable machine-readable CLI' }
-            $DeviceId = (& $Cli -d 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0 -or $DeviceId.Length -lt 4 -or $DeviceId.Length -gt 120) {
-              throw 'UU Lite device ID is not available without interaction'
+            if ($Cli) {
+              $DeviceId = (& $Cli -d 2>&1 | Out-String).Trim()
+              if ($LASTEXITCODE -ne 0 -or $DeviceId.Length -lt 4 -or $DeviceId.Length -gt 120) {
+                throw 'UU Lite device ID is not available without interaction'
+              }
+              Write-Output 'UU_LITE_DEVICE_ID_AVAILABLE=true'
+            } else {
+              Write-Output 'UU_LITE_CLI_PRESENT=false'
+              # Read only automation metadata. Never log actual UI element names,
+              # text, device IDs, or verification codes on a public CI job.
+              $Windows = @($Running | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
+              Write-Output ("UU_LITE_WINDOW_AVAILABLE=" + ($Windows.Count -gt 0).ToString().ToLowerInvariant())
+              try {
+                Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes -ErrorAction Stop
+                $Controls = 0
+                $IdLabel = $false
+                $CodeLabel = $false
+                $CopyLabel = $false
+                $ReadableValues = 0
+                foreach ($Process in $Windows) {
+                  $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+                  if (-not $Root) { continue }
+                  $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                  $Controls += $Items.Count
+                  foreach ($Item in $Items) {
+                    $Name = $Item.Current.Name
+                    if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
+                    if ($Name -match '验证码|verification code') { $CodeLabel = $true }
+                    if ($Name -match '复制|copy') { $CopyLabel = $true }
+                    $Value = $null
+                    if ($Item.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$Value)) {
+                      $ReadableValues++
+                    }
+                  }
+                }
+                Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
+                Write-Output ("UU_LITE_UIA_ID_LABEL=" + $IdLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
+                Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
+              } catch {
+                Write-Output 'UU_LITE_UIA_INSPECTION=unavailable'
+              }
+              throw 'UU Lite exposes no supported CLI; GUI inspection is diagnostic only'
             }
-            Write-Output 'UU_LITE_DEVICE_ID_AVAILABLE=true'
           } finally {
             Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $Executable -Force -ErrorAction SilentlyContinue
