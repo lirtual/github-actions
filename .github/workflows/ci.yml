@@ -239,11 +239,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Test Python Session protocol on a real Windows Runner
-        shell: pwsh
+      - name: Test Python Session protocol with hidden PowerShell on a Windows Runner
+        shell: pwsh -WindowStyle Hidden -Command ". '{0}'"
         run: |
           python -m py_compile .github/scripts/session_action.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p 'test_*.py'
+          exit $LASTEXITCODE
       - name: Check OpenSSH and Windows host prerequisites without configuring access
         shell: pwsh
         run: |
