@@ -55,11 +55,10 @@ jobs:
           OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}
           OPENLIST_DATABASE_CA: ${{ secrets.OPENLIST_DATABASE_CA }}
         run: bash .github/scripts/start-openlist.sh
-      - name: Start Cloudflare Tunnel and verify HTTPS route
+      - name: Start public Quick Tunnel and verify OpenList API
         shell: bash
         env:
           SESSION_SERVICE: openlist
-          SESSION_TUNNEL_ALLOWED_EMAIL: ${{ vars.SESSION_TUNNEL_ALLOWED_EMAIL }}
         run: bash .github/scripts/start-tunnel.sh
       - name: Upload temporary Tunnel locator
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
