@@ -363,11 +363,12 @@ jobs:
             Write-Output 'UU_LITE_SIGNED=true'
             Start-Process -FilePath $Executable | Out-Null
             Start-Sleep -Seconds 20
-            $Running = @(Get-Process -Name GameViewerLite,GameViewer -ErrorAction SilentlyContinue)
+            $Running = @(Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer -ErrorAction SilentlyContinue)
             if ($Running.Count -eq 0) { throw 'UU Lite did not stay running on Windows Runner' }
             Write-Output 'UU_LITE_RUNNING=true'
             # Only use supported CLI; never expose a device ID/code in public CI logs.
             $CliPaths = @(
+              @($Running | Where-Object { $_.Path } | ForEach-Object { Join-Path (Split-Path $_.Path) 'uuyc-cli.exe' }),
               (Join-Path $env:RUNNER_TEMP 'uuyc-cli.exe'),
               'C:\Program Files\Netease\GameViewer\bin\uuyc-cli.exe',
               'C:\Program Files (x86)\Netease\GameViewer\bin\uuyc-cli.exe'
@@ -380,6 +381,6 @@ jobs:
             }
             Write-Output 'UU_LITE_DEVICE_ID_AVAILABLE=true'
           } finally {
-            Get-Process -Name GameViewerLite,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session-probe,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $Executable -Force -ErrorAction SilentlyContinue
           }
