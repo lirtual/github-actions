@@ -1,4 +1,4 @@
-name: Windows Session
+name: windows
 on:
   workflow_dispatch:
     inputs:

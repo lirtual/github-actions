@@ -4,16 +4,24 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOWS = ("linux", "windows", "chrome", "code-server", "openlist")
+WORKFLOWS = ("ubuntu", "windows", "chrome", "code-server", "openlist")
 
 class SessionWorkflowInvariants(unittest.TestCase):
+    def test_public_session_action_names_are_lowercase_and_match_paths(self):
+        self.assertFalse((ROOT / ".github/workflows/linux.yml").exists())
+        self.assertFalse((ROOT / ".github/scripts/linux-ssh.sh").exists())
+        for name in WORKFLOWS:
+            with self.subTest(workflow=name):
+                text = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
+                self.assertEqual(text.splitlines()[0], "name: " + name)
+
     def test_every_session_checks_out_exact_run_sha(self):
         for name in WORKFLOWS:
             with self.subTest(workflow=name):
                 yml = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
                 self.assertIn("ref: ${{ github.sha }}", yml)
                 self.assertIn("persist-credentials: false", yml)
-                if name in ("linux", "windows"):
+                if name in ("ubuntu", "windows"):
                     self.assertIn("hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}", yml)
                 else:
                     self.assertNotIn("tailscale/github-action@", yml)
@@ -21,7 +29,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("Capture job lifetime before checkout", yml)
                 self.assertLess(yml.index("Capture job lifetime before checkout"),
                                 yml.index("Checkout pinned dispatched revision"))
-                if name in ("linux", "windows"):
+                if name in ("ubuntu", "windows"):
                     self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
                     self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
                 self.assertNotIn("secrets.TS_OAUTH_CLIENT_ID", yml)
@@ -44,14 +52,14 @@ class SessionWorkflowInvariants(unittest.TestCase):
             with self.subTest(workflow=name):
                 text = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
                 claim = text.index("session_action.py claim")
-                join = text.index(pinned_tailnet) if name in ("linux", "windows") else text.index("Start loopback-only" if name in ("chrome", "code-server") else "Start password-protected")
+                join = text.index(pinned_tailnet) if name in ("ubuntu", "windows") else text.index("Start loopback-only" if name in ("chrome", "code-server") else "Start password-protected")
                 ready = text.index("session_action.py ready")
                 hold = text.index("session_action.py hold")
                 self.assertTrue(claim < join < ready < hold)
                 self.assertIn("id-token: write", text[:claim])
                 self.assertIn("WORKFLOW_ACTION_TYPE: session", text[:claim])
                 self.assertNotIn("tailscale set", text[:join])
-                if name not in ("linux", "windows"):
+                if name not in ("ubuntu", "windows"):
                     self.assertNotIn(pinned_tailnet, text)
                     self.assertNotIn("sudo tailscale set", text)
                 self.assertNotIn("${{ secrets.", text[:claim])
@@ -70,7 +78,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertNotIn("sudo tailscale set --ssh\\n", text[join:ready])
                     self.assertNotIn("secrets.OPENLIST_ADMIN_PASSWORD", text)
                     self.assertLess(text.index("start-tunnel.sh"), ready)
-                if name in ("linux", "windows"):
+                if name in ("ubuntu", "windows"):
                     self.assertIn("secrets.SESSION_SYSTEM_PASSWORD",
                                   text[join:ready])
                     self.assertNotIn("SESSION_SSH_PUBLIC_KEY", text)
@@ -139,8 +147,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("fDenyTSConnections -Value 1", windows)
 
     def test_ubuntu_uses_existing_runner_user_and_real_password_ssh(self):
-        workflow = (ROOT / ".github/workflows/linux.yml").read_text()
-        script = (ROOT / ".github/scripts/linux-ssh.sh").read_text()
+        workflow = (ROOT / ".github/workflows/ubuntu.yml").read_text()
+        script = (ROOT / ".github/scripts/ubuntu-ssh.sh").read_text()
         self.assertIn('account="$(id -un)"', script)
         self.assertIn('printf \'%s:%s\\n\' "$account" "$SESSION_SYSTEM_PASSWORD" | sudo chpasswd', script)
         self.assertIn('sudo tailscale set --ssh=false', script)
