@@ -245,7 +245,12 @@ jobs:
           python -m py_compile .github/scripts/session_action.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p 'test_*.py'
-          exit $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $Process = [System.Diagnostics.Process]::GetCurrentProcess()
+          if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
+            throw 'Hidden PowerShell exposed a main window'
+          }
+          Write-Output "Hidden PowerShell main window absent; Windows SessionId=$($Process.SessionId)"
       - name: Check OpenSSH and Windows host prerequisites without configuring access
         shell: pwsh
         run: |
