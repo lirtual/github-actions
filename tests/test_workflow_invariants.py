@@ -193,6 +193,26 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("Remove-NetFirewallRule -Name SessionActionsTailscaleRDP", windows)
         self.assertIn("fDenyTSConnections -Value 1", windows)
 
+    def test_windows_rdp_disconnect_returns_only_runner_session_to_console(self):
+        rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
+        handoff = (ROOT / ".github/scripts/windows-rdp-handoff.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("'windows-rdp-handoff.ps1') -Install", rdp)
+        self.assertIn("RUNNER_ENVIRONMENT: ${{ runner.environment }}", workflow)
+        self.assertIn("SessionActionsRdpConsoleHandoff", workflow)
+        self.assertIn("Unregister-ScheduledTask", workflow)
+        self.assertIn("$env:RUNNER_ENVIRONMENT -ne 'github-hosted'", handoff)
+        self.assertIn("<StateChange>RemoteDisconnect</StateChange>", handoff)
+        self.assertIn("<LogonType>InteractiveToken</LogonType>", handoff)
+        self.assertIn("<RunLevel>HighestAvailable</RunLevel>", handoff)
+        self.assertIn("MultipleInstancesPolicy>IgnoreNew", handoff)
+        self.assertIn("quser.exe", handoff)
+        self.assertIn("CandidateIds.Count -ne 1", handoff)
+        self.assertIn("'/dest:console'", handoff)
+        self.assertNotIn("LockWorkStation", handoff)
+        self.assertNotIn("Set-ItemProperty", handoff)
+        self.assertNotIn("$env:SESSIONNAME", handoff)
+
     def test_ubuntu_uses_existing_runner_user_and_real_password_ssh(self):
         workflow = (ROOT / ".github/workflows/ubuntu.yml").read_text()
         script = (ROOT / ".github/scripts/ubuntu-ssh.sh").read_text()
