@@ -339,6 +339,35 @@ jobs:
           }
           Write-Output "Windows prerequisites passed; SSH was NOT enabled"
 
+      - name: Verify native RDP disconnect handoff task registration
+        shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tokens = $null
+          $errorsFound = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/scripts/windows-rdp-handoff.ps1').Path,
+            [ref]$tokens, [ref]$errorsFound) | Out-Null
+          if ($errorsFound.Count -ne 0) { throw 'Invalid Windows RDP handoff script' }
+          try {
+            & ./.github/scripts/windows-rdp-handoff.ps1 -Install
+            [xml]$Task = Export-ScheduledTask -TaskName SessionActionsRdpConsoleHandoff
+            $Ns = New-Object System.Xml.XmlNamespaceManager($Task.NameTable)
+            $Ns.AddNamespace('t','http://schemas.microsoft.com/windows/2004/02/mit/task')
+            $Trigger = $Task.SelectSingleNode('//t:SessionStateChangeTrigger', $Ns)
+            $Principal = $Task.SelectSingleNode('//t:Principal', $Ns)
+            if ($Trigger.StateChange -ne 'RemoteDisconnect' -or
+                $Principal.LogonType -ne 'InteractiveToken' -or
+                $Principal.RunLevel -ne 'HighestAvailable') {
+              throw 'Unexpected RDP handoff task identity or trigger'
+            }
+            Write-Output 'Native RemoteDisconnect task registration verified; no RDP session modified'
+          } finally {
+            Unregister-ScheduledTask -TaskName SessionActionsRdpConsoleHandoff -Confirm:$false -ErrorAction SilentlyContinue
+          }
+
       - name: Verify real UU Lite startup and private credential extraction
         shell: pwsh
         env:
