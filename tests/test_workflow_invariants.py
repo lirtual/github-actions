@@ -22,7 +22,14 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("ref: ${{ github.sha }}", yml)
                 self.assertIn("persist-credentials: false", yml)
                 if name in ("ubuntu", "windows"):
-                    self.assertIn("hostname: sa-${{ github.run_id }}-a${{ github.run_attempt }}", yml)
+                    self.assertIn("hostname: ${{ env.SESSION_TAILSCALE_HOSTNAME }}", yml)
+                    self.assertIn("session_mode:", yml)
+                    self.assertIn("type: choice", yml)
+                    self.assertIn("- temporary", yml)
+                    self.assertIn("- fixed", yml)
+                    self.assertIn("default: temporary", yml)
+                    self.assertIn("verify-tailnet-name.py", yml)
+                    self.assertIn("SESSION_TAILSCALE_HOSTNAME:", yml)
                 else:
                     self.assertNotIn("tailscale/github-action@", yml)
                 self.assertIn("timeout-minutes: 360", yml)
@@ -56,6 +63,10 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 ready = text.index("session_action.py ready")
                 hold = text.index("session_action.py hold")
                 self.assertTrue(claim < join < ready < hold)
+                if name in ("ubuntu", "windows"):
+                    verify = text.index("verify-tailnet-name.py")
+                    self.assertTrue(join < verify < ready)
+                    self.assertIn("hostname: ${{ env.SESSION_TAILSCALE_HOSTNAME }}", text)
                 self.assertIn("id-token: write", text[:claim])
                 self.assertIn("WORKFLOW_ACTION_TYPE: session", text[:claim])
                 self.assertNotIn("tailscale set", text[:join])
