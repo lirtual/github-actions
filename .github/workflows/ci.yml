@@ -244,6 +244,27 @@ jobs:
         run: |
           python -m py_compile .github/scripts/session_action.py
           python -m unittest discover -s tests -p 'test_*.py'
+      - name: Exercise Windows desktop preparation using the actual Session step
+        shell: pwsh
+        run: |
+          $Source = Get-Content '.github/workflows/windows.yml' -Raw
+          $Begin = $Source.IndexOf('      - name: Hide pre-existing Windows Terminal window')
+          $End = $Source.IndexOf('      - name: Signed Ready', $Begin)
+          if ($Begin -lt 0 -or $End -lt 0) { throw 'Windows desktop step not found' }
+          $Section = $Source.Substring($Begin, $End - $Begin)
+          $RunStart = $Section.IndexOf('        run: |')
+          if ($RunStart -lt 0) { throw 'Windows desktop step must use a run block' }
+          $Body = $Section.Substring($RunStart + '        run: |'.Length)
+          $Script = (($Body -split '\r?\n') | ForEach-Object { $_ -replace '^          ', '' }) -join "`n"
+          $Fixture = Join-Path $env:RUNNER_TEMP 'session-action-start'
+          [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() | Set-Content $Fixture -NoNewline -Encoding ascii
+          $ScriptPath = Join-Path $env:RUNNER_TEMP 'test-windows-desktop.ps1'
+          Set-Content -Path $ScriptPath -Value $Script -Encoding utf8
+          try {
+            & $ScriptPath
+          } finally {
+            Remove-Item $ScriptPath, $Fixture -Force -ErrorAction SilentlyContinue
+          }
       - name: Check OpenSSH and Windows host prerequisites without configuring access
         shell: pwsh
         run: |
