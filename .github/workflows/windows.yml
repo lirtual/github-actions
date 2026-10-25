@@ -121,6 +121,8 @@ jobs:
         run: python .github/scripts/session_action.py ready
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: python .github/scripts/session_action.py hold
       - name: Stop SSH and remove Tailnet firewall access
         if: always()

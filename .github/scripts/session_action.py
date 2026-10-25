@@ -11,6 +11,7 @@ import urllib.error
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -179,8 +180,28 @@ def hold():
     start_time = recorded_start()
     end = start_time + 60 * minutes
     print("Session bounded hold started; GitHub Job timeout remains authoritative")
+    # The existing Windows Session hold process shares the interactive Runner desktop.
+    # Refresh UIA credentials only when UU successfully started; never log the code.
+    uu_script = pathlib.Path(".github/scripts/windows-uu.ps1")
+    uu_path = pathlib.Path(os.getenv("LOCALAPPDATA") or ".") / "session-actions" / "uu-remote.json"
+    uu_enabled = os.name == "nt" and uu_script.is_file() and uu_path.is_file()
+    next_refresh = time.monotonic() + 30 if uu_enabled else None
     while time.time() < end:
-        time.sleep(min(10, max(0, end - time.time())))
+        if uu_enabled and time.monotonic() >= next_refresh:
+            try:
+                subprocess.run(
+                    ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                     str(uu_script), "-Refresh"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    check=False, timeout=15,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                # UU is optional; never interrupt SSH/RDP or the bounded hold.
+                pass
+            next_refresh = time.monotonic() + 30
+        remaining = max(0, end - time.time())
+        until_refresh = max(0, next_refresh - time.monotonic()) if uu_enabled else 10
+        time.sleep(min(10, remaining, until_refresh))
     print("Session lifetime reached; shutting down")
 
 
