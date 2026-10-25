@@ -393,6 +393,7 @@ jobs:
                 $CodeLabel = $false
                 $CopyLabel = $false
                 $ReadableValues = 0
+                $Shapes = @()
                 foreach ($Process in $Windows) {
                   $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
                   if (-not $Root) { continue }
@@ -404,9 +405,15 @@ jobs:
                     if ($Name -match '验证码|verification code') { $CodeLabel = $true }
                     if ($Name -match '复制|copy') { $CopyLabel = $true }
                     $Value = $null
+                    $Type = $Item.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+                    $Kind = if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { 'ID' } elseif ($Name -match '验证码|verification code') { 'CODE' } else { 'OTHER' }
+                    $Text = [string]$Name
                     if ($Item.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$Value)) {
                       $ReadableValues++
+                      $Text += ' ' + [string]$Value.Current.Value
                     }
+                    $Shape = if ($Text -match '(?<![0-9])[0-9]{8,15}(?![0-9])') { 'digits8plus' } elseif ($Text -match '(?<![a-zA-Z0-9])[a-zA-Z0-9]{6,12}(?![a-zA-Z0-9])') { 'codeLike' } elseif ($Text.Length -gt 0) { 'text' } else { 'empty' }
+                    $Shapes += ($Type + ':' + $Kind + ':' + $Shape)
                   }
                 }
                 Write-Output ("UU_LITE_UIA_CONTROL_COUNT=" + $Controls)
@@ -414,6 +421,7 @@ jobs:
                 Write-Output ("UU_LITE_UIA_CODE_LABEL=" + $CodeLabel.ToString().ToLowerInvariant())
                 Write-Output ("UU_LITE_UIA_COPY_LABEL=" + $CopyLabel.ToString().ToLowerInvariant())
                 Write-Output ("UU_LITE_UIA_VALUE_CONTROLS=" + $ReadableValues)
+                Write-Output ("UU_LITE_UIA_SANITIZED_SHAPES=" + ($Shapes -join ','))
               } catch {
                 Write-Output 'UU_LITE_UIA_INSPECTION=unavailable'
               }
