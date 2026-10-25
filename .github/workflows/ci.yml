@@ -433,7 +433,7 @@ jobs:
                     $CanInvoke = $Item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$Invoke)
                     $Shapes += ($Type + ':' + $Kind + ':' + $Shape + ':' + $Sources + ':invoke' + $CanInvoke.ToString().ToLowerInvariant())
                     if ($Type -eq 'Text') {
-                      $Normalized = [regex]::Replace($Name.Trim(), '[\\s\\-–—]', '')
+                      $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
                       if ($Normalized -match '^[0-9]{9}$') {
                         $IdCandidates += @{ Element = $Item; Value = $Normalized }
                       }
@@ -454,8 +454,8 @@ jobs:
                 Write-Output ("UU_LITE_CREDENTIAL_PATTERN_UNIQUE=" + $Unique.ToString().ToLowerInvariant())
                 if ($Unique) {
                   Start-Sleep -Seconds 2
-                  $IdReadback = [regex]::Replace(([string]$IdCandidates[0].Element.Current.Name).Trim(), '[\\s\\-–—]', '')
-                  $CodeReadback = [regex]::Replace(([string]$CodeCandidates[0].Element.Current.Name).Trim(), '[\\s\\-–—]', '')
+                  $IdReadback = [regex]::Replace(([string]$IdCandidates[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
+                  $CodeReadback = [regex]::Replace(([string]$CodeCandidates[0].Element.Current.Name).Trim(), '[\s\-–—]', '')
                   $Stable = $IdReadback -ceq $IdCandidates[0].Value -and $CodeReadback -ceq $CodeCandidates[0].Value
                   Write-Output ("UU_LITE_CREDENTIAL_TEXT_STABLE=" + $Stable.ToString().ToLowerInvariant())
                 }
