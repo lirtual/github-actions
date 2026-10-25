@@ -370,6 +370,47 @@ jobs:
                 (Get-Item -LiteralPath $File).LastWriteTimeUtc -ne $FileTime) {
               throw 'UU Lite refresh should preserve unchanged current code'
             }
+            # Tray-hiding sets Process.MainWindowHandle to zero. Verify the
+            # refresh path still finds the existing process-owned window.
+            Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class UUCIShowWindow {
+              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);
+          }
+          '@
+            $WindowProcess = Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
+              Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+            if (-not $WindowProcess) { throw 'UU Lite visible window not found for tray-hidden test' }
+            $Window = $WindowProcess.MainWindowHandle
+            try {
+              [void][UUCIShowWindow]::ShowWindow($Window, 0)
+              Start-Sleep -Seconds 1
+              pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh
+              if ($LASTEXITCODE -ne 0) { throw 'UU Lite tray-hidden refresh failed' }
+              $Hidden = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+              if ($Hidden.status -ne 'ready' -or
+                  $Hidden.device_id -cne $Data.device_id -or
+                  $Hidden.verification_code -cne $Data.verification_code) {
+                throw 'UU Lite tray-hidden refresh captured incorrect credentials'
+              }
+            } finally {
+              [void][UUCIShowWindow]::ShowWindow($Window, 9)
+            }
+            Write-Output 'UU_LITE_HIDDEN_WINDOW_REFRESH=true'
+            # Missing upstream process is a safe failure: do not retain the
+            # now unverified code, but provide a private diagnostic status.
+            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh 2>$null
+            if ($LASTEXITCODE -eq 0) { throw 'UU Lite missing-process refresh unexpectedly succeeded' }
+            $Unavailable = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+            if ($Unavailable.status -ne 'unavailable' -or
+                $Unavailable.reason -ne 'process_missing' -or
+                $Unavailable.PSObject.Properties.Name -contains 'verification_code') {
+              throw 'UU Lite unavailable status failed closed'
+            }
+            Write-Output 'UU_LITE_MISSING_PROCESS_STATUS=true'
             Write-Output 'UU_LITE_REFRESH_IDEMPOTENT=true'
             Write-Output 'UU_LITE_PRIVATE_CREDENTIAL_CAPTURE=true'
           } finally {
