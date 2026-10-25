@@ -71,8 +71,11 @@ jobs:
         shell: pwsh
         run: python .github/scripts/session_action.py ready
       - name: Hold until selected lifetime or GitHub cancellation
-        shell: pwsh
-        run: python .github/scripts/session_action.py hold
+        # Retain GitHub's process ownership and cancellation; hide the long-lived console only.
+        shell: pwsh -WindowStyle Hidden -Command ". '{0}'"
+        run: |
+          python .github/scripts/session_action.py hold
+          exit $LASTEXITCODE
       - name: Stop SSH and remove Tailnet firewall access
         if: always()
         shell: pwsh
