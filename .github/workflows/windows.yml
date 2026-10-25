@@ -51,6 +51,12 @@ jobs:
       - name: Claim approved physical GitHub Run
         shell: pwsh
         run: python .github/scripts/session_action.py claim
+      - name: Suppress Tailscale first-run onboarding on the disposable Runner
+        shell: pwsh
+        run: |
+          $Policy = 'HKLM:\SOFTWARE\Policies\Tailscale'
+          New-Item -Path $Policy -Force | Out-Null
+          New-ItemProperty -Path $Policy -Name OnboardingFlow -PropertyType String -Value hide -Force | Out-Null
       - name: Join ephemeral Tailnet
         uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf
         with:
