@@ -95,6 +95,18 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("windows-rdp.ps1", text[join:ready])
                     self.assertIn("SessionActionsTailscaleRDP", text[hold:])
 
+    def test_windows_hides_tailscale_onboarding_before_install(self):
+        windows = (ROOT / ".github/workflows/windows.yml").read_text()
+        claim = windows.index("session_action.py claim")
+        policy = windows.index("Suppress Tailscale first-run onboarding")
+        tailnet = windows.index("uses: tailscale/github-action@")
+        rdp = windows.index("windows-rdp.ps1")
+        self.assertTrue(claim < policy < tailnet < rdp)
+        self.assertIn(r"HKLM:\SOFTWARE\Policies\Tailscale", windows)
+        self.assertIn("New-ItemProperty -Path $Policy -Name OnboardingFlow -PropertyType String -Value hide -Force", windows)
+        self.assertNotIn("Stop-Service Tailscale", windows)
+        self.assertNotIn("Stop-Process -Name tailscaled", windows)
+
     def test_web_services_use_cloudflare_otp_gate_with_openlist_admin_auth(self):
         chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
