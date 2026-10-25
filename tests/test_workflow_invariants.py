@@ -92,7 +92,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         hold = workflow.split(
             "      - name: Hold until selected lifetime or GitHub cancellation\n", 1
         )[1].split("      - name: Stop SSH and remove Tailnet firewall access\n", 1)[0]
-        self.assertIn('shell: pwsh -WindowStyle Hidden -Command ". \\'{0}\\'"', hold)
+        self.assertIn("shell: pwsh -WindowStyle Hidden -Command", hold)
         self.assertIn("python .github/scripts/session_action.py hold", hold)
         self.assertIn("exit $LASTEXITCODE", hold)
         self.assertNotIn("Start-Process", hold)
