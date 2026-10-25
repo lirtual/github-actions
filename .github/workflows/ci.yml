@@ -268,7 +268,7 @@ jobs:
 
   smoke-windows-prerequisites:
     runs-on: windows-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - name: Checkout without retained credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -338,3 +338,48 @@ jobs:
             throw 'OpenSSH Server capability unavailable'
           }
           Write-Output "Windows prerequisites passed; SSH was NOT enabled"
+
+      - name: Probe officially signed UU Lite on disposable Windows Runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Executable = Join-Path $env:RUNNER_TEMP 'GameViewerLite-session-probe.exe'
+          try {
+            # Resolve the current Lite binary via NetEase's own download channel.
+            $Channel = Invoke-WebRequest -UseBasicParsing -TimeoutSec 20 'https://adl.netease.com/d/g/uuremote/c/greengw/js'
+            $Match = [regex]::Match($Channel.Content, 'var\s+pc_link\s*=\s*"([^"]+)"')
+            if (-not $Match.Success) { throw 'Official UU Lite channel has no Windows binary' }
+            $Url = [uri]$Match.Groups[1].Value
+            if ($Url.Scheme -ne 'https' -or $Url.Host -notmatch '^a[0-9]+\.gdl\.netease\.com$' -or
+                [IO.Path]::GetFileName($Url.AbsolutePath) -notmatch '^GameViewerLite_[a-zA-Z0-9_.-]+\.exe$') {
+              throw 'Unexpected UU Lite download origin or filename'
+            }
+            Invoke-WebRequest -UseBasicParsing -TimeoutSec 90 -Uri $Url.AbsoluteUri -OutFile $Executable
+            $Signature = Get-AuthenticodeSignature -FilePath $Executable
+            if ($Signature.Status -ne 'Valid' -or
+                $Signature.SignerCertificate.Subject -notlike '*NetEase (Hangzhou) Network Co., Ltd*') {
+              throw 'Downloaded UU Lite did not pass NetEase Authenticode validation'
+            }
+            Write-Output 'UU_LITE_SIGNED=true'
+            Start-Process -FilePath $Executable | Out-Null
+            Start-Sleep -Seconds 20
+            $Running = @(Get-Process -Name GameViewerLite,GameViewer -ErrorAction SilentlyContinue)
+            if ($Running.Count -eq 0) { throw 'UU Lite did not stay running on Windows Runner' }
+            Write-Output 'UU_LITE_RUNNING=true'
+            # Only use supported CLI; never expose a device ID/code in public CI logs.
+            $CliPaths = @(
+              (Join-Path $env:RUNNER_TEMP 'uuyc-cli.exe'),
+              'C:\Program Files\Netease\GameViewer\bin\uuyc-cli.exe',
+              'C:\Program Files (x86)\Netease\GameViewer\bin\uuyc-cli.exe'
+            )
+            $Cli = $CliPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+            if (-not $Cli) { throw 'UU Lite has no detectable machine-readable CLI' }
+            $DeviceId = (& $Cli -d 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $DeviceId.Length -lt 4 -or $DeviceId.Length -gt 120) {
+              throw 'UU Lite device ID is not available without interaction'
+            }
+            Write-Output 'UU_LITE_DEVICE_ID_AVAILABLE=true'
+          } finally {
+            Get-Process -Name GameViewerLite,GameViewer,GameViewerServer,GameViewerService,uuyc-mux -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $Executable -Force -ErrorAction SilentlyContinue
+          }
