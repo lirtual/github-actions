@@ -52,7 +52,7 @@ jobs:
       - name: Check Ubuntu Runner password SSH prerequisites (read-only)
         shell: bash
         run: |
-          bash -n .github/scripts/linux-ssh.sh
+          bash -n .github/scripts/ubuntu-ssh.sh
           test "$(id -un)" = runner
           test -x /usr/sbin/sshd
           grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\*\.conf' /etc/ssh/sshd_config

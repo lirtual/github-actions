@@ -1,4 +1,4 @@
-name: Linux Session
+name: ubuntu
 on:
   workflow_dispatch:
     inputs:
@@ -62,7 +62,7 @@ jobs:
         shell: bash
         env:
           SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
-        run: bash .github/scripts/linux-ssh.sh
+        run: bash .github/scripts/ubuntu-ssh.sh
       - name: Signed Ready after private SSH is configured
         run: python3 .github/scripts/session_action.py ready
       - name: Hold until selected lifetime or GitHub cancellation
