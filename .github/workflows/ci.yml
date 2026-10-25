@@ -386,6 +386,10 @@ jobs:
             try {
               [void][UUCIShowWindow]::ShowWindow($Window, 0)
               Start-Sleep -Seconds 1
+              # A previous failed refresh left a secret-free status file;
+              # the next UIA refresh must recover usable credentials.
+              [IO.File]::WriteAllText($File, '{"status":"unavailable","reason":"code_unavailable"}',
+                [Text.UTF8Encoding]::new($false))
               pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh
               if ($LASTEXITCODE -ne 0) { throw 'UU Lite tray-hidden refresh failed' }
               $Hidden = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
