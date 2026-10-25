@@ -361,6 +361,16 @@ jobs:
                 $Data.verification_code -notmatch '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
               throw 'UU Lite extracted credential shape invalid'
             }
+            $FileTime = (Get-Item -LiteralPath $File).LastWriteTimeUtc
+            pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh
+            if ($LASTEXITCODE -ne 0) { throw 'UU Lite refresh failed' }
+            $Refreshed = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+            if ($Refreshed.device_id -cne $Data.device_id -or
+                $Refreshed.verification_code -cne $Data.verification_code -or
+                (Get-Item -LiteralPath $File).LastWriteTimeUtc -ne $FileTime) {
+              throw 'UU Lite refresh should preserve unchanged current code'
+            }
+            Write-Output 'UU_LITE_REFRESH_IDEMPOTENT=true'
             Write-Output 'UU_LITE_PRIVATE_CREDENTIAL_CAPTURE=true'
           } finally {
             Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
