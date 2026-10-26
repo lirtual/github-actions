@@ -83,10 +83,16 @@ public static class UULiteWindows {
             $Codes = @()
             $ShareButtons = @()
             $ShareLabels = @()
+            $AccessibleButtons = 0
+            $HasPartialShareLabel = $false
             foreach ($Item in $Items) {
                 $Name = [string]$Item.Current.Name
                 if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
                 if ($Name -match '验证码|verification code') { $CodeLabel = $true }
+                if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
+                    $AccessibleButtons++
+                }
+                if ($Name -match '(复制|分享|copy|share)') { $HasPartialShareLabel = $true }
                 if ($Name.Trim() -match '^(复制并分享|Copy( and)? Share)$') {
                     $ShareLabels += $Item
                     if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
@@ -103,7 +109,8 @@ public static class UULiteWindows {
                 }
             }
             if ($IdLabel -and $CodeLabel -and $Ids.Count -eq 1 -and $Codes.Count -eq 1) {
-                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons; ShareLabels = $ShareLabels }
+                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons; ShareLabels = $ShareLabels;
+                    AccessibleButtons = $AccessibleButtons; HasPartialShareLabel = $HasPartialShareLabel }
             }
         } catch {
             # A window may close or cease exposing UIA during a remote disconnect.
@@ -225,6 +232,8 @@ public static class UULiteWindows {
         Write-Output 'UU Lite is running; short-lived credentials saved for private SSH access'
         # Only fixed, non-sensitive capture outcomes; no UIA labels or URL contents.
         Write-Output ('UU_LITE_SHARE_CAPTURE_' + $ShareCapture + '=true')
+        Write-Output ('UU_LITE_SHARE_UIA_BUTTONS=' + [Math]::Min(20, $Pairs[0].AccessibleButtons))
+        Write-Output ('UU_LITE_SHARE_UIA_PARTIAL_LABEL=' + [bool]$Pairs[0].HasPartialShareLabel)
     }
 } finally {
     if (-not $Ready) {
