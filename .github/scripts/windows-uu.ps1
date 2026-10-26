@@ -83,6 +83,7 @@ public static class UULiteWindows {
             $Codes = @()
             $ShareButtons = @()
             $ShareLabels = @()
+            $AllButtons = @()
             $AccessibleButtons = 0
             $HasPartialShareLabel = $false
             foreach ($Item in $Items) {
@@ -91,6 +92,7 @@ public static class UULiteWindows {
                 if ($Name -match '验证码|verification code') { $CodeLabel = $true }
                 if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
                     $AccessibleButtons++
+                    $AllButtons += $Item
                 }
                 if ($Name -match '(复制|分享|copy|share)') { $HasPartialShareLabel = $true }
                 if ($Name.Trim() -match '^(复制并分享|Copy( and)? Share)$') {
@@ -109,6 +111,28 @@ public static class UULiteWindows {
                 }
             }
             if ($IdLabel -and $CodeLabel -and $Ids.Count -eq 1 -and $Codes.Count -eq 1) {
+                # Some UU Lite builds expose two unnamed native Buttons.
+                # Identify only the unique button aligned to the verified code
+                # on its right, not an arbitrary screen coordinate or label.
+                if ($ShareButtons.Count -eq 0 -and $AllButtons.Count -eq 2) {
+                    $CodeBox = $Codes[0].Element.Current.BoundingRectangle
+                    if ($CodeBox.Width -gt 40 -and $CodeBox.Height -gt 10) {
+                        $Adjacent = @(
+                            foreach ($Button in $AllButtons) {
+                                $Box = $Button.Current.BoundingRectangle
+                                $DistanceY = [Math]::Abs(
+                                    ($Box.Top + $Box.Bottom) / 2 -
+                                    ($CodeBox.Top + $CodeBox.Bottom) / 2)
+                                if ($Button.Current.IsEnabled -and
+                                    $Box.Left -ge $CodeBox.Right -and
+                                    $Box.Width -ge 60 -and $Box.Width -le 250 -and
+                                    $Box.Height -ge 18 -and $Box.Height -le 70 -and
+                                    $DistanceY -le 45) { $Button }
+                            }
+                        )
+                        if ($Adjacent.Count -eq 1) { $ShareButtons = @($Adjacent[0]) }
+                    }
+                }
                 $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons; ShareLabels = $ShareLabels;
                     AccessibleButtons = $AccessibleButtons; HasPartialShareLabel = $HasPartialShareLabel }
             }
