@@ -7,6 +7,7 @@ Runs in the same private-egress-denying bridge as the socket CI tests, with
 a loopback-only ephemeral RPC port and a per-run random RPC secret.
 """
 import hashlib
+import http.server
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 from urllib.request import ProxyHandler, Request, build_opener
@@ -112,7 +114,49 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
                 manifest["files"][0]["relative_path"] != "README.md" or
                 manifest["files"][0]["sha256"] != expected):
             raise AssertionError("PUBLIC_FIXTURE_INTEGRITY_FAILED")
+        # Follow a real HTTP 302 from the loopback fixture toward the
+        # host-only address. Docker bridge isolation must reject the resulting
+        # private request even after aria2's redirect processing.
+        class RedirectPrivate(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "http://" + gateway + ":18081/")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 18101), RedirectPrivate) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                redirect_gid = secrets.token_hex(8)
+                second = rpc("aria2.addUri", ["http://127.0.0.1:18101/redirect"], {
+                    "gid": redirect_gid, "dir": directory, "out": "redirect.txt",
+                    "max-tries": "1", "connect-timeout": "2",
+                    "timeout": "3", "split": "1",
+                    "follow-torrent": "false", "follow-metalink": "false",
+                })
+                if second != redirect_gid:
+                    raise AssertionError("REDIRECT_GID_MISMATCH")
+                for i in range(60):
+                    result = rpc("aria2.tellStatus", redirect_gid, ["gid", "status"])
+                    if result["status"] == "error":
+                        break
+                    if result["status"] in ("complete", "removed"):
+                        raise AssertionError("PRIVATE_REDIRECT_EGRESS_UNSAFE")
+                    time.sleep(.1)
+                else:
+                    raise AssertionError("PRIVATE_REDIRECT_NEVER_REJECTED")
+                if ((Path(directory) / "redirect.txt").exists() and
+                        b"PRIVATE_FIXTURE" in (Path(directory) / "redirect.txt").read_bytes()):
+                    raise AssertionError("PRIVATE_REDIRECT_LEAKED_FIXTURE")
+            finally:
+                server.shutdown()
+                worker.join(timeout=4)
+
         print("RESTRICTED_BRIDGE_REAL_ARIA2_PUBLIC_FIXTURE_OK")
+        print("RESTRICTED_BRIDGE_REAL_ARIA2_PRIVATE_REDIRECT_DENIED")
     finally:
         process.terminate()
         try:
