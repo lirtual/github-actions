@@ -425,5 +425,129 @@ class SessionProtocolTests(unittest.TestCase):
                     session.signed_status_payload(ATTEMPT, "ready")
 
 
+
+class SessionRuntimeDataTests(unittest.TestCase):
+    def settings(self, root):
+        return {
+            "ATTEMPT_ID": ATTEMPT,
+            "DISPATCH_ID": DISPATCH,
+            "CAPABILITY_ID": "github.action",
+            "WORKFLOW_ACTION_CLAIM_URL": "https://example.test/github/action/claim",
+            "WORKFLOW_ACTION_OIDC_AUDIENCE": AUDIENCE,
+            "RUNNER_TEMP": root,
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example.test/token",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "SECRET-JWT-ISSUE",
+        }
+
+    def test_observation_is_strict_and_capture_failure_never_reuses_old_code(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "uu-remote.json"
+            good = {"status": "ready", "device_id": "123456789",
+                    "verification_code": "AB12CD34"}
+            path.write_text(json.dumps(good), encoding="utf-8")
+            self.assertEqual(session.observed_uu(path), ("ready", {
+                "device_id": "123456789", "verification_code": "AB12CD34"}))
+            self.assertEqual(session.observed_uu(path, False), ("unavailable", None))
+            for bad in [
+                {"status": "ready", "device_id": "123456789",
+                 "verification_code": "12345678"},
+                {"status": "ready", "device_id": "123456789",
+                 "verification_code": "AB12CD34", "leak": True},
+                {"status": "unavailable", "reason": "code_unstable"},
+                {"status": "ready", "device_id": "1",
+                 "verification_code": "AB12CD34"},
+            ]:
+                path.write_text(json.dumps(bad), encoding="utf-8")
+                self.assertEqual(session.observed_uu(path), ("unavailable", None))
+            path.unlink()
+            path.symlink_to(Path(root) / "missing")
+            self.assertEqual(session.observed_uu(path), ("unavailable", None))
+
+    def test_sequence_is_durable_scoped_to_attempt_and_advances_on_same_ui_value(self):
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": root}, clear=True):
+                self.assertEqual(session.next_uu_sequence(ATTEMPT), 1)
+                self.assertEqual(session.next_uu_sequence(ATTEMPT), 2)
+                self.assertEqual(session.next_uu_sequence(DISPATCH), 1)
+                self.assertEqual(session.next_uu_sequence(DISPATCH), 2)
+                self.assertEqual(session.next_uu_sequence(ATTEMPT), 1)
+                file = Path(root) / "session-uu-sequence.json"
+                self.assertEqual(json.loads(file.read_text())["key"], "uu.credentials")
+                if os.name != "nt":
+                    self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+                file.unlink()
+                file.symlink_to(Path(root) / "missing")
+                with self.assertRaises(ValueError):
+                    session.next_uu_sequence(ATTEMPT)
+
+    def test_signed_report_reuses_same_sequence_on_lost_response_without_logging(self):
+        import io
+        from contextlib import redirect_stdout
+        import urllib.error
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "uu-remote.json"
+            path.write_text(json.dumps({"status": "ready", "device_id": "123456789",
+                                        "verification_code": "AB12CD34"}))
+            submitted = []
+            def request_open(req, timeout=0):
+                if "oidc.example.test" in req.full_url:
+                    return _MemoryReply({"value": "PRIVATE-SIGNED-JWT"})
+                submitted.append((req.full_url, json.loads(req.data),
+                                  req.get_header("Authorization")))
+                if len(submitted) == 1:
+                    raise urllib.error.HTTPError(req.full_url, 503, "PRIVATE-BODY", {}, None)
+                return _MemoryReply({"result": "already_recorded"
+                                     if len(submitted) == 2 else "recorded"})
+            with mock.patch.dict(os.environ, self.settings(root), clear=True):
+                with mock.patch.object(session.OPENER, "open", side_effect=request_open):
+                    out = io.StringIO()
+                    with redirect_stdout(out):
+                        session.report_uu_observation(path)
+                        session.report_uu_observation(path)
+                        session.report_uu_observation(path, refreshed=False)
+            self.assertEqual([r[1]["sequence"] for r in submitted], [1, 1, 2, 3])
+            self.assertTrue(all(r[0].endswith("/github/action/session-data") for r in submitted))
+            self.assertEqual(submitted[0][1], submitted[1][1])
+            self.assertEqual(submitted[2][1]["status"], "ready")
+            self.assertEqual(submitted[3][1]["status"], "unavailable")
+            self.assertNotIn("value", submitted[3][1])
+            self.assertTrue(all(r[2] == "Bearer PRIVATE-SIGNED-JWT" for r in submitted))
+            self.assertNotIn("AB12CD34", out.getvalue())
+            self.assertNotIn("PRIVATE-SIGNED-JWT", out.getvalue())
+            self.assertNotIn("PRIVATE-BODY", out.getvalue())
+
+    def test_windows_refresh_reports_failure_as_unavailable_without_stopping_hold(self):
+        import types
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "session-action-start").write_text("1000")
+            location = Path(root) / "session-actions" / "uu-remote.json"
+            location.parent.mkdir()
+            location.write_text('{"status":"ready","device_id":"123456789","verification_code":"AB12CD34"}')
+            clock = {"wall": 1000., "mono": 0.}
+            def sleep(seconds):
+                clock["wall"] += seconds
+                clock["mono"] += seconds
+            captured = []
+            fake_os = types.SimpleNamespace(name="nt", getenv=os.getenv, environ=os.environ)
+            env = {"RUNNER_TEMP": root, "LOCALAPPDATA": root, "DURATION_MINUTES": "1"}
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                session, "os", fake_os
+            ), mock.patch.object(
+                session.time, "time", side_effect=lambda: clock["wall"]
+            ), mock.patch.object(
+                session.time, "monotonic", side_effect=lambda: clock["mono"]
+            ), mock.patch.object(
+                session.time, "sleep", side_effect=sleep
+            ), mock.patch.object(
+                session.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)
+            ), mock.patch.object(
+                session, "report_uu_observation",
+                side_effect=lambda path, refreshed=True: captured.append(refreshed)
+            ):
+                session.hold()
+            self.assertEqual(captured, [True, False])
+            self.assertEqual(clock["wall"], 1060.)
+
+
 if __name__ == "__main__":
     unittest.main()

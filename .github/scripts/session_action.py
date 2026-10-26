@@ -144,6 +144,107 @@ def assert_status(stage):
     raise ValueError("signed " + stage + " unavailable")
 
 
+UU_KEY = "uu.credentials"
+UU_ID = re.compile(r"^[0-9]{9}$")
+UU_CODE = re.compile(r"^(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]{8}$")
+
+
+def observed_uu(path, refreshed=True):
+    # A failed UI refresh invalidates the previous sample even if a stale
+    # credential file remains on disk (e.g. after subprocess timeout).
+    if not refreshed:
+        return "unavailable", None
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024:
+            return "unavailable", None
+        sample = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(sample, dict):
+            return "unavailable", None
+        if sample.get("status") != "ready":
+            return "unavailable", None
+        if set(sample) != {"status", "device_id", "verification_code"}:
+            return "unavailable", None
+        device_id, code = sample["device_id"], sample["verification_code"]
+        if (not isinstance(device_id, str) or not UU_ID.fullmatch(device_id)
+                or not isinstance(code, str) or not UU_CODE.fullmatch(code)):
+            return "unavailable", None
+        return "ready", {"device_id": device_id, "verification_code": code}
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return "unavailable", None
+
+
+def next_uu_sequence(attempt):
+    """Durable per-Attempt/key sequence, atomically advanced before sending."""
+    temp = pathlib.Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+    location = temp / "session-uu-sequence.json"
+    if location.is_symlink():
+        raise SafeProtocolError("sequence_invalid")
+    previous = 0
+    if location.exists():
+        if not location.is_file() or location.stat().st_size > 256:
+            raise SafeProtocolError("sequence_invalid")
+        saved = json.loads(location.read_text(encoding="ascii"))
+        if not isinstance(saved, dict) or set(saved) != {"attemptId", "key", "sequence"}:
+            raise SafeProtocolError("sequence_invalid")
+        if saved["attemptId"] == attempt and saved["key"] == UU_KEY:
+            previous = saved["sequence"]
+            if not isinstance(previous, int) or isinstance(previous, bool) or not 0 <= previous < 9007199254740991:
+                raise SafeProtocolError("sequence_invalid")
+    value = previous + 1
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", encoding="ascii", prefix="session-seq-",
+                                     suffix=".tmp", dir=temp, delete=False) as temporary:
+        candidate = pathlib.Path(temporary.name)
+        try:
+            json.dump({"attemptId": attempt, "key": UU_KEY, "sequence": value}, temporary)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        except Exception:
+            candidate.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(candidate, location)
+    finally:
+        candidate.unlink(missing_ok=True)
+    return value
+
+
+def report_uu_observation(path, refreshed=True):
+    """Best-effort OIDC report; never print data, tokens, URLs or response bodies."""
+    attempt, audience, claim = configuration()
+    status, value = observed_uu(path, refreshed)
+    payload = {"attemptId": attempt, "key": UU_KEY,
+               "sequence": next_uu_sequence(attempt), "status": status}
+    if status == "ready":
+        payload["value"] = value
+    wire = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    url = claim[:-len("/claim")] + "/session-data"
+    # Retry the SAME observation (same sequence and bytes) after response loss.
+    # A subsequent UI observation advances the sequence regardless of content.
+    for retry in range(2):
+        jwt = github_token(audience)
+        request = urllib.request.Request(
+            url, data=wire, method="POST",
+            headers={"Authorization": "Bearer " + jwt, "Content-Type": "application/json"},
+        )
+        try:
+            with OPENER.open(request, timeout=10) as response:
+                result = json.load(response)
+                if response.status != 200 or result not in (
+                    {"result": "recorded"}, {"result": "already_recorded"}
+                ):
+                    raise SafeProtocolError("session_data_rejected")
+                return
+        except urllib.error.HTTPError as failure:
+            code = failure.code
+            failure.close()
+            if code != 503:
+                raise SafeProtocolError("session_data_http_" + str(code)) from None
+        except (OSError, http.client.IncompleteRead, json.JSONDecodeError):
+            pass
+    raise SafeProtocolError("session_data_unavailable")
+
+
 def start_file():
     temp = pathlib.Path(os.environ["RUNNER_TEMP"]).resolve()
     return temp / "session-action-start"
@@ -186,17 +287,30 @@ def hold():
     uu_path = pathlib.Path(os.getenv("LOCALAPPDATA") or ".") / "session-actions" / "uu-remote.json"
     uu_enabled = os.name == "nt" and uu_script.is_file() and uu_path.is_file()
     next_refresh = time.monotonic() + 30 if uu_enabled else None
+    if uu_enabled:
+        try:
+            report_uu_observation(uu_path)
+        except Exception:
+            # Optional UU reports must not interrupt SSH, RDP or the Session.
+            pass
     while time.time() < end:
         if uu_enabled and time.monotonic() >= next_refresh:
+            refreshed = False
             try:
-                subprocess.run(
+                completed = subprocess.run(
                     ["pwsh", "-NoProfile", "-NonInteractive", "-File",
                      str(uu_script), "-Refresh"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     check=False, timeout=15,
                 )
+                refreshed = completed.returncode == 0
             except (OSError, subprocess.TimeoutExpired):
-                # UU is optional; never interrupt SSH/RDP or the bounded hold.
+                pass
+            try:
+                report_uu_observation(uu_path, refreshed)
+            except Exception:
+                # The Worker retains the last accepted observation for at
+                # most 90 seconds; a failed upload cannot extend its TTL.
                 pass
             next_refresh = time.monotonic() + 30
         remaining = max(0, end - time.time())
