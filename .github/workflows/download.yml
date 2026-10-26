@@ -1,0 +1,69 @@
+name: download
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_id:
+        description: Server-owned logical Attempt ID
+        type: string
+        required: true
+      dispatch_id:
+        description: Server-owned dispatch correlation ID
+        type: string
+        required: true
+      capability_id:
+        description: Server-owned execution capability
+        type: string
+        required: true
+      batch_json:
+        description: Approved bounded artifact batch (public sources only)
+        type: string
+        required: true
+
+# Unpublished draft of Spec #51's immutable GitHub Task.
+# Safe by construction: it does not launch aria2/OpenList, access Koofr,
+# connect to MySQL, download sources or emit signed success receipts.
+# It fails closed until provider atomicity, egress and final transfer closure
+# have independent real evidence and a separate production approval.
+env:
+  WORKFLOW_ACTION_TYPE: task
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Checkout pinned dispatched revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Claim approved physical GitHub Task before any privileged action
+        shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          CAPABILITY_ID: ${{ inputs.capability_id }}
+          WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
+          WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/session_action.py claim
+
+      - name: Validate approved public-source batch before any side effects
+        shell: bash
+        env:
+          BATCH_JSON: ${{ inputs.batch_json }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/download_batch.py
+
+      - name: Block unverified download and cloud writes
+        shell: bash
+        run: |
+          echo 'DOWNLOAD_UNAVAILABLE: real Koofr no-clobber, isolated downloader, and complete transfer E2E not yet proven' >&2
+          exit 1
