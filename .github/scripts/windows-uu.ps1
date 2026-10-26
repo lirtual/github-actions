@@ -80,21 +80,15 @@ public static class UULiteWindows {
             $Ids = @()
             $Codes = @()
             $ShareButtons = @()
-            $ShareLabels = @()
             $AllButtons = @()
-            $AccessibleButtons = 0
-            $HasPartialShareLabel = $false
             foreach ($Item in $Items) {
                 $Name = [string]$Item.Current.Name
                 if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
                 if ($Name -match '验证码|verification code') { $CodeLabel = $true }
                 if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
-                    $AccessibleButtons++
                     $AllButtons += $Item
                 }
-                if ($Name -match '(复制|分享|copy|share)') { $HasPartialShareLabel = $true }
                 if ($Name.Trim() -match '^(复制并分享|Copy( and)? Share)$') {
-                    $ShareLabels += $Item
                     if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
                         $ShareButtons += $Item
                     }
@@ -131,8 +125,7 @@ public static class UULiteWindows {
                         if ($Adjacent.Count -eq 1) { $ShareButtons = @($Adjacent[0]) }
                     }
                 }
-                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons; ShareLabels = $ShareLabels;
-                    AccessibleButtons = $AccessibleButtons; HasPartialShareLabel = $HasPartialShareLabel }
+                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons }
             }
         } catch {
             # A window may close or cease exposing UIA during a remote disconnect.
@@ -154,11 +147,8 @@ public static class UULiteWindows {
     # Invoke ONLY during initial startup: repeated 30s refreshes must not
     # interrupt the interactive owner's clipboard.
     $ShareUrl = $null
-    $ShareCapture = 'label_missing'
-    if ($Pairs[0].ShareLabels.Count -gt 0) { $ShareCapture = 'not_button' }
     $InvitePattern = 'https://uuyc\.163\.com/invite/[0-9a-fA-F]{32}(?![A-Za-z0-9/?#])'
     if (-not $Refresh -and $Pairs[0].ShareButtons.Count -eq 1) {
-        $ShareCapture = 'clipboard_unavailable'
         $OriginalClipboard = $null
         $CopiedText = $null
         $ClipboardPrimed = $false
@@ -173,11 +163,9 @@ public static class UULiteWindows {
             if ([string](Get-Clipboard -Raw -ErrorAction Stop) -cne $Marker) {
                 throw 'Clipboard marker unavailable'
             }
-            $ShareCapture = 'invoke_failed'
             $Invoke = $Pairs[0].ShareButtons[0].GetCurrentPattern(
                 [System.Windows.Automation.InvokePattern]::Pattern)
             $Invoke.Invoke()
-            $ShareCapture = 'clipboard_unchanged'
             for ($i = 0; $i -lt 5; $i++) {
                 Start-Sleep -Milliseconds 200
                 $Current = [string](Get-Clipboard -Raw -ErrorAction Stop)
@@ -187,15 +175,12 @@ public static class UULiteWindows {
                 }
             }
             if ($null -ne $CopiedText) {
-                $ShareCapture = 'invalid_link'
                 $Links = @([regex]::Matches($CopiedText, $InvitePattern))
                 if ($Links.Count -eq 1) {
                     $ShareUrl = $Links[0].Value
-                    $ShareCapture = 'captured'
                 }
             }
         } catch {
-            $ShareCapture = 'invoke_or_clipboard_failed'
             # Never log exception details, previous clipboard, URL or code.
         } finally {
             # Restore only when still holding our marker/copied text. Do not
@@ -259,10 +244,6 @@ public static class UULiteWindows {
     $Ready = $true
     if (-not $Refresh) {
         Write-Output 'UU Lite is running; short-lived credentials saved for private SSH access'
-        # Only fixed, non-sensitive capture outcomes; no UIA labels or URL contents.
-        Write-Output ('UU_LITE_SHARE_CAPTURE_' + $ShareCapture + '=true')
-        Write-Output ('UU_LITE_SHARE_UIA_BUTTONS=' + [Math]::Min(20, $Pairs[0].AccessibleButtons))
-        Write-Output ('UU_LITE_SHARE_UIA_PARTIAL_LABEL=' + [bool]$Pairs[0].HasPartialShareLabel)
     }
 } finally {
     if (-not $Ready) {
