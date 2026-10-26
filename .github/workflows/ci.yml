@@ -392,6 +392,21 @@ jobs:
             --volume "$PWD/.github/scripts:/spec51:ro" \
             --volume "$PWD/tests/smoke_download_aria2_network.py:/smoke.py:ro" \
             "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke.py
+      - name: Check real aria2 DNS answer switching cannot reach private Runner service
+        shell: bash
+        run: |
+          set -euo pipefail
+          net="sa51-11111111"
+          gateway="$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "$net")"
+          export HOST_GATEWAY="$gateway"
+          docker run --rm --network "$net" --dns 127.0.0.1 \
+            --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --pids-limit 128 --memory 256m --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+            --env HOST_GATEWAY \
+            --volume "$PWD/tests/smoke_download_dns_rebind.py:/smoke-dns.py:ro" \
+            "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke-dns.py
       - name: Remove isolated firewall rules, network and host fixture
         if: always()
         shell: bash
