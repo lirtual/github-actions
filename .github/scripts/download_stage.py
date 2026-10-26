@@ -10,6 +10,7 @@ queue snapshots, approved pinned physical GitHub Task, no-clobber provider
 semantics, safe network egress and live target parent-directory ownership.
 """
 import posixpath
+from urllib.parse import urlsplit
 from pathlib import Path
 
 from download_batch import validate, InvalidBatch
@@ -40,7 +41,9 @@ def stage_from_reader(batch_json, assignments, storages, reader):
         for req, allocation in zip(batch["downloads"], assignments):
             # Dispatch must freeze the exact approved URL and scratch directory
             # with its GID. No source may borrow another request's artifacts.
-            if allocation["url"] != req["url"]:
+            if (allocation["url"] != req["url"] or
+                    urlsplit(req["url"]).scheme not in ("https", "http")):
+                # Magnet/BT source attribution remains a separate Q26 gate.
                 raise StageUnverified("STAGE_UNVERIFIED")
         observed = reader.read_closed([a["gid"] for a in assignments])
         if (not isinstance(observed, dict) or
@@ -48,9 +51,17 @@ def stage_from_reader(batch_json, assignments, storages, reader):
             raise StageUnverified("STAGE_UNVERIFIED")
         snapshots = []
         for allocation, response in zip(assignments, observed["sources"]):
+            # Scheduler declarations alone are not provenance evidence. The
+            # aria2 engine must independently record exactly the one approved
+            # HTTP(S) source URI as used for this completed GID. Never log it.
+            uris = response.get("uris")
             if (allocation["gid"] != response.get("gid") or
                     not isinstance(response.get("status"), dict) or
-                    response["status"].get("dir") != allocation["root"]):
+                    response["status"].get("dir") != allocation["root"] or
+                    not isinstance(uris, list) or len(uris) != 1 or
+                    not isinstance(uris[0], dict) or
+                    uris[0].get("uri") != allocation["url"] or
+                    uris[0].get("status") != "used"):
                 raise StageUnverified("STAGE_UNVERIFIED")
             snapshots.append({"gid":allocation["gid"],
                               "root":allocation["root"],

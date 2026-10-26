@@ -76,8 +76,10 @@ class StageTests(unittest.TestCase):
             sources=snapshots(roots)
             for item in sources:
                 item["status"]["dir"] = item["root"]
-            recorded={"sources":[{"gid":s["gid"],"status":s["status"],"files":s["files"]}
-                                 for s in sources],"queue":queue(sources)}
+            recorded={"sources":[{"gid":s["gid"],"status":s["status"],"files":s["files"],
+                                  "uris":[{"uri":f"https://example.org/release-{i}.bin",
+                                           "status":"used"}]}
+                                 for i,s in enumerate(sources)],"queue":queue(sources)}
             class Reader:
                 def __init__(self, data): self.data=data
                 def read_closed(self,gids):
@@ -101,6 +103,17 @@ class StageTests(unittest.TestCase):
                 stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
                                        assigned,[mount()],Reader(recorded))
             recorded["sources"][1]["status"]["dir"]=assigned[1]["root"]
+            original_uris=recorded["sources"][1]["uris"]
+            for unsafe in ([],
+                           [{"uri":"https://example.org/unapproved.bin","status":"used"}],
+                           [{"uri":assigned[1]["url"],"status":"waiting"}],
+                           [*original_uris,{"uri":"https://example.org/extra.bin","status":"used"}],
+                           [{"uri":"https://example.org/secret?token=do-not-log","status":"used"}]):
+                recorded["sources"][1]["uris"]=unsafe
+                with self.subTest(uris=unsafe),self.assertRaises(stage.StageUnverified):
+                    stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
+                                           assigned,[mount()],Reader(recorded))
+            recorded["sources"][1]["uris"]=original_uris
             recorded["sources"][1]["gid"]="eeeeeeeeeeeeeeee"
             with self.assertRaises(stage.StageUnverified):
                 stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),

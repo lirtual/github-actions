@@ -61,6 +61,8 @@ class Transport:
         elif method=="aria2.getFiles":
             value=[{"index":"1","path":"/tmp/file.bin","selected":"true","length":"3",
                     "completedLength":"3"}]
+        elif method=="aria2.getUris":
+            value=[{"uri":"https://example.org/fixture.bin","status":"used"}]
         else:
             raise AssertionError(method)
         return Response({"jsonrpc":"2.0","id":body["id"],"result":value})
@@ -75,21 +77,23 @@ class Aria2ReadOnlyTests(unittest.TestCase):
         result=self.client(fixture).read_closed([GID])
         self.assertEqual(GID,result["sources"][0]["gid"])
         self.assertEqual(3,int(result["sources"][0]["status"]["totalLength"]))
+        self.assertEqual([{"uri":"https://example.org/fixture.bin","status":"used"}],
+                         result["sources"][0]["uris"])
         self.assertEqual(["aria2.getGlobalStat","aria2.tellActive",
                           "aria2.tellWaiting","aria2.tellStopped",
-                          "aria2.tellStatus","aria2.getFiles",
+                          "aria2.tellStatus","aria2.getFiles","aria2.getUris",
                           "aria2.getGlobalStat"],
                          [v["method"] for v in fixture.calls])
         self.assertNotIn("synthetic-test-secret",repr(result))
         self.assertTrue(all(v["method"].startswith("aria2.tell") or
-                            v["method"] in ("aria2.getGlobalStat","aria2.getFiles")
+                            v["method"] in ("aria2.getGlobalStat","aria2.getFiles","aria2.getUris")
                             for v in fixture.calls))
 
     def test_dynamic_speed_does_not_change_closed_task_identity(self):
         fixture=Transport(velocity=True)
         observed=self.client(fixture).read_closed([GID])
         self.assertEqual(GID,observed["sources"][0]["gid"])
-        self.assertEqual(7,len(fixture.calls))
+        self.assertEqual(8,len(fixture.calls))
 
     def test_unknown_stopped_gid_denied(self):
         fixture=Transport(unknown=True)
@@ -107,7 +111,7 @@ class Aria2ReadOnlyTests(unittest.TestCase):
         fixture=Transport(changed=True)
         with self.assertRaises(rpc.ReadOnlyRPCUnavailable):
             self.client(fixture).read_closed([GID])
-        self.assertEqual(7,len(fixture.calls))
+        self.assertEqual(8,len(fixture.calls))
 
     def test_invalid_gid_denied_without_rpc_call(self):
         fixture=Transport()

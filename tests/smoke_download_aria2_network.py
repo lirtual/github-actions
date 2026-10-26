@@ -108,6 +108,9 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
 
         snapshot = Aria2Reader(secret, time.monotonic() + 25).read_closed([gid])
         status = snapshot["sources"][0]["status"]
+        uris = snapshot["sources"][0]["uris"]
+        if uris != [{"uri": repo_url, "status": "used"}]:
+            raise AssertionError("PUBLIC_SOURCE_URI_UNVERIFIED")
         manifest = verify_snapshot(directory, gid, status, snapshot["sources"][0]["files"])
         if (status.get("dir") != directory or
                 manifest["file_count"] != 1 or
