@@ -411,7 +411,9 @@ jobs:
         if: always()
         shell: bash
         run: |
-          bash .github/scripts/download-network.sh cleanup
+          set -euo pipefail
+          cleanup_failed=0
+          bash .github/scripts/download-network.sh cleanup || cleanup_failed=1
           docker image rm -f "sa51-aria2-smoke:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/spec51-public-readme"
           if test -s "$RUNNER_TEMP/host-fixture.pid"; then
@@ -422,6 +424,10 @@ jobs:
           fi
           rm -rf "$RUNNER_TEMP/private-fixture" "$RUNNER_TEMP/host-fixture.pid" "$RUNNER_TEMP/host-fixture.log" \
             "$RUNNER_TEMP/udp-fixture.py" "$RUNNER_TEMP/udp-fixture.pid" "$RUNNER_TEMP/udp-fixture.log"
+          if [[ "$cleanup_failed" != 0 ]]; then
+            echo "DOWNLOAD_NETWORK_CLEANUP_FAILED" >&2
+            exit 1
+          fi
 
   smoke-windows-prerequisites:
     runs-on: windows-latest
