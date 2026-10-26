@@ -21,6 +21,40 @@ class StageUnverified(Exception):
     """Constant error code only; never leak paths, URLs or credentials."""
 
 
+def stage_from_reader(batch_json, assignments, storages, reader):
+    """Bind preallocated local roots to an authenticated read-only aria2 snapshot.
+
+    `assignments` must come from the isolated runner's private scheduler, not
+    from caller-controlled batch URLs or the aria2 response itself. This does
+    not start a downloader or call an upload API.
+    """
+    from download_aria2_readonly import ReadOnlyRPCUnavailable
+    try:
+        batch = validate(batch_json)
+        if (not isinstance(assignments, list) or
+                len(assignments) != len(batch["downloads"])):
+            raise StageUnverified("STAGE_UNVERIFIED")
+        if not all(isinstance(a, dict) and set(a) == {"gid", "root"}
+                   for a in assignments):
+            raise StageUnverified("STAGE_UNVERIFIED")
+        observed = reader.read_closed([a["gid"] for a in assignments])
+        if (not isinstance(observed, dict) or
+                len(observed.get("sources", [])) != len(assignments)):
+            raise StageUnverified("STAGE_UNVERIFIED")
+        snapshots = []
+        for allocation, response in zip(assignments, observed["sources"]):
+            if allocation["gid"] != response.get("gid"):
+                raise StageUnverified("STAGE_UNVERIFIED")
+            snapshots.append({"gid":allocation["gid"],
+                              "root":allocation["root"],
+                              "status":response["status"],
+                              "files":response["files"]})
+        return stage_batch(batch_json, snapshots, observed["queue"], storages)
+    except (ReadOnlyRPCUnavailable, InvalidBatch, KeyError, TypeError,
+            ValueError, AttributeError):
+        raise StageUnverified("STAGE_UNVERIFIED") from None
+
+
 def stage_batch(batch_json, snapshots, queue, storages):
     """Return upload intents only if the *whole batch* validates first.
 

@@ -70,6 +70,28 @@ class StageTests(unittest.TestCase):
         (roots[1]/"binary.bin").write_bytes(b"second release")
         return temp,roots
 
+    def test_readonly_aria2_reader_snapshots_bind_to_private_roots(self):
+        tmp,roots=self.fixtures()
+        with tmp:
+            sources=snapshots(roots)
+            recorded={"sources":[{"gid":s["gid"],"status":s["status"],"files":s["files"]}
+                                 for s in sources],"queue":queue(sources)}
+            class Reader:
+                def __init__(self, data): self.data=data
+                def read_closed(self,gids):
+                    assert gids==[s["gid"] for s in sources]
+                    return self.data
+            assigned=[{"gid":s["gid"],"root":s["root"]} for s in sources]
+            intents=stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
+                                             assigned,[mount()],Reader(recorded))
+            self.assertEqual(2,len(intents))
+            self.assertEqual(["/build-a","/build-b"],
+                             [item["destination_parent"] for item in intents])
+            recorded["sources"][1]["gid"]="eeeeeeeeeeeeeeee"
+            with self.assertRaises(stage.StageUnverified):
+                stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
+                                       assigned,[mount()],Reader(recorded))
+
     def test_two_completed_links_produce_two_distinct_intents(self):
         tmp,roots=self.fixtures()
         with tmp:
