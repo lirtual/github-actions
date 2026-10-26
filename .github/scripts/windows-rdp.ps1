@@ -40,4 +40,7 @@ $AddressFilter = $Rule | Get-NetFirewallAddressFilter
 if ($Rule.Enabled -ne 'True' -or $TailnetAddress -notin @($AddressFilter.LocalAddress)) {
     throw 'RDP firewall is not restricted to the Tailnet address'
 }
+# No service or system lock-policy change: one user-scoped RemoteDisconnect task.
+# Registration is limited to the existing disposable GitHub-hosted Runner.
+& (Join-Path $PSScriptRoot 'windows-rdp-handoff.ps1') -Install
 Write-Output 'Tailscale-restricted Windows RDP is ready'
