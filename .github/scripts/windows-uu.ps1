@@ -48,8 +48,6 @@ public static class UULiteWindows {
     private delegate bool WindowCallback(IntPtr window, IntPtr param);
     [DllImport("user32.dll")] private static extern bool EnumWindows(WindowCallback callback, IntPtr param);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
-    [DllImport("user32.dll")] private static extern uint GetClipboardSequenceNumber();
-    public static uint ClipboardVersion() { return GetClipboardSequenceNumber(); }
     public static IntPtr[] ForPids(int[] pids) {
         var allowed = new HashSet<int>(pids);
         var found = new List<IntPtr>();
@@ -163,43 +161,50 @@ public static class UULiteWindows {
         $ShareCapture = 'clipboard_unavailable'
         $OriginalClipboard = $null
         $CopiedText = $null
-        $ClipboardChanged = $false
+        $ClipboardPrimed = $false
+        $Marker = 'uu-share-' + [guid]::NewGuid().ToString('N')
         try {
             $OriginalClipboard = [string](Get-Clipboard -Raw -ErrorAction Stop)
-            $BeforeVersion = [UULiteWindows]::ClipboardVersion()
-            if ($BeforeVersion -ne 0) {
-                $ShareCapture = 'invoke_failed'
-                $Invoke = $Pairs[0].ShareButtons[0].GetCurrentPattern(
-                    [System.Windows.Automation.InvokePattern]::Pattern)
-                $Invoke.Invoke()
-                $ShareCapture = 'clipboard_unchanged'
-                for ($i = 0; $i -lt 5; $i++) {
-                    Start-Sleep -Milliseconds 200
-                    if ([UULiteWindows]::ClipboardVersion() -ne $BeforeVersion) {
-                        $ClipboardChanged = $true
-                        break
-                    }
+            if ($OriginalClipboard.Length -gt 8192) { throw 'Existing clipboard too large' }
+            # Hosted Runner desktop can report ClipboardSequenceNumber=0.
+            # A one-shot random marker proves the button produced NEW text.
+            Set-Clipboard -Value $Marker -ErrorAction Stop
+            $ClipboardPrimed = $true
+            if ([string](Get-Clipboard -Raw -ErrorAction Stop) -cne $Marker) {
+                throw 'Clipboard marker unavailable'
+            }
+            $ShareCapture = 'invoke_failed'
+            $Invoke = $Pairs[0].ShareButtons[0].GetCurrentPattern(
+                [System.Windows.Automation.InvokePattern]::Pattern)
+            $Invoke.Invoke()
+            $ShareCapture = 'clipboard_unchanged'
+            for ($i = 0; $i -lt 5; $i++) {
+                Start-Sleep -Milliseconds 200
+                $Current = [string](Get-Clipboard -Raw -ErrorAction Stop)
+                if ($Current -cne $Marker) {
+                    $CopiedText = $Current
+                    break
                 }
-                if ($ClipboardChanged) {
-                    $ShareCapture = 'invalid_link'
-                    $CopiedText = [string](Get-Clipboard -Raw -ErrorAction Stop)
-                    $Links = @([regex]::Matches($CopiedText, $InvitePattern))
-                    if ($Links.Count -eq 1) {
-                        $ShareUrl = $Links[0].Value
-                        $ShareCapture = 'captured'
-                    }
+            }
+            if ($null -ne $CopiedText) {
+                $ShareCapture = 'invalid_link'
+                $Links = @([regex]::Matches($CopiedText, $InvitePattern))
+                if ($Links.Count -eq 1) {
+                    $ShareUrl = $Links[0].Value
+                    $ShareCapture = 'captured'
                 }
             }
         } catch {
             $ShareCapture = 'invoke_or_clipboard_failed'
-            # Optional UIA/clipboard failure never invalidates the two
-            # independently verified connection credentials.
+            # Never log exception details, previous clipboard, URL or code.
         } finally {
-            # Restore only if the clipboard still holds our copied text.
-            # Do not overwrite a concurrent user clipboard change.
-            if ($ClipboardChanged -and $null -ne $CopiedText) {
+            # Restore only when still holding our marker/copied text. Do not
+            # overwrite a concurrent clipboard update by the human owner.
+            if ($ClipboardPrimed) {
                 try {
-                    if ([string](Get-Clipboard -Raw -ErrorAction Stop) -ceq $CopiedText) {
+                    $Now = [string](Get-Clipboard -Raw -ErrorAction Stop)
+                    if ($Now -ceq $Marker -or
+                        ($null -ne $CopiedText -and $Now -ceq $CopiedText)) {
                         Set-Clipboard -Value $OriginalClipboard -ErrorAction Stop
                     }
                 } catch { }
