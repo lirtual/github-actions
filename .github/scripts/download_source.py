@@ -35,6 +35,40 @@ def relative_path(root, path):
     return rel
 
 
+def verify_queue_closed(known_gids, stats, active, waiting, stopped):
+    """Fail if even one aria2 GID is unknown, missing, truncated or nonterminal.
+
+    Inputs are snapshots from the same isolated aria2 instance, which the
+    Runner must freeze and query consistently (not yet integrated). Per aria2
+    docs numStoppedTotal is not capped by max-download-result; a mismatch
+    detects history truncation/purge that would conceal old/child tasks.
+    """
+    if not isinstance(known_gids, (list, tuple)) or not known_gids:
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    if (not all(isinstance(g, str) and GID.fullmatch(g) for g in known_gids)
+            or len(known_gids) != len(set(known_gids))):
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    if not isinstance(stats, dict) or any(not isinstance(x, list)
+                                           for x in (active, waiting, stopped)):
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    if number(stats.get("numActive")) != 0 or number(stats.get("numWaiting")) != 0:
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    count = number(stats.get("numStoppedTotal"))
+    retained = number(stats.get("numStopped"))
+    if active or waiting or count != retained or count != len(stopped) or count != len(known_gids):
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    observed = []
+    for row in stopped:
+        if (not isinstance(row, dict) or row.get("status") != "complete" or
+                not isinstance(row.get("gid"), str) or not GID.fullmatch(row["gid"]) or
+                row.get("followedBy") or row.get("following") or row.get("belongsTo")):
+            raise SourceUnverified("SOURCE_UNVERIFIED")
+        observed.append(row["gid"])
+    if len(set(observed)) != count or set(observed) != set(known_gids):
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    return True
+
+
 def verify_snapshot(root, gid, status, rows):
     """Return a local manifest iff the known aria2 source finished completely."""
     if not isinstance(gid, str) or not GID.fullmatch(gid):

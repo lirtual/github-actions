@@ -91,6 +91,30 @@ class SourceSnapshotTests(unittest.TestCase):
                 with self.subTest(value=numeric),self.assertRaises(s.SourceUnverified):
                     s.verify_snapshot(str(root),GID,status(totalLength=numeric),rows(root))
 
+    def test_closed_queue_requires_exact_gid_set_without_hidden_results(self):
+        first,second=GID,"fedcba9876543210"
+        ok={"numActive":"0", "numWaiting":"0", "numStopped":"2",
+            "numStoppedTotal":"2"}
+        completed=[{"gid":first,"status":"complete"},
+                   {"gid":second,"status":"complete"}]
+        self.assertTrue(s.verify_queue_closed([first,second],ok,[],[],completed))
+        bad_cases=[
+            (ok,[],[],completed[:1]),
+            ({**ok,"numStoppedTotal":"3"},[],[],completed),
+            ({**ok,"numStopped":"1"},[],[],completed),
+            ({**ok,"numActive":"1"},[completed[0]],[],completed),
+            ({**ok,"numWaiting":"1"},[],[completed[0]],completed),
+            (ok,[],[],[completed[0],completed[0]]),
+            (ok,[],[],[completed[0],{"gid":second,"status":"error"}]),
+            (ok,[],[],[completed[0],{"gid":second,"status":"complete",
+                                  "followedBy":["aaaaaaaaaaaaaaaa"]}]),
+        ]
+        for stats,active,waiting,stopped in bad_cases:
+            with self.subTest(stats=stats,stopped=stopped),self.assertRaises(s.SourceUnverified):
+                s.verify_queue_closed([first,second],stats,active,waiting,stopped)
+        with self.assertRaises(s.SourceUnverified):
+            s.verify_queue_closed([first,first],ok,[],[],completed)
+
     def test_reject_unverified_symlinks(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d,"root")
