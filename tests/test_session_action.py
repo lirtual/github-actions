@@ -447,6 +447,22 @@ class SessionRuntimeDataTests(unittest.TestCase):
             path.write_text(json.dumps(good), encoding="utf-8")
             self.assertEqual(session.observed_uu(path), ("ready", {
                 "device_id": "123456789", "verification_code": "AB12CD34"}))
+            invite = "https://uuyc.163.com/invite/" + "a4" * 16
+            path.write_text(json.dumps({**good, "share_url": invite}), encoding="utf-8")
+            self.assertEqual(session.observed_uu(path), ("ready", {
+                "device_id": "123456789", "verification_code": "AB12CD34",
+                "share_url": invite}))
+            for malformed in [
+                "https://uuyc.163.com.evil.com/invite/" + "a4" * 16,
+                "http://uuyc.163.com/invite/" + "a4" * 16,
+                invite + "?redirect=evil",
+                invite + "#fragment",
+                "https://uuyc.163.com/invite/" + "x" * 32,
+            ]:
+                path.write_text(json.dumps({**good, "share_url": malformed}), encoding="utf-8")
+                self.assertEqual(session.observed_uu(path), ("ready", {
+                    "device_id": "123456789", "verification_code": "AB12CD34"}))
+            path.write_text(json.dumps(good), encoding="utf-8")
             self.assertEqual(session.observed_uu(path, False), ("unavailable", None))
             for bad in [
                 {"status": "ready", "device_id": "123456789",
@@ -462,6 +478,31 @@ class SessionRuntimeDataTests(unittest.TestCase):
             path.unlink()
             path.symlink_to(Path(root) / "missing")
             self.assertEqual(session.observed_uu(path), ("unavailable", None))
+
+    def test_signed_ready_observation_includes_optional_invite_without_logging(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "uu-remote.json"
+            invite = "https://uuyc.163.com/invite/" + "1b" * 16
+            path.write_text(json.dumps({
+                "status": "ready", "device_id": "123456789",
+                "verification_code": "AB12CD34", "share_url": invite
+            }), encoding="utf-8")
+            submitted = []
+            def request_open(req, timeout=0):
+                if "oidc.example.test" in req.full_url:
+                    return _MemoryReply({"value": "PRIVATE-SIGNED-JWT"})
+                submitted.append(json.loads(req.data))
+                return _MemoryReply({"result": "recorded"})
+            with mock.patch.dict(os.environ, self.settings(root), clear=True):
+                with mock.patch.object(session.OPENER, "open", side_effect=request_open):
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        session.report_uu_observation(path)
+            self.assertEqual(submitted[0]["value"]["share_url"], invite)
+            self.assertNotIn(invite, output.getvalue())
+            self.assertNotIn("AB12CD34", output.getvalue())
 
     def test_sequence_is_durable_scoped_to_attempt_and_advances_on_same_ui_value(self):
         with tempfile.TemporaryDirectory() as root:

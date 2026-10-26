@@ -79,10 +79,20 @@ public static class UULiteWindows {
             $CodeLabel = $false
             $Ids = @()
             $Codes = @()
+            $ShareButtons = @()
+            $AllButtons = @()
             foreach ($Item in $Items) {
                 $Name = [string]$Item.Current.Name
                 if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
                 if ($Name -match '验证码|verification code') { $CodeLabel = $true }
+                if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
+                    $AllButtons += $Item
+                }
+                if ($Name.Trim() -match '^(复制并分享|Copy( and)? Share)$') {
+                    if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
+                        $ShareButtons += $Item
+                    }
+                }
                 if ($Item.Current.ControlType.ProgrammaticName -ne 'ControlType.Text') { continue }
                 $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
                 if ($Normalized -match '^[0-9]{9}$') {
@@ -93,7 +103,29 @@ public static class UULiteWindows {
                 }
             }
             if ($IdLabel -and $CodeLabel -and $Ids.Count -eq 1 -and $Codes.Count -eq 1) {
-                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0] }
+                # Some UU Lite builds expose two unnamed native Buttons.
+                # Identify only the unique button aligned to the verified code
+                # on its right, not an arbitrary screen coordinate or label.
+                if ($ShareButtons.Count -eq 0 -and $AllButtons.Count -eq 2) {
+                    $CodeBox = $Codes[0].Element.Current.BoundingRectangle
+                    if ($CodeBox.Width -gt 40 -and $CodeBox.Height -gt 10) {
+                        $Adjacent = @(
+                            foreach ($Button in $AllButtons) {
+                                $Box = $Button.Current.BoundingRectangle
+                                $DistanceY = [Math]::Abs(
+                                    ($Box.Top + $Box.Bottom) / 2 -
+                                    ($CodeBox.Top + $CodeBox.Bottom) / 2)
+                                if ($Button.Current.IsEnabled -and
+                                    $Box.Left -ge $CodeBox.Right -and
+                                    $Box.Width -ge 60 -and $Box.Width -le 250 -and
+                                    $Box.Height -ge 18 -and $Box.Height -le 70 -and
+                                    $DistanceY -le 45) { $Button }
+                            }
+                        )
+                        if ($Adjacent.Count -eq 1) { $ShareButtons = @($Adjacent[0]) }
+                    }
+                }
+                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons }
             }
         } catch {
             # A window may close or cease exposing UIA during a remote disconnect.
@@ -110,6 +142,73 @@ public static class UULiteWindows {
         throw 'UU Lite connection data changed during capture'
     }
 
+    # An invite link is an optional credential, obtained from UU's own
+    # "Copy and share" button. Never infer it from device ID or code.
+    # Invoke ONLY during initial startup: repeated 30s refreshes must not
+    # interrupt the interactive owner's clipboard.
+    $ShareUrl = $null
+    $InvitePattern = 'https://uuyc\.163\.com/invite/[0-9a-fA-F]{32}(?![A-Za-z0-9/?#])'
+    if (-not $Refresh -and $Pairs[0].ShareButtons.Count -eq 1) {
+        $OriginalClipboard = $null
+        $CopiedText = $null
+        $ClipboardPrimed = $false
+        $Marker = 'uu-share-' + [guid]::NewGuid().ToString('N')
+        try {
+            $OriginalClipboard = [string](Get-Clipboard -Raw -ErrorAction Stop)
+            if ($OriginalClipboard.Length -gt 8192) { throw 'Existing clipboard too large' }
+            # Hosted Runner desktop can report ClipboardSequenceNumber=0.
+            # A one-shot random marker proves the button produced NEW text.
+            Set-Clipboard -Value $Marker -ErrorAction Stop
+            $ClipboardPrimed = $true
+            if ([string](Get-Clipboard -Raw -ErrorAction Stop) -cne $Marker) {
+                throw 'Clipboard marker unavailable'
+            }
+            $Invoke = $Pairs[0].ShareButtons[0].GetCurrentPattern(
+                [System.Windows.Automation.InvokePattern]::Pattern)
+            $Invoke.Invoke()
+            for ($i = 0; $i -lt 5; $i++) {
+                Start-Sleep -Milliseconds 200
+                $Current = [string](Get-Clipboard -Raw -ErrorAction Stop)
+                if ($Current -cne $Marker) {
+                    $CopiedText = $Current
+                    break
+                }
+            }
+            if ($null -ne $CopiedText) {
+                $Links = @([regex]::Matches($CopiedText, $InvitePattern))
+                if ($Links.Count -eq 1) {
+                    $ShareUrl = $Links[0].Value
+                }
+            }
+        } catch {
+            # Never log exception details, previous clipboard, URL or code.
+        } finally {
+            # Restore only when still holding our marker/copied text. Do not
+            # overwrite a concurrent clipboard update by the human owner.
+            if ($ClipboardPrimed) {
+                try {
+                    $Now = [string](Get-Clipboard -Raw -ErrorAction Stop)
+                    if ($Now -ceq $Marker -or
+                        ($null -ne $CopiedText -and $Now -ceq $CopiedText)) {
+                        Set-Clipboard -Value $OriginalClipboard -ErrorAction Stop
+                    }
+                } catch { }
+            }
+        }
+    }
+    if ($Refresh -and (Test-Path -LiteralPath $CredentialPath -PathType Leaf)) {
+        try {
+            $Previous = [IO.File]::ReadAllText($CredentialPath) | ConvertFrom-Json
+            if ($Previous.status -eq 'ready' -and
+                $Previous.device_id -ceq $Pairs[0].Id.Value -and
+                $Previous.verification_code -ceq $Pairs[0].Code.Value -and
+                $Previous.share_url -is [string] -and
+                $Previous.share_url -cmatch ('^' + $InvitePattern + '$')) {
+                $ShareUrl = $Previous.share_url
+            }
+        } catch { }
+    }
+
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
     $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $Acl = Get-Acl -LiteralPath $Dir
@@ -122,11 +221,13 @@ public static class UULiteWindows {
     $Acl.SetAccessRule($Rule)
     Set-Acl -LiteralPath $Dir -AclObject $Acl
     $Failure = 'write_failed'
-    $Json = [ordered]@{
+    $Payload = [ordered]@{
         status = 'ready'
         device_id = $Pairs[0].Id.Value
         verification_code = $Pairs[0].Code.Value
-    } | ConvertTo-Json -Compress
+    }
+    if ($ShareUrl) { $Payload.share_url = $ShareUrl }
+    $Json = $Payload | ConvertTo-Json -Compress
     # Avoid needless writes while the code is unchanged; replace atomically when it rotates.
     if ($Refresh -and (Test-Path -LiteralPath $CredentialPath -PathType Leaf) -and
         [IO.File]::ReadAllText($CredentialPath) -ceq $Json) {
