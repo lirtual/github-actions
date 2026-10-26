@@ -27,11 +27,12 @@ class Response:
 
 
 class Transport:
-    def __init__(self,*,unknown=False,changed=False,empty=False):
+    def __init__(self,*,unknown=False,changed=False,empty=False,velocity=False):
         self.calls=[]
         self.unknown=unknown
         self.changed=changed
         self.empty=empty
+        self.velocity=velocity
     def open(self,request,timeout):
         assert request.full_url == "http://127.0.0.1:6800/jsonrpc"
         assert request.get_method()=="POST"
@@ -42,6 +43,10 @@ class Transport:
         method=body["method"]
         if method=="aria2.getGlobalStat":
             value={"numActive":"0","numWaiting":"0","numStopped":"1","numStoppedTotal":"1"}
+            if self.velocity:
+                value["downloadSpeed"]=("0" if len([x for x in self.calls
+                                                     if x["method"]==method])>1
+                                        else "243")
             if self.changed and len([x for x in self.calls if x["method"]==method])>1:
                 value["numActive"]="1"
         elif method in ("aria2.tellActive","aria2.tellWaiting"):
@@ -79,6 +84,12 @@ class Aria2ReadOnlyTests(unittest.TestCase):
         self.assertTrue(all(v["method"].startswith("aria2.tell") or
                             v["method"] in ("aria2.getGlobalStat","aria2.getFiles")
                             for v in fixture.calls))
+
+    def test_dynamic_speed_does_not_change_closed_task_identity(self):
+        fixture=Transport(velocity=True)
+        observed=self.client(fixture).read_closed([GID])
+        self.assertEqual(GID,observed["sources"][0]["gid"])
+        self.assertEqual(7,len(fixture.calls))
 
     def test_unknown_stopped_gid_denied(self):
         fixture=Transport(unknown=True)

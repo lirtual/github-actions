@@ -117,8 +117,13 @@ class Aria2Reader:
                 files = self._request("aria2.getFiles", [gid])
                 rows.append({"gid":gid, "status":status, "files":files})
             final_stats = self._request("aria2.getGlobalStat", [])
-            if final_stats != stats:
+            if not isinstance(final_stats, dict):
                 raise ReadOnlyRPCUnavailable("ARIA2_UNVERIFIED")
+            # Transfer speed is inherently time-varying even when the queue is
+            # closed. Only identity-bearing counts belong to this comparison.
+            for key in ("numActive","numWaiting","numStopped","numStoppedTotal"):
+                if number(final_stats.get(key)) != number(stats.get(key)):
+                    raise ReadOnlyRPCUnavailable("ARIA2_UNVERIFIED")
             return {"queue":{"stats":stats,"active":active,
                              "waiting":waiting,"stopped":stopped},
                     "sources":rows}
