@@ -147,6 +147,7 @@ def assert_status(stage):
 UU_KEY = "uu.credentials"
 UU_ID = re.compile(r"^[0-9]{9}$")
 UU_CODE = re.compile(r"^(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]{8}$")
+UU_SHARE_URL = re.compile(r"^https://uuyc\.163\.com/invite/[0-9a-fA-F]{32}$")
 
 
 def observed_uu(path, refreshed=True):
@@ -162,13 +163,21 @@ def observed_uu(path, refreshed=True):
             return "unavailable", None
         if sample.get("status") != "ready":
             return "unavailable", None
-        if set(sample) != {"status", "device_id", "verification_code"}:
+        keys = set(sample)
+        allowed = {"status", "device_id", "verification_code"}
+        if keys != allowed and keys != allowed | {"share_url"}:
             return "unavailable", None
         device_id, code = sample["device_id"], sample["verification_code"]
         if (not isinstance(device_id, str) or not UU_ID.fullmatch(device_id)
                 or not isinstance(code, str) or not UU_CODE.fullmatch(code)):
             return "unavailable", None
-        return "ready", {"device_id": device_id, "verification_code": code}
+        value = {"device_id": device_id, "verification_code": code}
+        # A malformed optional URL is omitted; the independent ID/code still
+        # work. Unknown fields remain rejected by the strict allowlist above.
+        share_url = sample.get("share_url")
+        if isinstance(share_url, str) and UU_SHARE_URL.fullmatch(share_url):
+            value["share_url"] = share_url
+        return "ready", value
     except (OSError, UnicodeError, ValueError, TypeError):
         return "unavailable", None
 
