@@ -206,6 +206,17 @@ class KoofrClient:
             raise KoofrUnsupported("NOT_SUPPORTED")
         return primary[0]["id"]
 
+    def assert_directory(self, parent):
+        """Read-only native Koofr parent-directory check; no mkdir or overwrite."""
+        _safe_parts(parent, allow_root=True)
+        mount_id = self.primary_mount()
+        path = ("/api/v2/mounts/" + quote(mount_id, safe="") + "/files/info?" +
+                urlencode({"path": parent}))
+        info = self._request_json(path)
+        if info.get("type") != "dir":
+            raise KoofrUnsupported("NOT_SUPPORTED")
+        return True
+
     @staticmethod
     def _matching_md5(metadata, expected):
         if not isinstance(metadata, dict):

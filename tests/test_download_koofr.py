@@ -76,6 +76,9 @@ class MockConnection:
                                  "type":"file","size":size,
                                  "hash":self.options.get("upload_hash",digest)})
         if self._path.startswith("/api/v2/mounts/primary-id/files/info?"):
+            target=parse_qs(urlsplit(self._path).query).get("path",[])
+            if target == ["/build"]:
+                return MockResp(200,{"type":"dir","name":"build"})
             digest=hashlib.md5(b"payload contents",usedforsecurity=False).hexdigest()
             info={"name":"payload.txt","type":"file",
                   "size":self.options.get("size",16)}
@@ -167,6 +170,13 @@ class APIContractTests(unittest.TestCase):
     def _client(self, connections):
         return k.KoofrClient("test@example.com","very private",
                              time.monotonic()+10,connection_factory=connections)
+
+    def test_native_parent_directory_requires_existing_dir(self):
+        conn=Connections()
+        self.assertTrue(self._client(conn).assert_directory("/build"))
+        self.assertEqual(2,len(conn.connections))
+        with self.assertRaises(k.KoofrUnsupported):
+            self._client(Connections()).assert_directory("/other")
 
     def test_regular_file_success_and_provider_readback(self):
         conn=Connections(size=16)
