@@ -226,6 +226,12 @@ class UploadTests(unittest.TestCase):
             self.assertEqual("abort-multipart-upload",fake.calls[-1][2])
             self.assertFalse(any(call[2] == "delete-object" for call in fake.calls))
 
+    def test_server_attempt_must_be_a_real_uuid(self):
+        for candidate in ("-" * 36, "arbitrary-text", "0" * 36):
+            with self.subTest(candidate=candidate), self.assertRaises(s3.StorageUnsupported):
+                s3.AwsConditionalWriter(s3.resolve_aws_mount([mount()],"/drive/builds"),
+                                        candidate,time.monotonic()+30)
+
     def test_integrity_mismatch_fails_closed(self):
         fake=FakeS3()
         with tempfile.TemporaryDirectory() as root, mock.patch.object(s3.subprocess,"run",fake):

@@ -30,7 +30,7 @@ S3_MAX_OBJECT_BYTES = S3_MAX_PARTS * S3_MAX_PART_BYTES  # AWS 50 TB (48.8 TiB)
 S3_SINGLE_PUT_MAX = 5 * 1000 ** 3
 BUCKET = re.compile(r"(?=.{3,63}$)[a-z0-9][a-z0-9.-]*[a-z0-9]\Z")
 REGION = re.compile(r"[a-z]{2}(?:-gov)?-(?:[a-z]+-)+\d\Z")
-ATTEMPT = re.compile(r"[0-9a-fA-F-]{36}\Z")
+ATTEMPT = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
 KEY_FIELD = re.compile(r"^[^\x00-\x1f\x7f\\]+$")
 
 
