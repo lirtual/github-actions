@@ -302,6 +302,21 @@ jobs:
           PYCODE
           python3 "$RUNNER_TEMP/udp-fixture.py" > "$RUNNER_TEMP/udp-fixture.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/udp-fixture.pid"
+      - name: Prepare immutable own-repository fixture and disposable aria2 image
+        shell: bash
+        env:
+          FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          url="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/README.md"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 \
+            "$url" --output "$RUNNER_TEMP/spec51-public-readme"
+          test -s "$RUNNER_TEMP/spec51-public-readme"
+          docker build --tag "sa51-aria2-smoke:$GITHUB_RUN_ID" - <<'DOCKERFILE'
+          FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
+          RUN apk add --no-cache aria2
+          DOCKERFILE
       - name: Arm restricted bridge before launching any client
         shell: bash
         run: bash .github/scripts/download-network.sh setup
@@ -356,11 +371,33 @@ jobs:
           except OSError:
               raise SystemExit('PUBLIC_EGRESS_UNAVAILABLE')
           PYCODE
+      - name: Run genuine aria2 inside restricted bridge against pinned own-repository README
+        shell: bash
+        env:
+          FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          net="sa51-11111111"
+          gateway="$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "$net")"
+          export HOST_GATEWAY="$gateway"
+          export PUBLIC_FIXTURE_URL="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/README.md"
+          export PUBLIC_FIXTURE_SHA256="$(sha256sum "$RUNNER_TEMP/spec51-public-readme" | cut -d' ' -f1)"
+          docker run --rm --network "$net" --dns 1.1.1.1 \
+            --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --pids-limit 128 --memory 256m --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+            --env HOST_GATEWAY --env PUBLIC_FIXTURE_URL --env PUBLIC_FIXTURE_SHA256 \
+            --volume "$PWD/.github/scripts:/spec51:ro" \
+            --volume "$PWD/tests/smoke_download_aria2_network.py:/smoke.py:ro" \
+            "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke.py
       - name: Remove isolated firewall rules, network and host fixture
         if: always()
         shell: bash
         run: |
           bash .github/scripts/download-network.sh cleanup
+          docker image rm -f "sa51-aria2-smoke:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/spec51-public-readme"
           if test -s "$RUNNER_TEMP/host-fixture.pid"; then
             kill "$(cat "$RUNNER_TEMP/host-fixture.pid")" 2>/dev/null || true
           fi
