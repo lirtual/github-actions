@@ -24,6 +24,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 sys.path.insert(0, "/spec51")
 from download_aria2_readonly import Aria2Reader
 from download_source import verify_snapshot, verify_http_source_uris
+from download_stage import stage_from_reader, StageUnverified
 
 repo_url = os.environ.get("PUBLIC_FIXTURE_URL", "")
 expected = os.environ.get("PUBLIC_FIXTURE_SHA256", "")
@@ -42,7 +43,9 @@ for host, port in ((gateway, 18081), ("169.254.169.254", 80)):
         pass
 
 secret = secrets.token_hex(24)
-gid = secrets.token_hex(8)
+gids = [secrets.token_hex(8), secrets.token_hex(8)]
+if gids[0] == gids[1]:
+    raise SystemExit("GID_COLLISION")
 client = build_opener(ProxyHandler({}))
 
 def rpc(method, *args):
@@ -71,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
             "--allow-overwrite=false", "--continue=false",
             "--file-allocation=none", "--max-tries=1",
             "--max-connection-per-server=1", "--split=1",
-            "--max-concurrent-downloads=1",
+            "--max-concurrent-downloads=2",
             "--console-log-level=error", "--dir=" + directory]
     process = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, env={"PATH":os.environ["PATH"]})
@@ -87,34 +90,95 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
         else:
             raise AssertionError("RPC_NOT_READY")
 
-        submitted = rpc("aria2.addUri", [repo_url], {
-            "gid": gid, "dir": directory, "out": "README.md",
-            "max-tries": "1", "split": "1",
-            "follow-torrent": "false", "follow-metalink": "false",
-            "auto-file-renaming": "false", "allow-overwrite": "false",
-            "continue": "false", "max-connection-per-server": "1",
-        })
-        if submitted != gid:
-            raise AssertionError("GID_MISMATCH")
+        # Two independent immutable source allocations in ONE aria2 process,
+        # both submitted before waiting. This tests batch-GID ownership and
+        # two-active scheduling capability (not proven overlapping time).
+        roots = [os.path.join(directory, f"source-{index}") for index in range(2)]
+        for root in roots:
+            os.mkdir(root)
+        for gid, root in zip(gids, roots):
+            submitted = rpc("aria2.addUri", [repo_url], {
+                "gid": gid, "dir": root, "out": "README.md",
+                "max-tries": "1", "split": "1",
+                "follow-torrent": "false", "follow-metalink": "false",
+                "auto-file-renaming": "false", "allow-overwrite": "false",
+                "continue": "false", "max-connection-per-server": "1",
+            })
+            if submitted != gid:
+                raise AssertionError("GID_MISMATCH")
         for i in range(150):
-            detail = rpc("aria2.tellStatus", gid, ["gid", "status"])
-            if detail["status"] == "complete":
+            states = [rpc("aria2.tellStatus", gid, ["gid", "status"])
+                      for gid in gids]
+            if all(s["status"] == "complete" for s in states):
                 break
-            if detail["status"] in ("error", "removed"):
+            if any(s["status"] in ("error", "removed") for s in states):
                 raise AssertionError("DOWNLOAD_NOT_COMPLETE")
             time.sleep(.15)
         else:
             raise AssertionError("DOWNLOAD_TIMEOUT")
 
-        snapshot = Aria2Reader(secret, time.monotonic() + 25).read_closed([gid])
-        status = snapshot["sources"][0]["status"]
-        verify_http_source_uris(snapshot["sources"][0]["files"], repo_url)
-        manifest = verify_snapshot(directory, gid, status, snapshot["sources"][0]["files"])
-        if (status.get("dir") != directory or
-                manifest["file_count"] != 1 or
-                manifest["files"][0]["relative_path"] != "README.md" or
-                manifest["files"][0]["sha256"] != expected):
-            raise AssertionError("PUBLIC_FIXTURE_INTEGRITY_FAILED")
+        snapshot = Aria2Reader(secret, time.monotonic() + 25).read_closed(gids)
+        for gid, root, source in zip(gids, roots, snapshot["sources"]):
+            status = source["status"]
+            verify_http_source_uris(source["files"], repo_url)
+            manifest = verify_snapshot(root, gid, status, source["files"])
+            if (status.get("dir") != root or
+                    manifest["file_count"] != 1 or
+                    manifest["files"][0]["relative_path"] != "README.md" or
+                    manifest["files"][0]["sha256"] != expected):
+                raise AssertionError("PUBLIC_FIXTURE_INTEGRITY_FAILED")
+
+        batch = {
+            "downloads": [
+                {"url": repo_url, "destination_path": f"/Koofr/spec51-ci-{i}"}
+                for i in range(2)
+            ],
+            "project_purpose": "CI-only test of associated repository download stage",
+            "duration_minutes": 1,
+        }
+        batch_json = json.dumps(batch, separators=(",", ":"))
+        allocations = [{"gid": gid, "root": root, "url": repo_url}
+                       for gid, root in zip(gids, roots)]
+        # Fake OpenList mount: synthetic credentials and no provider connection.
+        # stage_from_reader returns in-memory intents, never makes uploads.
+        storages = [{
+            "mount_path": "/Koofr", "driver": "WebDav", "disabled": False,
+            "status": "work",
+            "addition": json.dumps({
+                "address": "https://app.koofr.net/dav/Koofr",
+                "username": "ci-only@example.invalid",
+                "password": "synthetic-ci-never-transmitted",
+                "root_folder_path": "/", "vendor": "other",
+                "tls_insecure_skip_verify": False,
+            }),
+        }]
+
+        class CapturedReader:
+            def __init__(self, evidence):
+                self.evidence = evidence
+            def read_closed(self, requested):
+                if requested != gids:
+                    raise AssertionError("SOURCE_ORDER_MISMATCH")
+                return self.evidence
+
+        intents = stage_from_reader(batch_json, allocations, storages,
+                                    CapturedReader(snapshot))
+        if (len(intents) != 2 or
+                {i["destination_parent"] for i in intents} !=
+                {"/spec51-ci-0", "/spec51-ci-1"} or
+                any(i["sha256"] != expected for i in intents)):
+            raise AssertionError("MULTI_SOURCE_STAGING_INTEGRITY_FAILED")
+        # One compromised source must invalidate the WHOLE batch pre-upload.
+        changed = json.loads(json.dumps(snapshot))
+        changed["sources"][1]["files"][0]["uris"][0]["uri"] = "https://unexpected.invalid/file"
+        try:
+            stage_from_reader(batch_json, allocations, storages,
+                              CapturedReader(changed))
+        except StageUnverified:
+            pass
+        else:
+            raise AssertionError("MULTI_SOURCE_MISMATCH_NOT_REJECTED")
+        print("REAL_ARIA2_TWO_SOURCE_BATCH_STAGE_NO_UPLOAD_OK")
         # Follow a real HTTP 302 from the loopback fixture toward the
         # host-only address. Docker bridge isolation must reject the resulting
         # private request even after aria2's redirect processing.
