@@ -15,7 +15,7 @@ from pathlib import Path
 
 from download_batch import validate, InvalidBatch
 from download_koofr import resolve_mount, KoofrUnsupported, _safe_parts
-from download_source import verify_queue_closed, verify_snapshot, SourceUnverified
+from download_source import verify_queue_closed, verify_snapshot, verify_http_source_uris, SourceUnverified
 
 
 class StageUnverified(Exception):
@@ -51,24 +51,19 @@ def stage_from_reader(batch_json, assignments, storages, reader):
             raise StageUnverified("STAGE_UNVERIFIED")
         snapshots = []
         for allocation, response in zip(assignments, observed["sources"]):
-            # Scheduler declarations alone are not provenance evidence. The
-            # aria2 engine must independently record exactly the one approved
-            # HTTP(S) source URI as used for this completed GID. Never log it.
-            uris = response.get("uris")
             if (allocation["gid"] != response.get("gid") or
                     not isinstance(response.get("status"), dict) or
-                    response["status"].get("dir") != allocation["root"] or
-                    not isinstance(uris, list) or len(uris) != 1 or
-                    not isinstance(uris[0], dict) or
-                    uris[0].get("uri") != allocation["url"] or
-                    uris[0].get("status") != "used"):
+                    response["status"].get("dir") != allocation["root"]):
                 raise StageUnverified("STAGE_UNVERIFIED")
+            # Bind the actual aria2 getFiles URI evidence to the approved URL.
+            # A successful GID/dir match alone is not source provenance.
+            verify_http_source_uris(response.get("files"), allocation["url"])
             snapshots.append({"gid":allocation["gid"],
                               "root":allocation["root"],
                               "status":response["status"],
                               "files":response["files"]})
         return stage_batch(batch_json, snapshots, observed["queue"], storages)
-    except (ReadOnlyRPCUnavailable, InvalidBatch, KeyError, TypeError,
+    except (ReadOnlyRPCUnavailable, SourceUnverified, InvalidBatch, KeyError, TypeError,
             ValueError, AttributeError):
         raise StageUnverified("STAGE_UNVERIFIED") from None
 

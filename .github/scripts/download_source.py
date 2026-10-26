@@ -69,6 +69,32 @@ def verify_queue_closed(known_gids, stats, active, waiting, stopped):
     return True
 
 
+def verify_http_source_uris(rows, approved_url):
+    """Prove that all recorded source URIs on each downloaded file are approved.
+
+    aria2 1.37 can duplicate the same URI with `used` and `waiting` entries.
+    Require at least one `used` and no unknown URI/status; torrent/magnet
+    attribution remains unsupported until a separate Q26 release gate.
+    """
+    from urllib.parse import urlsplit
+    if (not isinstance(approved_url, str) or
+            urlsplit(approved_url).scheme not in ("http", "https") or
+            not isinstance(rows, list) or not rows):
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    used = False
+    for file in rows:
+        if not isinstance(file, dict) or not isinstance(file.get("uris"), list) or not file["uris"]:
+            raise SourceUnverified("SOURCE_UNVERIFIED")
+        for record in file["uris"]:
+            if (not isinstance(record, dict) or record.get("uri") != approved_url or
+                    record.get("status") not in ("used", "waiting")):
+                raise SourceUnverified("SOURCE_UNVERIFIED")
+            used = used or record["status"] == "used"
+    if not used:
+        raise SourceUnverified("SOURCE_UNVERIFIED")
+    return True
+
+
 def verify_snapshot(root, gid, status, rows):
     """Return a local manifest iff the known aria2 source finished completely."""
     if not isinstance(gid, str) or not GID.fullmatch(gid):

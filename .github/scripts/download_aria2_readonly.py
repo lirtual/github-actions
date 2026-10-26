@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only, loopback-exclusive aria2 JSON-RPC snapshot for Spec #51.
 
-Only seven fixed read-only query methods are allowed. Does not start/stop/download tasks,
+Only six fixed read-only query methods are allowed. Does not start/stop/download tasks,
 create sockets to public hosts, access Koofr, or print credentials or URL data.
 
 The caller must still prove it owns a fresh isolated aria2 process and has
@@ -20,7 +20,7 @@ MAX_BYTES = 1024 * 1024
 MAX_GIDS = 200
 SAFE_METHODS = frozenset((
     "aria2.getGlobalStat", "aria2.tellActive", "aria2.tellWaiting",
-    "aria2.tellStopped", "aria2.tellStatus", "aria2.getFiles", "aria2.getUris",
+    "aria2.tellStopped", "aria2.tellStatus", "aria2.getFiles",
 ))
 DETAIL_KEYS = ("gid", "status", "totalLength", "completedLength",
                "dir", "followedBy", "following", "belongsTo")
@@ -115,8 +115,7 @@ class Aria2Reader:
             for gid in gids:
                 status = self._request("aria2.tellStatus", [gid,list(DETAIL_KEYS)])
                 files = self._request("aria2.getFiles", [gid])
-                uris = self._request("aria2.getUris", [gid])
-                rows.append({"gid":gid, "status":status, "files":files, "uris":uris})
+                rows.append({"gid":gid, "status":status, "files":files})
             final_stats = self._request("aria2.getGlobalStat", [])
             if not isinstance(final_stats, dict):
                 raise ReadOnlyRPCUnavailable("ARIA2_UNVERIFIED")
