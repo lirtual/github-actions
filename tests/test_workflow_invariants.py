@@ -27,7 +27,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
                     self.assertIn("type: choice", yml)
                     self.assertIn("- temporary", yml)
                     self.assertIn("- fixed", yml)
-                    self.assertIn("default: temporary", yml)
+                    self.assertIn("default: fixed", yml)
+                    self.assertIn(f"runs-on: {name}-latest", yml)
                     self.assertIn("verify-tailnet-name.py", yml)
                     self.assertIn("SESSION_TAILSCALE_HOSTNAME:", yml)
                 else:

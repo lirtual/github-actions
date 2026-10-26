@@ -390,40 +390,6 @@ jobs:
                 $Data.verification_code -notmatch '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
               throw 'UU Lite extracted credential shape invalid'
             }
-            # Temporary read-only UIA probe: emit Boolean features only, never credentials.
-            Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes -ErrorAction Stop
-            $CurrentSessionId = (Get-Process -Id $PID).SessionId
-            $UUProcesses = @(Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
-              Where-Object { $_.SessionId -eq $CurrentSessionId })
-            $UUHandles = [UULiteWindows]::ForPids([int[]]@($UUProcesses | ForEach-Object Id))
-            $Features = [ordered]@{
-              setting = $false
-              auto_update = $false
-              custom_code = $false
-              no_refresh = $false
-              verification_mode = $false
-            }
-            foreach ($Handle in $UUHandles) {
-              try {
-                $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
-                if (-not $Root) { continue }
-                $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                  [System.Windows.Automation.Condition]::TrueCondition)
-                foreach ($Item in $Items) {
-                  $Label = [string]$Item.Current.Name
-                  if ($Label -match '(^设置$|settings)') { $Features.setting = $true }
-                  if ($Label -match '(自动更新|自动刷新|auto.?refresh)') { $Features.auto_update = $true }
-                  if ($Label -match '(自定义验证码|自定义.*密码|custom.*code)') { $Features.custom_code = $true }
-                  if ($Label -match '(不刷新|关闭自动更新|never.?refresh)') { $Features.no_refresh = $true }
-                  if ($Label -match '(验证方式|验证设置|verification.?mode)') { $Features.verification_mode = $true }
-                }
-              } catch {
-                # Hidden/transient UU-owned windows can be inaccessible.
-              }
-            }
-            foreach ($Key in $Features.Keys) {
-              Write-Output ('UU_LITE_READONLY_UI_' + $Key + '=' + $Features[$Key])
-            }
             $FileTime = (Get-Item -LiteralPath $File).LastWriteTimeUtc
             pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh
             if ($LASTEXITCODE -ne 0) { throw 'UU Lite refresh failed' }
