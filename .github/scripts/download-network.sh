@@ -22,6 +22,16 @@ cleanup() {
   sudo -n iptables -F "$input" 2>/dev/null || true
   sudo -n iptables -X "$input" 2>/dev/null || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  # A cleanup operation must not return success with a still-live firewall
+  # hook, dedicated chain or network. This is also the hosted CI clean gate.
+  if sudo -n iptables -C DOCKER-USER -i "$bridge" -j "$forward" 2>/dev/null ||
+     sudo -n iptables -C INPUT -i "$bridge" -j "$input" 2>/dev/null ||
+     sudo -n iptables -S "$forward" >/dev/null 2>&1 ||
+     sudo -n iptables -S "$input" >/dev/null 2>&1 ||
+     docker network inspect "$network" >/dev/null 2>&1; then
+    echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+    return 1
+  fi
 }
 
 case "$mode" in

@@ -300,6 +300,16 @@ jobs:
             if [[ "$i" == 5 ]]; then exit 1; fi
             sleep 1
           done
+          cat > "$RUNNER_TEMP/udp-fixture.py" <<'PYCODE'
+          import socket
+          udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+          udp.bind(('0.0.0.0',18082))
+          while True:
+              packet,peer=udp.recvfrom(256)
+              udp.sendto(b'UDP_HOST',peer)
+          PYCODE
+          python3 "$RUNNER_TEMP/udp-fixture.py" > "$RUNNER_TEMP/udp-fixture.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/udp-fixture.pid"
       - name: Arm restricted bridge before launching any client
         shell: bash
         run: bash .github/scripts/download-network.sh setup
@@ -310,6 +320,20 @@ jobs:
           net="sa51-11111111"
           gateway="$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "$net")"
           test "$(curl --fail --silent --max-time 3 "http://$gateway:18081/")" = PRIVATE_FIXTURE
+          python3 - "$gateway" <<'PYCODE'
+          import socket,sys,time
+          address=(sys.argv[1],18082)
+          for i in range(6):
+              try:
+                  with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as udp:
+                      udp.settimeout(1)
+                      udp.sendto(b'ping',address)
+                      assert udp.recvfrom(256)[0]==b'UDP_HOST'
+                      break
+              except (OSError,AssertionError):
+                  if i==5: raise
+                  time.sleep(.3)
+          PYCODE
           docker run --rm -i --network "$net" --dns 1.1.1.1 \
             --sysctl net.ipv6.conf.all.disable_ipv6=1 --cap-drop ALL \
             --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
@@ -322,6 +346,14 @@ jobs:
               try:
                   with socket.create_connection((host,port),timeout=2):
                       raise SystemExit('PRIVATE_EGRESS_UNSAFE')
+              except OSError:
+                  pass
+          with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as udp:
+              udp.settimeout(2)
+              udp.sendto(b'ping',(gateway,18082))
+              try:
+                  udp.recvfrom(256)
+                  raise SystemExit('PRIVATE_UDP_EGRESS_UNSAFE')
               except OSError:
                   pass
           if open('/proc/sys/net/ipv6/conf/all/disable_ipv6').read().strip()!='1':
@@ -340,7 +372,11 @@ jobs:
           if test -s "$RUNNER_TEMP/host-fixture.pid"; then
             kill "$(cat "$RUNNER_TEMP/host-fixture.pid")" 2>/dev/null || true
           fi
-          rm -rf "$RUNNER_TEMP/private-fixture" "$RUNNER_TEMP/host-fixture.pid" "$RUNNER_TEMP/host-fixture.log"
+          if test -s "$RUNNER_TEMP/udp-fixture.pid"; then
+            kill "$(cat "$RUNNER_TEMP/udp-fixture.pid")" 2>/dev/null || true
+          fi
+          rm -rf "$RUNNER_TEMP/private-fixture" "$RUNNER_TEMP/host-fixture.pid" "$RUNNER_TEMP/host-fixture.log" \
+            "$RUNNER_TEMP/udp-fixture.py" "$RUNNER_TEMP/udp-fixture.pid" "$RUNNER_TEMP/udp-fixture.log"
 
   smoke-windows-prerequisites:
     runs-on: windows-latest
