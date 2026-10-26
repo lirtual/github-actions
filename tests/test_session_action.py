@@ -516,6 +516,35 @@ class SessionRuntimeDataTests(unittest.TestCase):
             self.assertNotIn("PRIVATE-SIGNED-JWT", out.getvalue())
             self.assertNotIn("PRIVATE-BODY", out.getvalue())
 
+    def test_signed_report_distinguishes_exhausted_503_from_transport(self):
+        import urllib.error
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "uu-remote.json"
+            settings = self.settings(root)
+            calls = []
+            def unavailable(request, timeout=0):
+                if "oidc.example.test" in request.full_url:
+                    return _MemoryReply({"value": "PRIVATE-SIGNED-JWT"})
+                calls.append(request.data)
+                raise urllib.error.HTTPError(request.full_url, 503,
+                                             "PRIVATE-BODY", {}, None)
+            with mock.patch.dict(os.environ, settings, clear=True):
+                with mock.patch.object(session.OPENER, "open", side_effect=unavailable):
+                    with self.assertRaisesRegex(session.SafeProtocolError,
+                                                "^session_data_http_503$"):
+                        session.report_uu_observation(path)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0], calls[1])
+            def network_failure(request, timeout=0):
+                if "oidc.example.test" in request.full_url:
+                    return _MemoryReply({"value": "PRIVATE-SIGNED-JWT"})
+                raise ConnectionResetError("PRIVATE-TRANSPORT-MESSAGE")
+            with mock.patch.dict(os.environ, settings, clear=True):
+                with mock.patch.object(session.OPENER, "open", side_effect=network_failure):
+                    with self.assertRaisesRegex(session.SafeProtocolError,
+                                                "^session_data_unavailable$"):
+                        session.report_uu_observation(path)
+
     def test_windows_refresh_reports_failure_as_unavailable_without_stopping_hold(self):
         import types
         with tempfile.TemporaryDirectory() as root:

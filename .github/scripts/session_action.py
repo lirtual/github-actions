@@ -240,6 +240,9 @@ def report_uu_observation(path, refreshed=True):
             failure.close()
             if code != 503:
                 raise SafeProtocolError("session_data_http_" + str(code)) from None
+            if retry == 1:
+                # Distinguish Worker HTTP 503 from transport uncertainty.
+                raise SafeProtocolError("session_data_http_503") from None
         except (OSError, http.client.IncompleteRead, json.JSONDecodeError):
             pass
     raise SafeProtocolError("session_data_unavailable")
