@@ -32,6 +32,14 @@ jobs:
         run: |
           python3 -m py_compile .github/scripts/session_action.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Verify Runner AWS CLI supports atomic S3 conditional writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v aws
+          aws s3api put-object --generate-cli-skeleton input | grep -Fq '"IfNoneMatch"'
+          aws s3api complete-multipart-upload --generate-cli-skeleton input | grep -Fq '"IfNoneMatch"'
+          echo 'Runner has S3 conditional create APIs (no remote request performed)'
       - name: Verify pinned cloudflared supports protected Quick Tunnels
         shell: bash
         run: |
