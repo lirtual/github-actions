@@ -215,7 +215,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("$env:SESSIONNAME", handoff)
 
     def test_uu_share_invite_is_optional_and_not_automatically_disclosed(self):
-        script = (ROOT / ".github/scripts/windows-uu.ps1").read_text()
+        script = (ROOT / ".github/scripts/windows-uu.ps1").read_text(encoding="utf-8")
         hold = (ROOT / ".github/scripts/session_action.py").read_text()
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("复制并分享", script)
