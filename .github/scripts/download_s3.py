@@ -106,7 +106,7 @@ def resolve_aws_mount(storages, destination):
                 selected = mount
     if not selected or selected.get("driver") != "S3" or selected.get("disabled") is not False:
         raise StorageUnsupported("NOT_SUPPORTED")
-    if selected.get("status", "").lower() != "work":
+    if not isinstance(selected.get("status"), str) or selected["status"].lower() != "work":
         raise StorageUnsupported("NOT_SUPPORTED")
     raw = selected.get("addition")
     try:
