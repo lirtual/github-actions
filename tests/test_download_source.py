@@ -1,5 +1,6 @@
 """Read-only aria2 result checks: exact GIDs, every file, no hidden children."""
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -28,6 +29,8 @@ def status(**changes):
     return result
 
 
+@unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"),
+                     "source tree census requires POSIX no-follow descriptors")
 class SourceSnapshotTests(unittest.TestCase):
     def setup_files(self, root):
         (root/"sub").mkdir()
