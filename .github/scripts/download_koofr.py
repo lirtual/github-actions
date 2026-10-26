@@ -7,6 +7,7 @@ This adapter deliberately omits overwrite=true, overwriteIgnoreNonexisting,
 and never uses OpenList op.Put/WebDAV PUT. NO real server proof yet.
 """
 import base64
+import hashlib
 import http.client
 import json
 import os
@@ -205,6 +206,15 @@ class KoofrClient:
             raise KoofrUnsupported("NOT_SUPPORTED")
         return primary[0]["id"]
 
+    @staticmethod
+    def _matching_md5(metadata, expected):
+        if not isinstance(metadata, dict):
+            return False
+        actual = metadata.get("hash")
+        return (isinstance(actual, str) and len(actual) == 32 and
+                re.fullmatch(r"[0-9a-fA-F]{32}", actual) is not None and
+                actual.lower() == expected)
+
     def upload_file(self, file, destination_parent):
         """A separate caller MUST prove full local download and no concurrent edits."""
         src = Path(file)
@@ -225,6 +235,7 @@ class KoofrClient:
         # Length is known; stream bytes instead of buffering arbitrary size.
         length = len(prefix) + st.st_size + len(suffix)
         conn = self._connect()
+        actual_md5 = hashlib.md5(usedforsecurity=False)
         try:
             # Open by no-follow descriptor, then compare inode against lstat.
             fd = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -246,9 +257,16 @@ class KoofrClient:
                     chunk = inp.read(min(MAX_CHUNK, remaining))
                     if not chunk:
                         raise KoofrUnknown("REMOTE_UNKNOWN")
+                    actual_md5.update(chunk)
                     conn.send(chunk)
                     remaining -= len(chunk)
                 if inp.read(1):
+                    raise KoofrUnknown("REMOTE_UNKNOWN")
+                finished = os.fstat(inp.fileno())
+                if ((opened.st_dev, opened.st_ino, opened.st_size,
+                     opened.st_mtime_ns, opened.st_ctime_ns) !=
+                    (finished.st_dev, finished.st_ino, finished.st_size,
+                     finished.st_mtime_ns, finished.st_ctime_ns)):
                     raise KoofrUnknown("REMOTE_UNKNOWN")
                 conn.send(suffix)
             resp = conn.getresponse()
@@ -271,6 +289,19 @@ class KoofrClient:
                      urlencode({"path": posixpath.join(destination_parent, name)}))
         info = self._request_json(info_path)
         if (info.get("type") != "file" or info.get("name") != name or
-                info.get("size") != st.st_size):
+                info.get("size") != st.st_size or
+                not self._matching_md5(info, actual_md5.hexdigest())):
             raise KoofrUnknown("REMOTE_UNKNOWN")
-        return {"files":1, "bytes":st.st_size, "remote_observed":"metadata_verified"}
+        # Success response hash, when present, must also agree with readback.
+        if "hash" in result and not self._matching_md5(result, actual_md5.hexdigest()):
+            raise KoofrUnknown("REMOTE_UNKNOWN")
+        try:
+            current = src.lstat()
+        except OSError:
+            raise KoofrUnknown("REMOTE_UNKNOWN") from None
+        if ((st.st_dev, st.st_ino, st.st_size,
+             st.st_mtime_ns, st.st_ctime_ns) !=
+            (current.st_dev, current.st_ino, current.st_size,
+             current.st_mtime_ns, current.st_ctime_ns)):
+            raise KoofrUnknown("REMOTE_UNKNOWN")
+        return {"files":1, "bytes":st.st_size, "remote_observed":"md5_verified"}

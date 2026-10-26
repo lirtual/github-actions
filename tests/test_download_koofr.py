@@ -1,11 +1,13 @@
 """Synthetic-only tests for Koofr Q15 no-clobber; no provider traffic."""
 import importlib.util
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 import sys
+import threading
 import tempfile
 import time
 import unittest
@@ -69,11 +71,17 @@ class MockConnection:
             assert b"very private" not in body
             assert b"payload contents" in body
             size=self.options.get("size",16)
+            digest=hashlib.md5(b"payload contents",usedforsecurity=False).hexdigest()
             return MockResp(200,{"name":self.options.get("name","payload.txt"),
-                                 "type":"file","size":size})
+                                 "type":"file","size":size,
+                                 "hash":self.options.get("upload_hash",digest)})
         if self._path.startswith("/api/v2/mounts/primary-id/files/info?"):
-            return MockResp(200,{"name":"payload.txt","type":"file",
-                                 "size":self.options.get("size",16)})
+            digest=hashlib.md5(b"payload contents",usedforsecurity=False).hexdigest()
+            info={"name":"payload.txt","type":"file",
+                  "size":self.options.get("size",16)}
+            if not self.options.get("missing_hash"):
+                info["hash"]=self.options.get("remote_hash",digest)
+            return MockResp(200,info)
         raise AssertionError("Unexpected path "+self._path)
 
     def close(self):self.closed=True
@@ -159,7 +167,7 @@ class APIContractTests(unittest.TestCase):
             path=Path(d,"payload.txt")
             path.write_bytes(b"payload contents")
             result=self._client(conn).upload_file(path,"/build")
-        self.assertEqual({"files":1,"bytes":16,"remote_observed":"metadata_verified"},result)
+        self.assertEqual({"files":1,"bytes":16,"remote_observed":"md5_verified"},result)
         self.assertEqual(3,len(conn.connections))
         upload=conn.connections[1]
         self.assertEqual("POST",upload.history[0][0])
@@ -187,6 +195,16 @@ class APIContractTests(unittest.TestCase):
                 with self.subTest(failure=failure),self.assertRaises(k.KoofrUnknown):
                     self._client(conn).upload_file(path,"/build")
 
+    def test_remote_same_size_corruption_is_never_success(self):
+        for kwargs in ({"remote_hash": "a"*32}, {"upload_hash":"b"*32},
+                       {"missing_hash":True}):
+            conn=Connections(**kwargs)
+            with tempfile.TemporaryDirectory() as d:
+                path=Path(d,"payload.txt")
+                path.write_bytes(b"payload contents")
+                with self.subTest(kwargs=kwargs),self.assertRaises(k.KoofrUnknown):
+                    self._client(conn).upload_file(path,"/build")
+
     def test_filename_changed_is_not_success(self):
         conn=Connections(name="payload (1).txt",size=16)
         with tempfile.TemporaryDirectory() as d:
@@ -194,6 +212,62 @@ class APIContractTests(unittest.TestCase):
             path.write_bytes(b"payload contents")
             with self.assertRaises(k.KoofrUnknown):
                 self._client(conn).upload_file(path,"/build")
+
+    def test_simulated_parallel_same_name_only_one_wins(self):
+        # Transport contract test, NOT proof that Koofr's real server is atomic.
+        lock=threading.Lock()
+        gate=threading.Barrier(2,timeout=5)
+        remote={}
+
+        class SharedConnection(MockConnection):
+            def getresponse(self):
+                if self._path.startswith("/content/"):
+                    # Both requests reach the same logical server concurrently.
+                    gate.wait()
+                    body=b"".join(self.sends)
+                    with lock:
+                        if "payload.txt" in remote:
+                            return MockResp(409,{})
+                        if b"source first" in body:
+                            value=b"source first"
+                        elif b"source second" in body:
+                            value=b"source second"
+                        else:
+                            raise AssertionError("unexpected upload")
+                        remote["payload.txt"]=value
+                        return MockResp(200,{"name":"payload.txt","type":"file",
+                            "size":len(value),
+                            "hash":hashlib.md5(value,usedforsecurity=False).hexdigest()})
+                if self._path.startswith("/api/v2/mounts/primary-id/files/info?"):
+                    with lock:
+                        value=remote["payload.txt"]
+                    return MockResp(200,{"name":"payload.txt","type":"file",
+                        "size":len(value),
+                        "hash":hashlib.md5(value,usedforsecurity=False).hexdigest()})
+                return super().getresponse()
+
+        outcomes=[]
+        with tempfile.TemporaryDirectory() as d:
+            sources=[]
+            for index,data in enumerate((b"source first",b"source second")):
+                folder=Path(d,str(index))
+                folder.mkdir()
+                path=folder/"payload.txt"
+                path.write_bytes(data)
+                sources.append(path)
+            def run(src):
+                try:
+                    factory=lambda _: SharedConnection({})
+                    result=self._client(factory).upload_file(src,"/build")
+                    outcomes.append(result["remote_observed"])
+                except k.KoofrConflict:
+                    outcomes.append("DESTINATION_CONFLICT")
+            threads=[threading.Thread(target=run,args=(p,)) for p in sources]
+            for t in threads:t.start()
+            for t in threads:t.join(timeout=8)
+            self.assertTrue(all(not t.is_alive() for t in threads))
+        self.assertCountEqual(outcomes,["md5_verified","DESTINATION_CONFLICT"])
+        self.assertIn(remote["payload.txt"],(b"source first",b"source second"))
 
     @unittest.skipUnless(os.name=="posix","requires POSIX symlink")
     def test_symlink_blocked_before_request(self):
