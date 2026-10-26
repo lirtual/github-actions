@@ -78,6 +78,7 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual("release", s3.resolve_aws_mount([a,b], "/drive/a")["prefix"].split("/")[0])
 
 
+@unittest.skipIf(os.name != "posix", "download action and filesystem are Ubuntu-only")
 class FileTreeTests(unittest.TestCase):
     def test_sorted_regular_files(self):
         with tempfile.TemporaryDirectory() as root:
@@ -192,6 +193,7 @@ class UploadTests(unittest.TestCase):
                              fake.objects[("repo-artifacts-dev","release/builds/hello.txt")]["Content"])
             self.assertTrue(all("--if-none-match" in c for c in fake.calls if c[2]=="put-object"))
 
+    @unittest.skipIf(os.name != "posix", "Linux allows reopening a live temporary file")
     def test_large_file_multipart_still_conditional_on_final_commit(self):
         fake=FakeS3()
         with tempfile.TemporaryDirectory() as root, mock.patch.object(s3.subprocess,"run",fake), \
@@ -210,6 +212,7 @@ class UploadTests(unittest.TestCase):
             self.assertIn("--if-none-match",fake.calls[-2])
             self.assertEqual(file.read_bytes(),fake.objects[("repo-artifacts-dev","release/builds/payload.bin")]["Content"])
 
+    @unittest.skipIf(os.name != "posix", "Linux allows reopening a live temporary file")
     def test_multipart_conflict_never_deletes_existing_object(self):
         fake=FakeS3()
         fake.fail_finalize=True
