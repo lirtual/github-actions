@@ -19,12 +19,23 @@ def entry(name, parent="/release"):
 
 
 class FakeClient:
-    def __init__(self, missing=None, fail_index=None, fail_kind=None):
+    def __init__(self, missing=None, fail_index=None, fail_kind=None, existing=None, unknown=None):
         self.missing=missing
         self.fail_index=fail_index
         self.fail_kind=fail_kind
+        self.existing=existing
+        self.unknown=unknown
         self.parents=[]
+        self.absence_checks=[]
         self.uploads=[]
+
+    def assert_absent(self, parent, name):
+        self.absence_checks.append((parent, name))
+        if (parent, name) == self.existing:
+            raise KoofrConflict("DESTINATION_CONFLICT")
+        if (parent, name) == self.unknown:
+            raise KoofrUnknown("REMOTE_UNKNOWN")
+        return True
 
     def assert_directory(self, parent):
         self.parents.append(parent)
@@ -58,6 +69,23 @@ class UploadHandoffTests(unittest.TestCase):
         self.assertEqual(0,observed.exception.completed)
         self.assertEqual([],client.uploads)
         self.assertEqual(["/a","/z"],client.parents)
+
+    def test_existing_target_denies_whole_batch_without_any_upload(self):
+        client=FakeClient(existing=("/release", "two.bin"))
+        with self.assertRaises(f.BatchIncomplete) as observed:
+            f.finish_staged([entry("one.bin"),entry("two.bin")],client)
+        self.assertEqual("DESTINATION_CONFLICT",observed.exception.code)
+        self.assertEqual(0,observed.exception.completed)
+        self.assertEqual([],client.uploads)
+        self.assertEqual([("/release", "one.bin"),("/release", "two.bin")],
+                         client.absence_checks)
+
+    def test_unknown_file_existence_is_not_an_absence(self):
+        client=FakeClient(unknown=("/release", "one"))
+        with self.assertRaises(f.BatchIncomplete) as observed:
+            f.finish_staged([entry("one"),entry("two")],client)
+        self.assertEqual("REMOTE_UNVERIFIED",observed.exception.code)
+        self.assertEqual([],client.uploads)
 
     def test_partial_409_is_never_retried_or_rolled_back(self):
         client=FakeClient(fail_index=2,fail_kind="conflict")

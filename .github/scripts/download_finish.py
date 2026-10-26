@@ -52,7 +52,16 @@ def finish_staged(staged, client, *, cancelled=lambda: False):
             if cancelled():
                 raise BatchIncomplete("CANCELLED", 0)
             client.assert_directory(parent)
-    except (KoofrUnknown, KoofrUnsupported, KoofrConflict):
+        # Do not write even the first file if any target already exists.
+        # Existence is read-only; server-side atomic create-only remains a
+        # separate mandatory gate (TOCTOU cannot be solved with this GET).
+        for entry in staged:
+            if cancelled():
+                raise BatchIncomplete("CANCELLED", 0)
+            client.assert_absent(entry["destination_parent"], entry["name"])
+    except KoofrConflict:
+        raise BatchIncomplete("DESTINATION_CONFLICT", 0) from None
+    except (KoofrUnknown, KoofrUnsupported):
         raise BatchIncomplete("REMOTE_UNVERIFIED", 0) from None
 
     completed = 0

@@ -217,6 +217,36 @@ class KoofrClient:
             raise KoofrUnsupported("NOT_SUPPORTED")
         return True
 
+    def assert_absent(self, parent, filename):
+        """Read-only existence check: 404 only means absent; 200 is conflict.
+
+        This protects existing files in sequential flows, but a GET followed
+        by POST is NOT atomic and never satisfies the Koofr Q15 race gate.
+        """
+        _safe_parts(parent, allow_root=True)
+        if not isinstance(filename, str) or len(_safe_parts("/" + filename)) != 1:
+            raise KoofrUnsupported("NOT_SUPPORTED")
+        mount_id = self.primary_mount()
+        path = ("/api/v2/mounts/" + quote(mount_id, safe="") + "/files/info?" +
+                urlencode({"path": posixpath.join(parent, filename)}))
+        conn = self._connect()
+        try:
+            conn.request("GET", path, headers={"Authorization": self._basic,
+                                               "Accept": "application/json"})
+            resp = conn.getresponse()
+            # Always consume bounded data and close, even for 404.
+            if len(resp.read(MAX_JSON + 1)) > MAX_JSON:
+                raise KoofrUnknown("REMOTE_UNKNOWN")
+            if resp.status == 404:
+                return True
+            if resp.status == 200:
+                raise KoofrConflict("DESTINATION_CONFLICT")
+            raise KoofrUnknown("REMOTE_UNKNOWN")
+        except (OSError, ValueError, TypeError, http.client.HTTPException):
+            raise KoofrUnknown("REMOTE_UNKNOWN") from None
+        finally:
+            conn.close()
+
     @staticmethod
     def _matching_md5(metadata, expected):
         if not isinstance(metadata, dict):

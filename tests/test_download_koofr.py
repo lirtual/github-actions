@@ -79,6 +79,8 @@ class MockConnection:
             target=parse_qs(urlsplit(self._path).query).get("path",[])
             if target == ["/build"]:
                 return MockResp(200,{"type":"dir","name":"build"})
+            if target == ["/build/payload.txt"] and "existence" in self.options:
+                return MockResp(self.options["existence"], {})
             digest=hashlib.md5(b"payload contents",usedforsecurity=False).hexdigest()
             info={"name":"payload.txt","type":"file",
                   "size":self.options.get("size",16)}
@@ -177,6 +179,22 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(2,len(conn.connections))
         with self.assertRaises(k.KoofrUnsupported):
             self._client(Connections()).assert_directory("/other")
+
+    def test_read_only_absence_must_be_explicit_404(self):
+        for status in (200, 401, 403, 404, 409, 500):
+            conn=Connections(existence=status)
+            client=self._client(conn)
+            with self.subTest(status=status):
+                if status == 404:
+                    self.assertTrue(client.assert_absent("/build", "payload.txt"))
+                elif status == 200:
+                    with self.assertRaises(k.KoofrConflict):
+                        client.assert_absent("/build", "payload.txt")
+                else:
+                    with self.assertRaises(k.KoofrUnknown):
+                        client.assert_absent("/build", "payload.txt")
+            self.assertEqual("GET",conn.connections[-1].history[0][0])
+            self.assertTrue(all(x.closed for x in conn.connections))
 
     def test_regular_file_success_and_provider_readback(self):
         conn=Connections(size=16)
