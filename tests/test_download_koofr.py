@@ -156,6 +156,13 @@ class MountTests(unittest.TestCase):
                 k.upload_query("/build",name,"primary-id")
 
 
+def proof(path):
+    body=Path(path).read_bytes()
+    return {"name":Path(path).name, "size":len(body),
+            "md5":hashlib.md5(body,usedforsecurity=False).hexdigest(),
+            "sha256":hashlib.sha256(body).hexdigest()}
+
+
 class APIContractTests(unittest.TestCase):
     def _client(self, connections):
         return k.KoofrClient("test@example.com","very private",
@@ -166,7 +173,7 @@ class APIContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d,"payload.txt")
             path.write_bytes(b"payload contents")
-            result=self._client(conn).upload_file(path,"/build")
+            result=self._client(conn).upload_file(path,"/build",expected=proof(path))
         self.assertEqual({"files":1,"bytes":16,"remote_observed":"md5_verified"},result)
         self.assertEqual(3,len(conn.connections))
         upload=conn.connections[1]
@@ -182,7 +189,7 @@ class APIContractTests(unittest.TestCase):
             path=Path(d,"payload.txt")
             path.write_bytes(b"payload contents")
             with self.assertRaises(k.KoofrConflict):
-                self._client(conn).upload_file(path,"/build")
+                self._client(conn).upload_file(path,"/build",expected=proof(path))
         self.assertEqual(2,len(conn.connections))
         self.assertEqual(1,len(conn.connections[1].history))
 
@@ -193,7 +200,21 @@ class APIContractTests(unittest.TestCase):
                 path=Path(d,"payload.txt")
                 path.write_bytes(b"payload contents")
                 with self.subTest(failure=failure),self.assertRaises(k.KoofrUnknown):
-                    self._client(conn).upload_file(path,"/build")
+                    self._client(conn).upload_file(path,"/build",expected=proof(path))
+
+    def test_requires_prior_sha256_md5_attestation(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d,"payload.txt")
+            path.write_bytes(b"payload contents")
+            conn=Connections(size=16)
+            with self.assertRaises(k.KoofrUnsupported):
+                self._client(conn).upload_file(path,"/build",expected=None)
+            with self.assertRaises(k.KoofrUnsupported):
+                self._client(conn).upload_file(path,"/build",expected={**proof(path),"size":15})
+            self.assertEqual(0,len(conn.connections))
+            with self.assertRaises(k.KoofrUnknown):
+                self._client(conn).upload_file(path,"/build",
+                                               expected={**proof(path),"sha256":"0"*64})
 
     def test_remote_same_size_corruption_is_never_success(self):
         for kwargs in ({"remote_hash": "a"*32}, {"upload_hash":"b"*32},
@@ -203,7 +224,7 @@ class APIContractTests(unittest.TestCase):
                 path=Path(d,"payload.txt")
                 path.write_bytes(b"payload contents")
                 with self.subTest(kwargs=kwargs),self.assertRaises(k.KoofrUnknown):
-                    self._client(conn).upload_file(path,"/build")
+                    self._client(conn).upload_file(path,"/build",expected=proof(path))
 
     def test_filename_changed_is_not_success(self):
         conn=Connections(name="payload (1).txt",size=16)
@@ -211,7 +232,7 @@ class APIContractTests(unittest.TestCase):
             path=Path(d,"payload.txt")
             path.write_bytes(b"payload contents")
             with self.assertRaises(k.KoofrUnknown):
-                self._client(conn).upload_file(path,"/build")
+                self._client(conn).upload_file(path,"/build",expected=proof(path))
 
     def test_simulated_parallel_same_name_only_one_wins(self):
         # Transport contract test, NOT proof that Koofr's real server is atomic.
@@ -258,7 +279,7 @@ class APIContractTests(unittest.TestCase):
             def run(src):
                 try:
                     factory=lambda _: SharedConnection({})
-                    result=self._client(factory).upload_file(src,"/build")
+                    result=self._client(factory).upload_file(src,"/build",expected=proof(src))
                     outcomes.append(result["remote_observed"])
                 except k.KoofrConflict:
                     outcomes.append("DESTINATION_CONFLICT")
@@ -278,6 +299,6 @@ class APIContractTests(unittest.TestCase):
             link=Path(d,"fake.txt")
             link.symlink_to(path)
             with self.assertRaises(k.KoofrUnsupported):
-                self._client(conn).upload_file(link,"/build")
+                self._client(conn).upload_file(link,"/build",expected=proof(path))
         self.assertEqual(0,len(conn.connections))
 if __name__=="__main__": unittest.main()

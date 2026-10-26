@@ -215,8 +215,8 @@ class KoofrClient:
                 re.fullmatch(r"[0-9a-fA-F]{32}", actual) is not None and
                 actual.lower() == expected)
 
-    def upload_file(self, file, destination_parent):
-        """A separate caller MUST prove full local download and no concurrent edits."""
+    def upload_file(self, file, destination_parent, *, expected):
+        """Require an independently attested local file digest from stage_batch."""
         src = Path(file)
         try:
             st = src.lstat()
@@ -225,6 +225,14 @@ class KoofrClient:
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             raise KoofrUnsupported("NOT_SUPPORTED")
         name = src.name
+        if (not isinstance(expected, dict) or expected.get("name") != name or
+                type(expected.get("size")) is not int or
+                expected["size"] != st.st_size or
+                not isinstance(expected.get("md5"), str) or
+                not re.fullmatch(r"[a-f0-9]{32}", expected["md5"]) or
+                not isinstance(expected.get("sha256"), str) or
+                not re.fullmatch(r"[a-f0-9]{64}", expected["sha256"])):
+            raise KoofrUnsupported("NOT_SUPPORTED")
         mount_id = self.primary_mount()
         path = upload_query(destination_parent, name, mount_id)
         boundary = "spec51" + secrets.token_hex(12)
@@ -236,6 +244,7 @@ class KoofrClient:
         length = len(prefix) + st.st_size + len(suffix)
         conn = self._connect()
         actual_md5 = hashlib.md5(usedforsecurity=False)
+        actual_sha256 = hashlib.sha256()
         try:
             # Open by no-follow descriptor, then compare inode against lstat.
             fd = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -258,9 +267,15 @@ class KoofrClient:
                     if not chunk:
                         raise KoofrUnknown("REMOTE_UNKNOWN")
                     actual_md5.update(chunk)
+                    actual_sha256.update(chunk)
                     conn.send(chunk)
                     remaining -= len(chunk)
                 if inp.read(1):
+                    raise KoofrUnknown("REMOTE_UNKNOWN")
+                # The bytes actually streamed must exactly match the earlier
+                # independent local file census, not merely remote readback.
+                if (actual_md5.hexdigest() != expected["md5"] or
+                        actual_sha256.hexdigest() != expected["sha256"]):
                     raise KoofrUnknown("REMOTE_UNKNOWN")
                 finished = os.fstat(inp.fileno())
                 if ((opened.st_dev, opened.st_ino, opened.st_size,
