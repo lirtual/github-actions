@@ -313,6 +313,10 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 \
             "$url" --output "$RUNNER_TEMP/spec51-public-readme"
           test -s "$RUNNER_TEMP/spec51-public-readme"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 \
+            "https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/.github/workflows/openlist.yml" \
+            --output "$RUNNER_TEMP/spec51-public-openlist-yml"
+          test -s "$RUNNER_TEMP/spec51-public-openlist-yml"
           docker build --tag "sa51-aria2-smoke:$GITHUB_RUN_ID" - <<'DOCKERFILE'
           FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
           RUN apk add --no-cache aria2
@@ -383,12 +387,16 @@ jobs:
           export PUBLIC_FIXTURE_URL="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/README.md"
           PUBLIC_FIXTURE_SHA256="$(sha256sum "$RUNNER_TEMP/spec51-public-readme" | cut -d' ' -f1)"
           export PUBLIC_FIXTURE_SHA256
+          export PUBLIC_FIXTURE_URL_2="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/.github/workflows/openlist.yml"
+          PUBLIC_FIXTURE_SHA256_2="$(sha256sum "$RUNNER_TEMP/spec51-public-openlist-yml" | cut -d' ' -f1)"
+          export PUBLIC_FIXTURE_SHA256_2
           docker run --rm --network "$net" --dns 1.1.1.1 \
             --sysctl net.ipv6.conf.all.disable_ipv6=1 \
             --cap-drop ALL --security-opt no-new-privileges:true \
             --pids-limit 128 --memory 256m --read-only \
             --tmpfs /tmp:rw,nosuid,nodev,size=32m \
             --env HOST_GATEWAY --env PUBLIC_FIXTURE_URL --env PUBLIC_FIXTURE_SHA256 \
+            --env PUBLIC_FIXTURE_URL_2 --env PUBLIC_FIXTURE_SHA256_2 \
             --volume "$PWD/.github/scripts:/spec51:ro" \
             --volume "$PWD/tests/smoke_download_aria2_network.py:/smoke.py:ro" \
             "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke.py
@@ -415,7 +423,7 @@ jobs:
           cleanup_failed=0
           bash .github/scripts/download-network.sh cleanup || cleanup_failed=1
           docker image rm -f "sa51-aria2-smoke:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
-          rm -f "$RUNNER_TEMP/spec51-public-readme"
+          rm -f "$RUNNER_TEMP/spec51-public-readme" "$RUNNER_TEMP/spec51-public-openlist-yml"
           if test -s "$RUNNER_TEMP/host-fixture.pid"; then
             kill "$(cat "$RUNNER_TEMP/host-fixture.pid")" 2>/dev/null || true
           fi

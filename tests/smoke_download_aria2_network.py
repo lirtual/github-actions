@@ -28,9 +28,14 @@ from download_stage import stage_from_reader, StageUnverified
 
 repo_url = os.environ.get("PUBLIC_FIXTURE_URL", "")
 expected = os.environ.get("PUBLIC_FIXTURE_SHA256", "")
+repo_url_2 = os.environ.get("PUBLIC_FIXTURE_URL_2", "")
+expected_2 = os.environ.get("PUBLIC_FIXTURE_SHA256_2", "")
 gateway = os.environ.get("HOST_GATEWAY", "")
 if (not re.fullmatch(r"https://raw\.githubusercontent\.com/lirtual/session-actions/[0-9a-f]{40}/README\.md", repo_url)
         or not re.fullmatch(r"[0-9a-f]{64}", expected)
+        or not re.fullmatch(r"https://raw\.githubusercontent\.com/lirtual/session-actions/[0-9a-f]{40}/\.github/workflows/openlist\.yml", repo_url_2)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_2)
+        or repo_url.split("/")[5] != repo_url_2.split("/")[5]
         or not re.fullmatch(r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}", gateway)):
     raise SystemExit("FIXTURE_CONFIG_UNVERIFIED")
 
@@ -42,6 +47,8 @@ for host, port in ((gateway, 18081), ("169.254.169.254", 80)):
     except OSError:
         pass
 
+fixtures = [(repo_url, expected, "README.md"),
+            (repo_url_2, expected_2, "openlist.yml")]
 secret = secrets.token_hex(24)
 gids = [secrets.token_hex(8), secrets.token_hex(8)]
 if gids[0] == gids[1]:
@@ -96,9 +103,9 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
         roots = [os.path.join(directory, f"source-{index}") for index in range(2)]
         for root in roots:
             os.mkdir(root)
-        for gid, root in zip(gids, roots):
-            submitted = rpc("aria2.addUri", [repo_url], {
-                "gid": gid, "dir": root, "out": "README.md",
+        for gid, root, (url, _digest, filename) in zip(gids, roots, fixtures):
+            submitted = rpc("aria2.addUri", [url], {
+                "gid": gid, "dir": root, "out": filename,
                 "max-tries": "1", "split": "1",
                 "follow-torrent": "false", "follow-metalink": "false",
                 "auto-file-renaming": "false", "allow-overwrite": "false",
@@ -118,27 +125,28 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
             raise AssertionError("DOWNLOAD_TIMEOUT")
 
         snapshot = Aria2Reader(secret, time.monotonic() + 25).read_closed(gids)
-        for gid, root, source in zip(gids, roots, snapshot["sources"]):
+        for gid, root, source, (url, digest, filename) in zip(
+                gids, roots, snapshot["sources"], fixtures):
             status = source["status"]
-            verify_http_source_uris(source["files"], repo_url)
+            verify_http_source_uris(source["files"], url)
             manifest = verify_snapshot(root, gid, status, source["files"])
             if (status.get("dir") != root or
                     manifest["file_count"] != 1 or
-                    manifest["files"][0]["relative_path"] != "README.md" or
-                    manifest["files"][0]["sha256"] != expected):
+                    manifest["files"][0]["relative_path"] != filename or
+                    manifest["files"][0]["sha256"] != digest):
                 raise AssertionError("PUBLIC_FIXTURE_INTEGRITY_FAILED")
 
         batch = {
             "downloads": [
-                {"url": repo_url, "destination_path": f"/Koofr/spec51-ci-{i}"}
+                {"url": fixtures[i][0], "destination_path": f"/Koofr/spec51-ci-{i}"}
                 for i in range(2)
             ],
             "project_purpose": "CI-only test of associated repository download stage",
             "duration_minutes": 1,
         }
         batch_json = json.dumps(batch, separators=(",", ":"))
-        allocations = [{"gid": gid, "root": root, "url": repo_url}
-                       for gid, root in zip(gids, roots)]
+        allocations = [{"gid": gid, "root": root, "url": fixtures[i][0]}
+                       for i, (gid, root) in enumerate(zip(gids, roots))]
         # Fake OpenList mount: synthetic credentials and no provider connection.
         # stage_from_reader returns in-memory intents, never makes uploads.
         storages = [{
@@ -166,7 +174,7 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
         if (len(intents) != 2 or
                 {i["destination_parent"] for i in intents} !=
                 {"/spec51-ci-0", "/spec51-ci-1"} or
-                any(i["sha256"] != expected for i in intents)):
+                [i["sha256"] for i in intents] != [expected, expected_2]):
             raise AssertionError("MULTI_SOURCE_STAGING_INTEGRITY_FAILED")
         # One compromised source must invalidate the WHOLE batch pre-upload.
         changed = json.loads(json.dumps(snapshot))
