@@ -34,16 +34,23 @@ def stage_from_reader(batch_json, assignments, storages, reader):
         if (not isinstance(assignments, list) or
                 len(assignments) != len(batch["downloads"])):
             raise StageUnverified("STAGE_UNVERIFIED")
-        if not all(isinstance(a, dict) and set(a) == {"gid", "root"}
+        if not all(isinstance(a, dict) and set(a) == {"gid", "root", "url"}
                    for a in assignments):
             raise StageUnverified("STAGE_UNVERIFIED")
+        for req, allocation in zip(batch["downloads"], assignments):
+            # Dispatch must freeze the exact approved URL and scratch directory
+            # with its GID. No source may borrow another request's artifacts.
+            if allocation["url"] != req["url"]:
+                raise StageUnverified("STAGE_UNVERIFIED")
         observed = reader.read_closed([a["gid"] for a in assignments])
         if (not isinstance(observed, dict) or
                 len(observed.get("sources", [])) != len(assignments)):
             raise StageUnverified("STAGE_UNVERIFIED")
         snapshots = []
         for allocation, response in zip(assignments, observed["sources"]):
-            if allocation["gid"] != response.get("gid"):
+            if (allocation["gid"] != response.get("gid") or
+                    not isinstance(response.get("status"), dict) or
+                    response["status"].get("dir") != allocation["root"]):
                 raise StageUnverified("STAGE_UNVERIFIED")
             snapshots.append({"gid":allocation["gid"],
                               "root":allocation["root"],

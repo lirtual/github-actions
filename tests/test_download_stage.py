@@ -74,6 +74,8 @@ class StageTests(unittest.TestCase):
         tmp,roots=self.fixtures()
         with tmp:
             sources=snapshots(roots)
+            for item in sources:
+                item["status"]["dir"] = item["root"]
             recorded={"sources":[{"gid":s["gid"],"status":s["status"],"files":s["files"]}
                                  for s in sources],"queue":queue(sources)}
             class Reader:
@@ -81,12 +83,24 @@ class StageTests(unittest.TestCase):
                 def read_closed(self,gids):
                     assert gids==[s["gid"] for s in sources]
                     return self.data
-            assigned=[{"gid":s["gid"],"root":s["root"]} for s in sources]
+            assigned=[{"gid":s["gid"],"root":s["root"],
+                       "url":f"https://example.org/release-{i}.bin"}
+                      for i,s in enumerate(sources)]
             intents=stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
                                              assigned,[mount()],Reader(recorded))
             self.assertEqual(2,len(intents))
             self.assertEqual(["/build-a","/build-b"],
                              [item["destination_parent"] for item in intents])
+            assigned[1]["url"]="https://example.org/different-source.bin"
+            with self.assertRaises(stage.StageUnverified):
+                stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
+                                       assigned,[mount()],Reader(recorded))
+            assigned[1]["url"]="https://example.org/release-1.bin"
+            recorded["sources"][1]["status"]["dir"]="/tmp/another-download"
+            with self.assertRaises(stage.StageUnverified):
+                stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),
+                                       assigned,[mount()],Reader(recorded))
+            recorded["sources"][1]["status"]["dir"]=assigned[1]["root"]
             recorded["sources"][1]["gid"]="eeeeeeeeeeeeeeee"
             with self.assertRaises(stage.StageUnverified):
                 stage.stage_from_reader(batch(["/Koofr/build-a","/Koofr/build-b"]),

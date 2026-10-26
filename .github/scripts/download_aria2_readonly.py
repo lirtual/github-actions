@@ -23,7 +23,7 @@ SAFE_METHODS = frozenset((
     "aria2.tellStopped", "aria2.tellStatus", "aria2.getFiles",
 ))
 DETAIL_KEYS = ("gid", "status", "totalLength", "completedLength",
-               "followedBy", "following", "belongsTo")
+               "dir", "followedBy", "following", "belongsTo")
 
 
 class ReadOnlyRPCUnavailable(Exception):
