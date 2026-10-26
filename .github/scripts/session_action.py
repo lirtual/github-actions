@@ -285,14 +285,24 @@ def hold():
     # Refresh UIA credentials only when UU successfully started; never log the code.
     uu_script = pathlib.Path(".github/scripts/windows-uu.ps1")
     uu_path = pathlib.Path(os.getenv("LOCALAPPDATA") or ".") / "session-actions" / "uu-remote.json"
-    uu_enabled = os.name == "nt" and uu_script.is_file() and uu_path.is_file()
+    # Missing/failed optional UU capture is reported as an explicit unavailable
+    # tombstone; do not silently skip the signed producer.
+    uu_enabled = os.name == "nt" and uu_script.is_file()
     next_refresh = time.monotonic() + 30 if uu_enabled else None
-    if uu_enabled:
+    def report_optional_uu(refreshed=True):
         try:
-            report_uu_observation(uu_path)
+            report_uu_observation(uu_path, refreshed)
+        except SafeProtocolError as failure:
+            # Only allow fixed error codes into GitHub logs; never values,
+            # request bodies, tokens, URLs or arbitrary exception messages.
+            code = str(failure)
+            if not re.fullmatch(r"(?:session_data_http_[0-9]{3}|session_data_rejected|session_data_unavailable|oidc_request_http_[0-9]{3})", code):
+                code = "unavailable"
+            print("SESSION_RUNTIME_DATA_REPORT_FAILED " + code, flush=True)
         except Exception:
-            # Optional UU reports must not interrupt SSH, RDP or the Session.
-            pass
+            print("SESSION_RUNTIME_DATA_REPORT_FAILED unavailable", flush=True)
+    if uu_enabled:
+        report_optional_uu()
     while time.time() < end:
         if uu_enabled and time.monotonic() >= next_refresh:
             refreshed = False
@@ -306,12 +316,9 @@ def hold():
                 refreshed = completed.returncode == 0
             except (OSError, subprocess.TimeoutExpired):
                 pass
-            try:
-                report_uu_observation(uu_path, refreshed)
-            except Exception:
-                # The Worker retains the last accepted observation for at
-                # most 90 seconds; a failed upload cannot extend its TTL.
-                pass
+            # The Worker retains any last accepted observation for at most
+            # 90 seconds; a failed upload cannot extend its TTL.
+            report_optional_uu(refreshed)
             next_refresh = time.monotonic() + 30
         remaining = max(0, end - time.time())
         until_refresh = max(0, next_refresh - time.monotonic()) if uu_enabled else 10
