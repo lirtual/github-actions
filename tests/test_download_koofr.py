@@ -125,6 +125,22 @@ class MountTests(unittest.TestCase):
                                    root_folder_path="/Koofr/base")],
                             "/Koofr/Folder")["parent"])
 
+    def test_empty_openlist_root_path_maps_to_backend_root_only(self):
+        # OpenList WebDav accepts an unset/empty root_folder_path as "/".
+        # Do not interpret /dav alone as the writable primary mount.
+        self.assertEqual(
+            "/Downloads/build",
+            k.resolve_mount([mount(root_folder_path="")],
+                            "/Koofr/Downloads/build")["parent"])
+        self.assertEqual(
+            "/subfolder/build",
+            k.resolve_mount([mount(address="https://app.koofr.net/dav/Koofr/subfolder",
+                                   root_folder_path="")],
+                            "/Koofr/build")["parent"])
+        with self.assertRaises(k.KoofrUnsupported):
+            k.resolve_mount([mount(address="https://app.koofr.net/dav",
+                                   root_folder_path="")], "/Koofr/build")
+
     def test_other_webdav_url_or_driver_fails_closed(self):
         for m in [
             mount(address="https://evil.test/dav/Koofr"),
