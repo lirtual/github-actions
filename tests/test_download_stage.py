@@ -216,6 +216,19 @@ class StageTests(unittest.TestCase):
                 stage.stage_batch(batch(["/Koofr/build","/Koofr/release"]),
                                   inputs,queue(inputs),[mount(),overlay])
 
+    def test_reject_nested_scratch_root_even_when_each_snapshot_is_complete(self):
+        # Both independently formed aria2 snapshots can be internally valid
+        # while the same physical file is owned by two download requests.
+        tmp,roots=self.fixtures()
+        with tmp:
+            nested=roots[0]/"nested"
+            nested.mkdir()
+            (nested/"also-owned.bin").write_bytes(b"second artifact")
+            inputs=snapshots([roots[0],nested])
+            with self.assertRaises(stage.StageUnverified):
+                stage.stage_batch(batch(["/Koofr/first","/Koofr/second"]),
+                                  inputs,queue(inputs),[mount()])
+
     def test_reject_missing_second_source_and_reused_local_root(self):
         tmp,roots=self.fixtures()
         with tmp:
