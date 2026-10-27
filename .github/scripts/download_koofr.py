@@ -50,9 +50,9 @@ def _safe_parts(path, allow_root=False):
     except (InvalidBatch, TypeError, ValueError):
         raise KoofrUnsupported("NOT_SUPPORTED") from None
     # Koofr documents a 1023-character complete path ceiling and rejects
-    # filename codepoints above U+FFFF. The stricter UTF-8 byte bound also
-    # avoids assuming how every provider endpoint counts multibyte paths.
-    if len(path.encode("utf-8")) > 1023:
+    # filename codepoints above U+FFFF. Check the documented character limit;
+    # do not impose an invented byte limit on valid multibyte filenames.
+    if len(path) > 1023:
         raise KoofrUnsupported("NOT_SUPPORTED")
     parts = path.split("/")[1:]
     if any(not ALLOWED_PATH.fullmatch(p) or
