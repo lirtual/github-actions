@@ -117,8 +117,13 @@ def resolve_mount(storages, destination):
         prefix = parsed.path[len("/dav/Koofr/"):].strip("/").split("/")
     else:
         raise KoofrUnsupported("NOT_SUPPORTED")
+    # OpenList WebDav accepts an empty RootPath as the backend root. Treat
+    # that documented default exactly like "/", never as an arbitrary path.
+    raw_root = addition.get("root_folder_path", "/")
+    if raw_root == "":
+        raw_root = "/"
     try:
-        root_parts = _safe_parts(addition.get("root_folder_path", "/"), allow_root=True)
+        root_parts = _safe_parts(raw_root, allow_root=True)
     except (TypeError, ValueError):
         raise KoofrUnsupported("NOT_SUPPORTED") from None
     if prefix == ["Koofr"]:
