@@ -118,6 +118,22 @@ class SourceSnapshotTests(unittest.TestCase):
         with self.assertRaises(s.SourceUnverified):
             s.verify_queue_closed([first,first],ok,[],[],completed)
 
+    def test_every_aria2_file_needs_its_own_used_approved_uri(self):
+        approved = "https://example.org/build.tar.gz"
+        used = [{"uri": approved, "status": "used"}]
+        waiting = [{"uri": approved, "status": "waiting"}]
+        self.assertTrue(s.verify_http_source_uris(
+            [{"uris": used}, {"uris": used + waiting}], approved))
+        # Global "some URI was used" is insufficient: a second file with
+        # only waiting URIs has no independent source provenance.
+        for records in (
+            [{"uris": used}, {"uris": waiting}],
+            [{"uris": waiting}, {"uris": used}],
+            [{"uris": used}, {"uris": waiting + waiting}],
+        ):
+            with self.subTest(records=records), self.assertRaises(s.SourceUnverified):
+                s.verify_http_source_uris(records, approved)
+
     def test_reject_unverified_symlinks(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d,"root")
