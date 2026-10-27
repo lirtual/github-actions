@@ -181,6 +181,35 @@ class MountTests(unittest.TestCase):
             with self.subTest(path=extra["mount_path"]), self.assertRaises(k.KoofrUnsupported):
                 k.resolve_mount([mount(),extra],"/Koofr/Downloads/file.bin")
 
+    def test_reject_koofr_unsupported_astral_filename_before_upload(self):
+        # Official Koofr restrictions exclude filename codepoints above U+FFFF.
+        # Ordinary BMP Unicode names remain valid.
+        self.assertEqual(["报告.txt"], k._safe_parts("/报告.txt"))
+        for filename in ("package😀.zip", "music𝄞.wav"):
+            with self.subTest(name=filename), self.assertRaises(k.KoofrUnsupported):
+                k.upload_query("/build", filename, "primary-id")
+            with self.subTest(name=filename), self.assertRaises(k.KoofrUnsupported):
+                k.resolve_mount([mount()], "/Koofr/" + filename)
+
+    def test_full_koofr_path_ceiling_including_expanded_webdav_root(self):
+        short = "/" + "/".join(["a" * 254] * 4)
+        self.assertEqual(1020, len(short))
+        self.assertEqual(4, len(k._safe_parts(short)))
+        excessive = "/" + "/".join(["a" * 255] * 4)
+        self.assertEqual(1024, len(excessive))
+        with self.assertRaises(k.KoofrUnsupported):
+            k._safe_parts(excessive)
+        # A short *virtual* path may expand to a path above the Koofr limit
+        # when OpenList's root_folder_path is applied.
+        long_root = "/" + "/".join(["a" * 240] * 4)
+        self.assertEqual(964, len(long_root))
+        self.assertEqual(1015, len(
+            k.resolve_mount([mount(root_folder_path=long_root)],
+                            "/Koofr/" + "b" * 50)["parent"]))
+        with self.assertRaises(k.KoofrUnsupported):
+            k.resolve_mount([mount(root_folder_path=long_root)],
+                            "/Koofr/" + "b" * 60)
+
     def test_query_no_overwrite_or_rename_even_if_filename_unicode(self):
         url=k.upload_query("/build","你好.txt","primary-id")
         qs=parse_qs(urlsplit(url).query)
