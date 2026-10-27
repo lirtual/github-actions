@@ -104,6 +104,22 @@ class DownloadBatchTests(unittest.TestCase):
                     {"url": "https://example.org/a", "destination_path": "/build/artifacts"},
                     {"url": "https://example.net/b", "destination_path": path}]))
 
+    def test_reject_casefold_aliases_before_admitting_a_batch(self):
+        for path in ("/build/ARTIFACTS", "/BUILD/artifacts",
+                     "/build/ARTIFACTS/nested", "/BUILD"):
+            with self.subTest(path=path), self.assertRaises(download.InvalidBatch):
+                download.validate(sample(downloads=[
+                    {"url": "https://example.org/a",
+                     "destination_path": "/build/artifacts"},
+                    {"url": "https://example.net/b",
+                     "destination_path": path}]))
+        accepted=download.validate(sample(downloads=[
+            {"url": "https://example.org/a",
+             "destination_path": "/build/artifacts"},
+            {"url": "https://example.net/b",
+             "destination_path": "/build/artifacts-extra"}]))
+        self.assertEqual(2,len(accepted["downloads"]))
+
     def test_entry_extra_properties_are_rejected(self):
         with self.assertRaises(download.InvalidBatch):
             download.validate(sample(downloads=[
