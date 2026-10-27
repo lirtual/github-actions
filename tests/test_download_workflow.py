@@ -61,6 +61,24 @@ class DownloadWorkflowTests(unittest.TestCase):
             self.assertNotIn("        uses:", step)
             self.assertIn("        shell: bash", step)
 
+    def assert_denial_cannot_be_skipped(self, workflow):
+        # A four-step script can still falsely succeed if the mandatory final
+        # exit 1 is conditional or marked continue-on-error.
+        self.assertNotRegex(
+            workflow,
+            r"(?m)^\\s*(?:if|continue-on-error|environment|strategy|container|services|defaults):",
+        )
+
+    def test_failure_step_is_unconditional_and_cannot_be_ignored(self):
+        self.assert_denial_cannot_be_skipped(YAML)
+        original = "      - name: Block unverified download and cloud writes\\n"
+        self.assertEqual(1, YAML.count(original))
+        for injected in ("        if: false\\n",
+                         "        continue-on-error: true\\n"):
+            with self.subTest(injected=injected), self.assertRaises(AssertionError):
+                self.assert_denial_cannot_be_skipped(
+                    YAML.replace(original, original + injected))
+
     def test_premature_inserted_upload_is_rejected_by_exact_command_guard(self):
         _prefix, _checkout, _claim, validate, _deny = re.split(
             r"(?m)^      - name: ", YAML)
