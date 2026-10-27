@@ -9,6 +9,8 @@ Uploads are sequential and never automatically retried or rolled back.
 Caller must stop on any unknown remote result. No input paths or credentials
 appear in exposed exceptions.
 """
+import posixpath
+
 from download_koofr import KoofrConflict, KoofrUnknown, KoofrUnsupported, _safe_parts
 
 
@@ -35,6 +37,7 @@ def finish_staged(staged, client, *, cancelled=lambda: False):
             _safe_parts(parent, allow_root=True)
             if len(_safe_parts("/" + name)) != 1:
                 raise KoofrUnsupported("NOT_SUPPORTED")
+            _safe_parts(posixpath.join(parent, name))
         except KoofrUnsupported:
             raise BatchIncomplete("STAGE_UNVERIFIED", 0) from None
         key = (parent + "/" + name).casefold()
