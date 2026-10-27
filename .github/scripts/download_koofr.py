@@ -76,13 +76,24 @@ def resolve_mount(storages, destination):
     if not isinstance(storages, list) or not storages:
         raise KoofrUnsupported("NOT_SUPPORTED")
     selected = None
+    seen_mounts = set()
+    destination_key = destination.casefold()
     for mount in storages:
         if not isinstance(mount, dict) or not isinstance(mount.get("mount_path"), str):
             raise KoofrUnsupported("NOT_SUPPORTED")
         mount_path = mount["mount_path"]
         _safe_parts(mount_path, allow_root=True)
-        if (mount_path == "/" or destination == mount_path or
-                destination.startswith(mount_path + "/")):
+        mount_key = mount_path.casefold()
+        if mount_key in seen_mounts:
+            raise KoofrUnsupported("NOT_SUPPORTED")
+        seen_mounts.add(mount_key)
+        if (mount_path == "/" or destination_key == mount_key or
+                destination_key.startswith(mount_key + "/")):
+            # Native Koofr paths may be case-insensitive. An OpenList submount
+            # that differs only in case must never fall through to /Koofr.
+            if (mount_path != "/" and destination != mount_path and
+                    not destination.startswith(mount_path + "/")):
+                raise KoofrUnsupported("NOT_SUPPORTED")
             if selected is None or len(mount_path) > len(selected["mount_path"]):
                 selected = mount
     if (selected is None or selected.get("mount_path") != "/Koofr" or
