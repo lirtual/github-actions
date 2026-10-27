@@ -143,10 +143,13 @@ def validate(payload):
         dest = _destination(entry["destination_path"])
         # Source naming and torrent contents are unknown until download.
         # For now demand separate non-nested destination directories.
-        if any(dest == old or dest.startswith(old + "/")
-               or old.startswith(dest + "/") for old in paths):
+        key = dest.casefold()
+        if any(key == old or key.startswith(old + "/")
+               or old.startswith(key + "/") for old in paths):
+            # Koofr targets can be case-insensitive. Reject potential aliases
+            # before a task is admitted, not only in the unwired upload stage.
             raise InvalidBatch("destination_conflict")
-        paths.append(dest)
+        paths.append(key)
         approved.append({"url": source, "destination_path": dest})
     return {"downloads": approved, "project_purpose": purpose,
             "duration_minutes": count}
