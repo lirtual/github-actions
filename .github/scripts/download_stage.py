@@ -98,7 +98,10 @@ def stage_batch(batch_json, snapshots, queue, storages):
             if (not isinstance(root, str) or not root.startswith("/") or
                     posixpath.normpath(root) != root or
                     not Path(root).is_absolute() or
-                    root.casefold() in root_keys):
+                    any(root.casefold() == prev or
+                        root.casefold().startswith(prev + "/") or
+                        prev.startswith(root.casefold() + "/")
+                        for prev in root_keys)):
                 raise StageUnverified("STAGE_UNVERIFIED")
             root_keys.add(root.casefold())
             census = verify_snapshot(root, snapshot["gid"], snapshot["status"],
