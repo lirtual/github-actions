@@ -81,17 +81,19 @@ def verify_http_source_uris(rows, approved_url):
             urlsplit(approved_url).scheme not in ("http", "https") or
             not isinstance(rows, list) or not rows):
         raise SourceUnverified("SOURCE_UNVERIFIED")
-    used = False
     for file in rows:
         if not isinstance(file, dict) or not isinstance(file.get("uris"), list) or not file["uris"]:
             raise SourceUnverified("SOURCE_UNVERIFIED")
+        used = False
         for record in file["uris"]:
             if (not isinstance(record, dict) or record.get("uri") != approved_url or
                     record.get("status") not in ("used", "waiting")):
                 raise SourceUnverified("SOURCE_UNVERIFIED")
             used = used or record["status"] == "used"
-    if not used:
-        raise SourceUnverified("SOURCE_UNVERIFIED")
+        # An unrelated file's successful URI is never provenance evidence
+        # for this file: each listed file needs its own used source entry.
+        if not used:
+            raise SourceUnverified("SOURCE_UNVERIFIED")
     return True
 
 
