@@ -11,6 +11,7 @@ import threading
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 SRC = Path(__file__).resolve().parents[1] / ".github/scripts/download_koofr.py"
 sys.path.insert(0, str(SRC.parent))
@@ -54,7 +55,11 @@ class MockConnection:
 
     def putheader(self, key, value): self.history[-1][2][key]=value
     def endheaders(self): pass
-    def send(self, body): self.sends.append(body)
+    def send(self, body):
+        self.sends.append(body)
+        hook = self.options.get("on_send")
+        if callable(hook):
+            hook(body)
     def getresponse(self):
         if self.options.get("failure") and self._path.startswith("/content/"):
             return MockResp(self.options["failure"], {})
@@ -156,7 +161,7 @@ class MountTests(unittest.TestCase):
                      "/Koofr/one/","/Koofr/ a ", "/Koofr/name."):
             with self.subTest(dest=dest),self.assertRaises(k.KoofrUnsupported):
                 k.resolve_mount([mount()],dest)
-        for name in ("../h", "hello:world", "name%2Ffoo"):
+        for name in ("../h", "hello:world", "name%2Ffoo", "a/b"):
             with self.subTest(name=name),self.assertRaises(k.KoofrUnsupported):
                 k.upload_query("/build",name,"primary-id")
 
@@ -210,6 +215,40 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(16,len(b"payload contents"))
         self.assertTrue(all(c.closed for c in conn.connections))
         self.assertNotIn("private",str(result))
+
+    def test_connection_timeout_is_bounded_independently_of_task_deadline(self):
+        observed = []
+        def factory(timeout):
+            observed.append(timeout)
+            return MockConnection({})
+        client = k.KoofrClient("test@example.com", "pass",
+                               time.monotonic()+330*60, connection_factory=factory)
+        conn = client._connect()
+        conn.close()
+        self.assertEqual(1,len(observed))
+        self.assertGreater(observed[0],0)
+        self.assertLessEqual(observed[0],30)
+
+    def test_midstream_cancel_is_indeterminate_and_does_not_finish_post(self):
+        cancelled = [False]
+        def flag_on_first_data_chunk(chunk):
+            if chunk == b"payl":
+                cancelled[0] = True
+        conn=Connections(on_send=flag_on_first_data_chunk)
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d,"payload.txt")
+            path.write_bytes(b"payload contents")
+            with mock.patch.object(k,"MAX_CHUNK",4):
+                with self.assertRaises(k.KoofrUnknown):
+                    self._client(conn).upload_file(path,"/build",expected=proof(path),
+                                                   cancelled=lambda:cancelled[0])
+        self.assertTrue(cancelled[0])
+        self.assertEqual(2,len(conn.connections))
+        sent=conn.connections[1].sends
+        self.assertIn(b"payl",sent)
+        self.assertFalse(any(b"--spec51" in part and part.startswith(b"\r\n--")
+                             for part in sent))
+        self.assertTrue(all(c.closed for c in conn.connections))
 
     def test_409_conflict_never_auto_rename_or_retry(self):
         conn=Connections(failure=409)

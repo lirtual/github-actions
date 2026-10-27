@@ -25,6 +25,7 @@ class FakeClient:
         self.fail_kind=fail_kind
         self.existing=existing
         self.unknown=unknown
+        self.simulate_midstream_cancel=False
         self.parents=[]
         self.absence_checks=[]
         self.uploads=[]
@@ -43,8 +44,10 @@ class FakeClient:
             raise KoofrUnsupported("NOT_SUPPORTED")
         return True
 
-    def upload_file(self, file, parent, *, expected):
+    def upload_file(self, file, parent, *, expected, cancelled=lambda: False):
         self.uploads.append((file,parent,expected))
+        if self.simulate_midstream_cancel and cancelled():
+            raise KoofrUnknown("REMOTE_UNKNOWN")
         if self.fail_index == len(self.uploads):
             if self.fail_kind=="conflict":
                 raise KoofrConflict("DESTINATION_CONFLICT")
@@ -118,6 +121,16 @@ class UploadHandoffTests(unittest.TestCase):
                             cancelled=lambda:len(client.uploads)>0)
         self.assertEqual("CANCELLED",observed.exception.code)
         self.assertEqual(1,observed.exception.completed)
+        self.assertEqual(1,len(client.uploads))
+
+    def test_cancel_signaled_during_upload_must_be_remote_unknown(self):
+        client=FakeClient()
+        client.simulate_midstream_cancel=True
+        with self.assertRaises(f.BatchIncomplete) as caught:
+            f.finish_staged([entry("one")],client,
+                            cancelled=lambda:len(client.uploads)>0)
+        self.assertEqual("REMOTE_UNKNOWN",caught.exception.code)
+        self.assertEqual(0,caught.exception.completed)
         self.assertEqual(1,len(client.uploads))
 
     def test_invalid_or_duplicate_plan_denied_before_provider(self):

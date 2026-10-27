@@ -71,7 +71,7 @@ def finish_staged(staged, client, *, cancelled=lambda: False):
             if cancelled():
                 raise BatchIncomplete("CANCELLED", completed)
             result = client.upload_file(entry["file"], entry["destination_parent"],
-                                        expected=entry)
+                                        expected=entry, cancelled=cancelled)
             if (not isinstance(result, dict) or
                     result.get("remote_observed") != "md5_verified" or
                     result.get("files") != 1 or

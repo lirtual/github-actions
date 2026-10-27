@@ -147,7 +147,8 @@ def upload_query(parent, filename, mount_id):
     if not isinstance(mount_id, str) or not MOUNT_ID.fullmatch(mount_id):
         raise KoofrUnsupported("NOT_SUPPORTED")
     _safe_parts(parent, allow_root=True)
-    _safe_parts("/" + filename)
+    if not isinstance(filename, str) or len(_safe_parts("/" + filename)) != 1:
+        raise KoofrUnsupported("NOT_SUPPORTED")
     query = urlencode({"path": parent, "filename": filename,
                        "info": "true", "autorename": "false"})
     return "/content/api/v2/mounts/" + quote(mount_id, safe="") + "/files/put?" + query
@@ -171,7 +172,10 @@ class KoofrClient:
         remaining = self._deadline - time.monotonic()
         if remaining <= 1:
             raise KoofrUnknown("REMOTE_UNKNOWN")
-        return self._factory(remaining)
+        # Each blocking socket operation has a bounded idle timeout even when
+        # the approved Task itself has hours remaining. Avoid waiting hours on
+        # a stalled send/read, especially after cancellation.
+        return self._factory(min(remaining, 30))
 
     def _request_json(self, path):
         if not path.startswith("/api/v2/mounts"):
@@ -256,8 +260,12 @@ class KoofrClient:
                 re.fullmatch(r"[0-9a-fA-F]{32}", actual) is not None and
                 actual.lower() == expected)
 
-    def upload_file(self, file, destination_parent, *, expected):
-        """Require an independently attested local file digest from stage_batch."""
+    def upload_file(self, file, destination_parent, *, expected, cancelled=lambda: False):
+        """Require prior digest proof; abandon in-flight writes if cancelled.
+
+        A cancellation AFTER uploading any bytes has an indeterminate remote
+        effect, never a provably safe cancellation or a reason to retry.
+        """
         src = Path(file)
         try:
             st = src.lstat()
@@ -295,6 +303,8 @@ class KoofrClient:
                         (st.st_dev, st.st_ino, st.st_size) !=
                         (opened.st_dev, opened.st_ino, opened.st_size)):
                     raise KoofrUnsupported("NOT_SUPPORTED")
+                if cancelled():
+                    raise KoofrUnknown("REMOTE_UNKNOWN")
                 conn.putrequest("POST", path)
                 conn.putheader("Authorization", self._basic)
                 conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
@@ -304,6 +314,8 @@ class KoofrClient:
                 conn.send(prefix)
                 remaining = st.st_size
                 while remaining:
+                    if cancelled():
+                        raise KoofrUnknown("REMOTE_UNKNOWN")
                     chunk = inp.read(min(MAX_CHUNK, remaining))
                     if not chunk:
                         raise KoofrUnknown("REMOTE_UNKNOWN")
@@ -323,6 +335,8 @@ class KoofrClient:
                      opened.st_mtime_ns, opened.st_ctime_ns) !=
                     (finished.st_dev, finished.st_ino, finished.st_size,
                      finished.st_mtime_ns, finished.st_ctime_ns)):
+                    raise KoofrUnknown("REMOTE_UNKNOWN")
+                if cancelled():
                     raise KoofrUnknown("REMOTE_UNKNOWN")
                 conn.send(suffix)
             resp = conn.getresponse()
