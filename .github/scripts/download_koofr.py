@@ -47,12 +47,18 @@ def _safe_parts(path, allow_root=False):
         return []
     try:
         _destination(path)
-    except InvalidBatch:
+    except (InvalidBatch, TypeError, ValueError):
         raise KoofrUnsupported("NOT_SUPPORTED") from None
+    # Koofr documents a 1023-character complete path ceiling and rejects
+    # filename codepoints above U+FFFF. The stricter UTF-8 byte bound also
+    # avoids assuming how every provider endpoint counts multibyte paths.
+    if len(path.encode("utf-8")) > 1023:
+        raise KoofrUnsupported("NOT_SUPPORTED")
     parts = path.split("/")[1:]
     if any(not ALLOWED_PATH.fullmatch(p) or
            p.strip() != p or p.endswith(".") or
            unicodedata.normalize("NFC", p) != p or
+           any(ord(char) > 0xFFFF for char in p) or
            len(p.encode("utf-8")) > 255 or "%" in p
            for p in parts):
         raise KoofrUnsupported("NOT_SUPPORTED")
@@ -147,6 +153,10 @@ def resolve_mount(storages, destination):
         _safe_parts("/" + p)
     suffix = destination[len("/Koofr"):].lstrip("/")
     dest_parts = _safe_parts("/" + suffix) if suffix else []
+    native_parent = "/" + "/".join(base + dest_parts)
+    # OpenList's virtual path can be short while its WebDAV root expands to
+    # an overlong native Koofr path. Deny the whole stage before any upload.
+    _safe_parts(native_parent, allow_root=True)
     user = addition.get("username")
     password = addition.get("password")
     if (not isinstance(user, str) or not user or len(user) > 320 or
@@ -154,7 +164,7 @@ def resolve_mount(storages, destination):
             not isinstance(password, str) or not password or len(password) > 2048 or
             any(x in password for x in "\r\n")):
         raise KoofrUnsupported("NOT_SUPPORTED")
-    return {"parent": "/" + "/".join(base + dest_parts), "username": user,
+    return {"parent": native_parent, "username": user,
             "password": password}
 
 
