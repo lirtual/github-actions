@@ -133,6 +133,19 @@ class UploadHandoffTests(unittest.TestCase):
         self.assertEqual(0,caught.exception.completed)
         self.assertEqual(1,len(client.uploads))
 
+    def test_overlong_native_target_denied_before_first_remote_request(self):
+        parent="/" + "/".join(["a" * 240] * 4)
+        self.assertEqual(964, len(parent))
+        client=FakeClient()
+        with self.assertRaises(f.BatchIncomplete) as caught:
+            f.finish_staged([entry("ok.bin", parent="/release"),
+                             entry("b" * 60, parent=parent)], client)
+        self.assertEqual("STAGE_UNVERIFIED", caught.exception.code)
+        self.assertEqual(0, caught.exception.completed)
+        self.assertEqual([], client.parents)
+        self.assertEqual([], client.absence_checks)
+        self.assertEqual([], client.uploads)
+
     def test_invalid_or_duplicate_plan_denied_before_provider(self):
         invalid=([[entry("dup"),entry("DUP")],
                  [entry("one"),{"name":"bad"}],
