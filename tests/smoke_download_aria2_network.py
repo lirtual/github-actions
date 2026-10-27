@@ -187,6 +187,80 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
         else:
             raise AssertionError("MULTI_SOURCE_MISMATCH_NOT_REJECTED")
         print("REAL_ARIA2_TWO_SOURCE_BATCH_STAGE_NO_UPLOAD_OK")
+        # Separate CI-only proof of ACTUAL overlapping network activity.
+        # Two loopback HTTP responses are deliberately held until both
+        # independent source GIDs are simultaneously active. Without
+        # max-concurrent-downloads >= 2 this test cannot complete.
+        overlap_seen = [threading.Event(), threading.Event()]
+        overlap_release = threading.Event()
+        overlap_payloads = [b"spec51-actual-overlap-first",
+                            b"spec51-actual-overlap-second"]
+
+        class HeldTwoSources(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path not in ("/first", "/second"):
+                    self.send_error(404)
+                    return
+                idx = 0 if self.path == "/first" else 1
+                overlap_seen[idx].set()
+                if not overlap_release.wait(timeout=12):
+                    self.send_error(503)
+                    return
+                blob = overlap_payloads[idx]
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(blob)))
+                self.end_headers()
+                self.wfile.write(blob)
+
+            def log_message(self, *_):
+                pass
+
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 18102),
+                                             HeldTwoSources) as overlap_server:
+            overlap_worker = threading.Thread(target=overlap_server.serve_forever,
+                                              daemon=True)
+            overlap_worker.start()
+            overlap_gids = [secrets.token_hex(8), secrets.token_hex(8)]
+            overlap_roots = [os.path.join(directory, "overlap-first"),
+                             os.path.join(directory, "overlap-second")]
+            try:
+                for i in range(2):
+                    os.mkdir(overlap_roots[i])
+                    submitted = rpc("aria2.addUri",
+                                    ["http://127.0.0.1:18102/" +
+                                     ("first" if i == 0 else "second")],
+                                    {"gid": overlap_gids[i], "dir": overlap_roots[i],
+                                     "out": "proof.bin", "max-tries": "1",
+                                     "split": "1", "max-connection-per-server": "1"})
+                    if submitted != overlap_gids[i]:
+                        raise AssertionError("OVERLAP_GID_MISMATCH")
+                if not all(event.wait(timeout=8) for event in overlap_seen):
+                    raise AssertionError("TWO_HTTP_REQUESTS_NOT_CONCURRENT")
+                active = rpc("aria2.tellActive", [["gid", "status"]])
+                if not set(overlap_gids).issubset({
+                        item.get("gid") for item in active if isinstance(item, dict)}):
+                    raise AssertionError("TWO_GIDS_NOT_SIMULTANEOUSLY_ACTIVE")
+                overlap_release.set()
+                for attempt in range(80):
+                    current = [rpc("aria2.tellStatus", gid, ["gid", "status"])
+                               for gid in overlap_gids]
+                    if all(item.get("status") == "complete" for item in current):
+                        break
+                    if any(item.get("status") in ("error", "removed")
+                           for item in current):
+                        raise AssertionError("OVERLAP_DOWNLOAD_FAILED")
+                    time.sleep(.05)
+                else:
+                    raise AssertionError("OVERLAP_DOWNLOAD_TIMEOUT")
+                for i in range(2):
+                    if (Path(overlap_roots[i]) / "proof.bin").read_bytes() != overlap_payloads[i]:
+                        raise AssertionError("OVERLAP_SOURCE_CONTENT_MISMATCH")
+                print("REAL_ARIA2_TWO_SIMULTANEOUS_ACTIVE_GIDS_OK")
+            finally:
+                overlap_release.set()
+                overlap_server.shutdown()
+                overlap_worker.join(timeout=4)
+
         # Follow a real HTTP 302 from the loopback fixture toward the
         # host-only address. Docker bridge isolation must reject the resulting
         # private request even after aria2's redirect processing.
