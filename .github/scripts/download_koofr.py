@@ -175,6 +175,8 @@ def upload_query(parent, filename, mount_id):
     _safe_parts(parent, allow_root=True)
     if not isinstance(filename, str) or len(_safe_parts("/" + filename)) != 1:
         raise KoofrUnsupported("NOT_SUPPORTED")
+    # Enforce the combined native target limit, not just its two components.
+    _safe_parts(posixpath.join(parent, filename))
     query = urlencode({"path": parent, "filename": filename,
                        "info": "true", "autorename": "false"})
     return "/content/api/v2/mounts/" + quote(mount_id, safe="") + "/files/put?" + query
