@@ -253,6 +253,28 @@ class APIContractTests(unittest.TestCase):
         with self.assertRaises(k.KoofrUnsupported):
             self._client(Connections()).assert_directory("/other")
 
+    def test_invalid_native_target_never_contacts_koofr(self):
+        # Invalid destinations must be rejected before even mounting/login GET,
+        # whether the caller uses the direct uploader or the absence helper.
+        factory = Connections()
+        client = self._client(factory)
+        long_parent = "/" + "/".join(["a" * 254] * 4)
+        self.assertEqual(1020, len(long_parent))
+        with tempfile.TemporaryDirectory() as d:
+            ordinary = Path(d, "payload.txt")
+            ordinary.write_bytes(b"payload contents")
+            astral = Path(d, "payload😀.txt")
+            astral.write_bytes(b"payload contents")
+            for path, parent in (
+                (ordinary, long_parent),
+                (astral, "/build"),
+            ):
+                with self.subTest(file=path.name), self.assertRaises(k.KoofrUnsupported):
+                    client.upload_file(path, parent, expected=proof(path))
+                with self.subTest(name=path.name), self.assertRaises(k.KoofrUnsupported):
+                    client.assert_absent(parent, path.name)
+        self.assertEqual([], factory.connections)
+
     def test_read_only_absence_must_be_explicit_404(self):
         for status in (200, 401, 403, 404, 409, 500):
             conn=Connections(existence=status)
