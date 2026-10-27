@@ -209,6 +209,12 @@ class MountTests(unittest.TestCase):
         with self.assertRaises(k.KoofrUnsupported):
             k.resolve_mount([mount(root_folder_path=long_root)],
                             "/Koofr/" + "b" * 60)
+        # A direct uploader may bypass the staging helper: the query builder
+        # must still reject an overlong complete native target.
+        self.assertIn("autorename=false",
+                      k.upload_query(long_root, "b" * 50, "primary-id"))
+        with self.assertRaises(k.KoofrUnsupported):
+            k.upload_query(long_root, "b" * 60, "primary-id")
 
     def test_query_no_overwrite_or_rename_even_if_filename_unicode(self):
         url=k.upload_query("/build","你好.txt","primary-id")
