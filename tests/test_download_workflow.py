@@ -66,7 +66,7 @@ class DownloadWorkflowTests(unittest.TestCase):
         # exit 1 is conditional or marked continue-on-error.
         self.assertNotRegex(
             workflow,
-            r"(?m)^\\s*(?:if|continue-on-error|environment|strategy|container|services|defaults):",
+            r"(?m)^[ ]*(?:if|continue-on-error|environment|strategy|container|services|defaults):",
         )
 
     def test_failure_step_is_unconditional_and_cannot_be_ignored(self):
