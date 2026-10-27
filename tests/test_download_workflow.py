@@ -71,10 +71,10 @@ class DownloadWorkflowTests(unittest.TestCase):
 
     def test_failure_step_is_unconditional_and_cannot_be_ignored(self):
         self.assert_denial_cannot_be_skipped(YAML)
-        original = "      - name: Block unverified download and cloud writes\\n"
+        original = "      - name: Block unverified download and cloud writes\n"
         self.assertEqual(1, YAML.count(original))
-        for injected in ("        if: false\\n",
-                         "        continue-on-error: true\\n"):
+        for injected in ("        if: false\n",
+                         "        continue-on-error: true\n"):
             with self.subTest(injected=injected), self.assertRaises(AssertionError):
                 self.assert_denial_cannot_be_skipped(
                     YAML.replace(original, original + injected))
