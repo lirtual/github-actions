@@ -164,6 +164,23 @@ class MountTests(unittest.TestCase):
         with self.assertRaises(k.KoofrUnsupported):
             k.resolve_mount([mount(),overlay],"/Koofr/secret/whatever")
 
+    def test_case_alias_of_nested_mount_never_falls_through_to_koofr(self):
+        overlay={**mount(), "mount_path":"/Koofr/Secret", "driver":"S3"}
+        for destination in ("/Koofr/secret/file.bin",
+                            "/Koofr/SECRET",
+                            "/Koofr/SeCrEt/file.bin"):
+            with self.subTest(destination=destination), self.assertRaises(k.KoofrUnsupported):
+                k.resolve_mount([mount(),overlay], destination)
+        # An unrelated branch must continue to resolve normally.
+        self.assertEqual("/Public/file.bin",
+                         k.resolve_mount([mount(),overlay],
+                                         "/Koofr/Public/file.bin")["parent"])
+
+    def test_duplicate_and_case_aliased_mount_paths_are_rejected(self):
+        for extra in (mount(), {**mount(), "mount_path":"/koofr"}):
+            with self.subTest(path=extra["mount_path"]), self.assertRaises(k.KoofrUnsupported):
+                k.resolve_mount([mount(),extra],"/Koofr/Downloads/file.bin")
+
     def test_query_no_overwrite_or_rename_even_if_filename_unicode(self):
         url=k.upload_query("/build","你好.txt","primary-id")
         qs=parse_qs(urlsplit(url).query)
