@@ -376,6 +376,11 @@ class KoofrClient:
                 conn.send(suffix)
             resp = conn.getresponse()
             data = resp.read(MAX_JSON + 1)
+            # Cancellation may race with the server's response after the
+            # multipart footer was sent. Remote effects are now uncertain;
+            # never return a verified business success after cancellation.
+            if cancelled():
+                raise KoofrUnknown("REMOTE_UNKNOWN")
             if resp.status == 409:
                 raise KoofrConflict("DESTINATION_CONFLICT")
             if resp.status != 200 or len(data) > MAX_JSON:
@@ -408,5 +413,9 @@ class KoofrClient:
              st.st_mtime_ns, st.st_ctime_ns) !=
             (current.st_dev, current.st_ino, current.st_size,
              current.st_mtime_ns, current.st_ctime_ns)):
+            raise KoofrUnknown("REMOTE_UNKNOWN")
+        # Readback is not a final success if cancellation became observable
+        # while the server or filesystem was being checked.
+        if cancelled():
             raise KoofrUnknown("REMOTE_UNKNOWN")
         return {"files":1, "bytes":st.st_size, "remote_observed":"md5_verified"}
