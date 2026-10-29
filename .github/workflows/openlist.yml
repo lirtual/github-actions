@@ -37,6 +37,10 @@ jobs:
   session:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # Prevent password resets while a Session is using the persistent database.
+    concurrency:
+      group: openlist-persistent-database
+      cancel-in-progress: false
     env:
       ATTEMPT_ID: ${{ inputs.attempt_id }}
       DISPATCH_ID: ${{ inputs.dispatch_id }}
