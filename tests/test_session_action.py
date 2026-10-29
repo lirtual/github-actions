@@ -327,6 +327,21 @@ class SessionProtocolTests(unittest.TestCase):
                 self.assertNotIn("https://", output.getvalue())
                 self.assertEqual(len(requested), 2 if kind == "claim_403" else 1)
 
+    def test_start_rejects_invalid_repo_duration_before_claim_or_service(self):
+        import time
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "session-action-start").write_text(str(int(time.time())), encoding="ascii")
+            for duration in ("0", "331", "-2", "1.5", "five", "", " 300", "00331"):
+                with self.subTest(duration=duration), mock.patch.dict(
+                    os.environ, {"RUNNER_TEMP": root, "DURATION_MINUTES": duration}, clear=True
+                ), self.assertRaises(ValueError):
+                    session.start()
+            for duration in ("1", "300", "330"):
+                with self.subTest(duration=duration), mock.patch.dict(
+                    os.environ, {"RUNNER_TEMP": root, "DURATION_MINUTES": duration}, clear=True
+                ):
+                    session.start()
+
     def test_hold_rejects_bad_duration_and_does_not_extend_clock(self):
         with tempfile.TemporaryDirectory() as root:
             started = Path(root) / "session-action-start"
@@ -377,7 +392,7 @@ class SessionProtocolTests(unittest.TestCase):
     def test_start_requires_first_step_timestamp_and_cannot_extend_it(self):
         with tempfile.TemporaryDirectory() as root:
             marker = Path(root) / "session-action-start"
-            with mock.patch.dict(os.environ, {"RUNNER_TEMP": root}, clear=True):
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": root, "DURATION_MINUTES": "300"}, clear=True):
                 with mock.patch.object(session.time, "time", return_value=1234):
                     with self.assertRaises(ValueError):
                         session.start()  # No marker means checkout/setup cannot extend lifetime.
