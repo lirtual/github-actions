@@ -17,8 +17,17 @@ on:
       duration_minutes:
         description: Session lifetime (1-330 minutes)
         type: number
-        default: 330
+        default: 300
         required: false
+      duration_mode:
+        description: Explicit minutes or repository session default
+        type: choice
+        options:
+          - explicit
+          - repository
+        default: explicit
+        required: false
+
 env:
   WORKFLOW_ACTION_TYPE: session
 permissions:
@@ -34,7 +43,7 @@ jobs:
       CAPABILITY_ID: ${{ inputs.capability_id }}
       WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
       WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
-      DURATION_MINUTES: ${{ inputs.duration_minutes }}
+      DURATION_MINUTES: ${{ inputs.duration_mode == 'repository' && (vars.SESSION_DEFAULT_DURATION_MINUTES || '300') || inputs.duration_minutes }}
     steps:
       - name: Capture job lifetime before checkout
         shell: bash

@@ -278,18 +278,25 @@ def recorded_start():
     return started
 
 
-def start():
-    # Validate the first-step marker without overwriting it.
-    recorded_start()
-
-
-def hold():
+def session_duration_minutes():
+    """Validate the job-snapshotted effective duration before opening access."""
     raw = os.getenv("DURATION_MINUTES", "")
     if not raw.isdecimal() or len(raw) > 3:
         raise ValueError("invalid session duration")
     minutes = int(raw)
     if not 1 <= minutes <= MAX_MINUTES:
         raise ValueError("invalid session duration")
+    return minutes
+
+
+def start():
+    # Validate the first-step marker and the effective duration before Claim.
+    recorded_start()
+    session_duration_minutes()
+
+
+def hold():
+    minutes = session_duration_minutes()
     start_time = recorded_start()
     end = start_time + 60 * minutes
     print("Session bounded hold started; GitHub Job timeout remains authoritative")

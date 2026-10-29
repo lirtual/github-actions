@@ -49,6 +49,18 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("session_action.py hold", yml)
                 self.assertEqual(len(re.findall(r"(?m)^  session:$", yml)), 1)
 
+    def test_duration_mode_opt_in_and_hard_bounded_default(self):
+        for name in WORKFLOWS:
+            with self.subTest(name=name):
+                yml = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
+                self.assertIn("      duration_mode:", yml)
+                self.assertIn("          - repository", yml)
+                self.assertIn("        default: explicit", yml)
+                self.assertIn("        default: 300", yml)
+                self.assertIn("vars.SESSION_DEFAULT_DURATION_MINUTES || '300'", yml)
+                self.assertIn("inputs.duration_mode == 'repository'", yml)
+                self.assertIn("timeout-minutes: 360", yml)
+
     def test_session_claim_precedes_tailnet_and_protected_resources(self):
         """A manual GitHub dispatch can run without a D1 Attempt; it must not
         reach Tailnet enrollment, SSH, service credentials or Ready."""
