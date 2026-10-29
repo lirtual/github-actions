@@ -1,0 +1,50 @@
+name: openlist-admin-reset
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type RESET_OPENLIST_ADMIN to update the persistent MySQL admin password from SESSION_SERVICE_PASSWORD
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Share the job lock with openlist.yml. Never reset a live Session's admin.
+    concurrency:
+      group: openlist-persistent-database
+      cancel-in-progress: false
+    steps:
+      - name: Confirm explicit main-branch password recovery
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$DISPATCH_REF" != 'refs/heads/main' || "$CONFIRM" != 'RESET_OPENLIST_ADMIN' ]]; then
+            echo 'OpenList admin reset refused: select main and provide the exact confirmation' >&2
+            exit 1
+          fi
+      - name: Checkout without retained credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Reset persistent OpenList admin and verify login
+        shell: bash
+        env:
+          SESSION_SERVICE_PASSWORD: ${{ secrets.SESSION_SERVICE_PASSWORD }}
+          OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}
+          OPENLIST_DATABASE_CA: ${{ secrets.OPENLIST_DATABASE_CA }}
+        run: bash .github/scripts/start-openlist.sh --reset-admin
+      - name: Remove isolated recovery service and credentials
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force session-openlist >/dev/null 2>&1 || true
+          rm -rf "$RUNNER_TEMP/openlist-data"

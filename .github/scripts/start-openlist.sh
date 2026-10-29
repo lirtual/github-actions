@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+reset_admin=false
+case "${1:-}" in
+  '') test "$#" -eq 0 ;;
+  --reset-admin) test "$#" -eq 1; reset_admin=true ;;
+  *) echo 'Unsupported OpenList startup mode' >&2; exit 1 ;;
+esac
+
 if [[ -z "${SESSION_SERVICE_PASSWORD:-}" ||
       "$SESSION_SERVICE_PASSWORD" == *$'\n'* ||
       "$SESSION_SERVICE_PASSWORD" == *$'\r'* ]]; then
@@ -14,7 +21,7 @@ mkdir -p "$RUNNER_TEMP/openlist-data"
 python3 .github/scripts/openlist-db-config.py "$RUNNER_TEMP/openlist-data/config.json"
 # Read-only schema guard before OpenList CLI can create tables or reset admin.
 # Reuse the MySQL client provided by the GitHub-hosted Ubuntu Runner.
-python3 - "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem" <<'PY'
+python3 - "$RUNNER_TEMP/openlist-data/config.json" "$RUNNER_TEMP/openlist-data/database-ca.pem" "$reset_admin" <<'PY'
 import json
 import os
 import re
@@ -69,6 +76,9 @@ try:
     # The pinned OpenList v4.2.6 migrates these three core models together.
     if tables and not {"x_users", "x_storages", "x_setting_items"}.issubset(tables):
         raise ValueError("incomplete or unrecognized existing OpenList schema")
+    # A recovery request must never initialize an empty or unintended database.
+    if sys.argv[3] == "true" and not tables:
+        raise ValueError("admin recovery requires existing OpenList tables")
 except (OSError, ValueError, KeyError, IndexError, TypeError,
         subprocess.TimeoutExpired):
     print("OpenList MySQL read-only preflight failed; initialization refused", file=sys.stderr)
@@ -93,19 +103,22 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
   fi
 fi
 printf 'OpenList pinned image acquisition: %ds\n' "$((SECONDS - image_started))"
-admin_started=$SECONDS
-# One native CLI initialization is sufficient for both fresh and existing MySQL schemas.
-# Suppress CLI diagnostic output: driver connection errors may embed credentials.
-if ! docker run --rm --user "$(id -u):$(id -g)" \
-    --mount "$mount" --env OPENLIST_ADMIN_PASSWORD \
-    --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
-    --entrypoint /bin/sh "$image" -c \
-    './openlist admin set "$OPENLIST_ADMIN_PASSWORD" >/dev/null 2>&1' \
-    >/dev/null 2>&1; then
-  echo 'OpenList external MySQL initialization failed' >&2
-  exit 1
+# Existing persistent MySQL admin passwords are never changed by a Session.
+# Password recovery is explicit; the reset workflow serializes against Sessions.
+if [[ "$reset_admin" == true ]]; then
+  admin_started=$SECONDS
+  # The official CLI bootstraps MySQL; suppress all diagnostics containing Secrets.
+  if ! docker run --rm --user "$(id -u):$(id -g)" \
+      --mount "$mount" --env OPENLIST_ADMIN_PASSWORD \
+      --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
+      --entrypoint /bin/sh "$image" -c \
+      './openlist admin set "$OPENLIST_ADMIN_PASSWORD" >/dev/null 2>&1' \
+      >/dev/null 2>&1; then
+    echo 'OpenList admin password reset failed' >&2
+    exit 1
+  fi
+  printf 'OpenList one-time admin password reset: %ds\n' "$((SECONDS - admin_started))"
 fi
-printf 'OpenList admin CLI initialization: %ds\n' "$((SECONDS - admin_started))"
 service_started=$SECONDS
 
 docker run --detach --rm --name session-openlist \
