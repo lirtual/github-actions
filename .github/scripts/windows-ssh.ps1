@@ -1,6 +1,7 @@
 # Windows GitHub-hosted Runner: password-only SSH for the existing job account.
 # This account is an administrator. SSH must remain reachable only through Tailscale.
 $ErrorActionPreference = 'Stop'
+$StartupWatch = [Diagnostics.Stopwatch]::StartNew()
 
 $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $Username = [Environment]::UserName
@@ -26,6 +27,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     -not (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
     throw 'Windows password policy adjustment requires a GitHub-hosted Runner'
 }
+$PolicyStart = $StartupWatch.Elapsed
 $PolicyFile = Join-Path $env:RUNNER_TEMP 'session-actions-password.inf'
 $PolicyDb = Join-Path $env:RUNNER_TEMP 'session-actions-password.sdb'
 $PolicyLog = Join-Path $env:RUNNER_TEMP 'session-actions-password.log'
@@ -45,6 +47,7 @@ try {
 } finally {
     Remove-Item -LiteralPath $PolicyFile -Force -ErrorAction SilentlyContinue
 }
+Write-Output ('Windows SSH local password policy: {0:N1}s' -f ($StartupWatch.Elapsed - $PolicyStart).TotalSeconds)
 $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
 Remove-Variable Password
 $env:SESSION_SYSTEM_PASSWORD = $null
@@ -64,10 +67,13 @@ $TailnetIPv4 = @(Get-NetIPAddress -InterfaceIndex $Tailnet[0].ifIndex -AddressFa
 if ($TailnetIPv4.Count -ne 1) { throw 'Expected one Tailnet IPv4 address' }
 $TailnetAddress = $TailnetIPv4[0].IPAddress
 
+$SshCapabilityStart = $StartupWatch.Elapsed
 $Capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
 if ($Capability.State -ne 'Installed') {
     Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
 }
+Write-Output ('Windows SSH capability availability: {0:N1}s' -f ($StartupWatch.Elapsed - $SshCapabilityStart).TotalSeconds)
+$ServiceStart = $StartupWatch.Elapsed
 $Config = Join-Path $env:ProgramData 'ssh\sshd_config'
 if (-not (Test-Path $Config)) { throw 'OpenSSH configuration missing' }
 $Baseline = [IO.File]::ReadAllText($Config)
@@ -104,4 +110,6 @@ $Listeners = @(Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction Sil
 if ($Listeners.Count -ne 1 -or $Listeners[0].LocalAddress -ne $TailnetAddress) {
     throw 'OpenSSH must listen only on the assigned Tailnet IPv4 address'
 }
+Write-Output ('Windows SSH configuration, service and listener validation: {0:N1}s' -f ($StartupWatch.Elapsed - $ServiceStart).TotalSeconds)
+Write-Output ('Windows SSH total local setup: {0:N1}s' -f $StartupWatch.Elapsed.TotalSeconds)
 Write-Output 'Tailnet-restricted Windows password SSH is ready'

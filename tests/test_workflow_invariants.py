@@ -206,6 +206,19 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("Remove-NetFirewallRule -Name SessionActionsTailscaleRDP", windows)
         self.assertIn("fDenyTSConnections -Value 1", windows)
 
+    def test_windows_ssh_startup_profiler_does_not_disclose_secrets(self):
+        ssh = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("Windows SSH local password policy:", ssh)
+        self.assertIn("Windows SSH capability availability:", ssh)
+        self.assertIn("Windows SSH configuration, service and listener validation:", ssh)
+        self.assertIn("Windows SSH total local setup:", ssh)
+        self.assertIn("Diagnostics.Stopwatch", ssh)
+        self.assertIn("Get-WindowsCapability", ssh)
+        self.assertIn("secedit.exe /configure", ssh)
+        self.assertIn("Set-LocalUser -Name $Username -Password $SecurePassword", ssh)
+        self.assertNotIn("Write-Output $Password", ssh)
+        self.assertIn("SESSION_SYSTEM_PASSWORD", ssh)
+
     def test_windows_rdp_disconnect_returns_only_runner_session_to_console(self):
         rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
         handoff = (ROOT / ".github/scripts/windows-rdp-handoff.ps1").read_text()
