@@ -340,6 +340,49 @@ class APIContractTests(unittest.TestCase):
                              for part in sent))
         self.assertTrue(all(c.closed for c in conn.connections))
 
+    def test_cancel_during_provider_response_or_readback_is_never_success(self):
+        # POST completion and the subsequent readback are not atomic with
+        # cancellation. If cancelled at either point, remote effects cannot
+        # be reported as successfully verified, and no retry is permitted.
+        for phase in ("post_response", "readback"):
+            cancelled = [False]
+
+            class CancelConnection(MockConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if (phase == "post_response" and
+                            self._path.startswith("/content/")):
+                        cancelled[0] = True
+                    if (phase == "readback" and
+                            self._path.startswith(
+                                "/api/v2/mounts/primary-id/files/info?")):
+                        cancelled[0] = True
+                    return response
+
+            class CancelConnections(Connections):
+                def __call__(self, timeout):
+                    self.assert_timeout(timeout)
+                    connection = CancelConnection(self.options)
+                    self.connections.append(connection)
+                    return connection
+
+                @staticmethod
+                def assert_timeout(timeout):
+                    assert timeout > 0
+
+            factory = CancelConnections(size=16)
+            with tempfile.TemporaryDirectory() as d:
+                path = Path(d, "payload.txt")
+                path.write_bytes(b"payload contents")
+                with self.subTest(phase=phase), self.assertRaises(k.KoofrUnknown):
+                    self._client(factory).upload_file(
+                        path, "/build", expected=proof(path),
+                        cancelled=lambda: cancelled[0])
+            self.assertTrue(cancelled[0])
+            self.assertEqual(2 if phase == "post_response" else 3,
+                             len(factory.connections))
+            self.assertTrue(all(conn.closed for conn in factory.connections))
+
     def test_409_conflict_never_auto_rename_or_retry(self):
         conn=Connections(failure=409)
         with tempfile.TemporaryDirectory() as d:
