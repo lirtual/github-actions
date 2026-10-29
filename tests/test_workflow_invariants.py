@@ -206,6 +206,23 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("Remove-NetFirewallRule -Name SessionActionsTailscaleRDP", windows)
         self.assertIn("fDenyTSConnections -Value 1", windows)
 
+    def test_windows_ssh_fast_path_keeps_missing_capability_fallback(self):
+        ssh = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("Test-Path -LiteralPath $Sshd -PathType Leaf", ssh)
+        self.assertIn("Get-Service sshd -ErrorAction SilentlyContinue", ssh)
+        self.assertIn("Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'", ssh)
+        self.assertIn("Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'", ssh)
+        self.assertIn("OpenSSH Server installation incomplete", ssh)
+        self.assertLess(
+            ssh.index("Get-Service sshd -ErrorAction SilentlyContinue"),
+            ssh.index("Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'"),
+        )
+        self.assertLess(ssh.index("$Sshd -t"), ssh.index("$Sshd -T"))
+        self.assertIn("passwordauthentication yes", ssh)
+        self.assertIn("listenaddress ", ssh)
+        self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH'", ssh)
+        self.assertIn("Start-Service sshd -ErrorAction Stop", ssh)
+
     def test_windows_ssh_startup_profiler_does_not_disclose_secrets(self):
         ssh = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
         self.assertIn("Windows SSH local password policy:", ssh)

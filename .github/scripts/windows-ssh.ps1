@@ -68,9 +68,23 @@ if ($TailnetIPv4.Count -ne 1) { throw 'Expected one Tailnet IPv4 address' }
 $TailnetAddress = $TailnetIPv4[0].IPAddress
 
 $SshCapabilityStart = $StartupWatch.Elapsed
-$Capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
-if ($Capability.State -ne 'Installed') {
-    Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
+$Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
+# On a fresh GitHub-hosted Runner an installed OpenSSH binary + sshd service
+# are sufficient. Avoid the slow DISM capability query on this fast path.
+# An incomplete installation still uses the original provisioning route.
+if (-not ((Test-Path -LiteralPath $Sshd -PathType Leaf) -and
+        (Get-Service sshd -ErrorAction SilentlyContinue))) {
+    $Capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
+    if (-not $Capability -or $Capability.State -notin @('Installed', 'NotPresent')) {
+        throw 'OpenSSH Server capability unavailable'
+    }
+    if ($Capability.State -ne 'Installed') {
+        Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $Sshd -PathType Leaf) -or
+        -not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+        throw 'OpenSSH Server installation incomplete'
+    }
 }
 Write-Output ('Windows SSH capability availability: {0:N1}s' -f ($StartupWatch.Elapsed - $SshCapabilityStart).TotalSeconds)
 $ServiceStart = $StartupWatch.Elapsed
@@ -85,7 +99,6 @@ $Guard = 'PasswordAuthentication yes' + [Environment]::NewLine +
     ('AllowUsers ' + $Username.ToLowerInvariant()) + [Environment]::NewLine +
     ('ListenAddress ' + $TailnetAddress) + [Environment]::NewLine
 [IO.File]::WriteAllText($Config, $Guard + $Baseline, [Text.UTF8Encoding]::new($false))
-$Sshd = Join-Path $env:WINDIR 'System32\OpenSSH\sshd.exe'
 & $Sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'OpenSSH config test failed' }
 $EffectiveConfig = & $Sshd -T
