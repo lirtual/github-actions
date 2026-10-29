@@ -315,6 +315,11 @@ jobs:
             (Resolve-Path '.github/scripts/windows-rdp.ps1').Path,
             [ref]$tokens, [ref]$errorsFound) | Out-Null
           if ($errorsFound.Count -ne 0) { throw 'Invalid Windows RDP configuration script' }
+          $errorsFound = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/scripts/windows-uu.ps1').Path,
+            [ref]$tokens, [ref]$errorsFound) | Out-Null
+          if ($errorsFound.Count -ne 0) { throw 'Invalid Windows UU Lite readiness script' }
           if (-not (Get-Service TermService -ErrorAction SilentlyContinue)) {
             throw 'Windows Remote Desktop Services unavailable'
           }

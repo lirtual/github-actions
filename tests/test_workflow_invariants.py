@@ -249,6 +249,27 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("Write-Output $ShareUrl", script)
         self.assertNotIn("Write-Host $ShareUrl", script)
 
+    def test_first_round_service_startup_optimizations_preserve_security(self):
+        chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
+        uu = (ROOT / ".github/scripts/windows-uu.ps1").read_text(encoding="utf-8")
+        self.assertIn('docker image inspect "$image"', chrome)
+        self.assertIn('docker pull "$image"', chrome)
+        self.assertIn("Chrome pinned image acquisition:", chrome)
+        self.assertIn("Chrome GUI and local HTTP readiness:", chrome)
+        self.assertIn("Chrome total local startup:", chrome)
+        self.assertIn('127.0.0.1:3000:3000', chrome)
+        self.assertIn('if [[ "$status" == 200 ]]', chrome)
+        self.assertIn("Get-AuthenticodeSignature", uu)
+        self.assertNotIn("Start-Sleep -Seconds 20", uu)
+        self.assertIn("AddSeconds(30)", uu)
+        self.assertIn("$Refresh -or [DateTime]::UtcNow -ge $ProbeDeadline", uu)
+        self.assertIn("if ($Pairs.Count -eq 1) { break }", uu)
+        self.assertIn("Start-Sleep -Seconds 1", uu)
+        self.assertIn("Start-Sleep -Seconds 2", uu)
+        self.assertIn("UU Lite UI credentials ready after", uu)
+        self.assertIn("GetCurrentPattern(", uu)
+        self.assertIn("$IdAgain -cne $Pairs[0].Id.Value", uu)
+
     def test_ubuntu_uses_existing_runner_user_and_real_password_ssh(self):
         workflow = (ROOT / ".github/workflows/ubuntu.yml").read_text()
         script = (ROOT / ".github/scripts/ubuntu-ssh.sh").read_text()

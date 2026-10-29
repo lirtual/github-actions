@@ -3,19 +3,27 @@ set -euo pipefail
 # The Chrome GUI is bound to loopback; the OTP-protected Quick Tunnel is
 # its only externally accessible authentication boundary.
 # Reuse the original tsvc web-accessible Chrome image, pinned by immutable digest.
+startup_started=$SECONDS
 mkdir -p "$RUNNER_TEMP/chrome-config"
 image='lscr.io/linuxserver/chrome@sha256:49a019a04b8d38422609d3c586636293417f61886704d516b7d5233cb4bd0b12'
-# The upstream registry may briefly rate-limit anonymous GitHub Runners.
-for attempt in 1 2 3; do
-  if docker pull "$image" > /dev/null 2>&1; then
-    break
-  fi
-  if [[ "$attempt" == 3 ]]; then
-    echo 'Pinned Chrome image could not be fetched' >&2
-    exit 1
-  fi
-  sleep 5
-done
+image_started=$SECONDS
+# Respect the digest-pinned local image; do not contact the registry if cached.
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  # The upstream registry may briefly rate-limit anonymous GitHub Runners.
+  for attempt in 1 2 3; do
+    if docker pull "$image" >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$attempt" == 3 ]]; then
+      echo 'Pinned Chrome image could not be fetched' >&2
+      exit 1
+    fi
+    sleep 5
+  done
+fi
+printf 'Chrome pinned image acquisition: %ds
+' "$((SECONDS - image_started))"
+gui_started=$SECONDS
 docker run --detach --rm --name session-chrome \
   --publish 127.0.0.1:3000:3000 \
   --shm-size 1g \
@@ -35,3 +43,7 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 test "$ready" = true
+printf 'Chrome GUI and local HTTP readiness: %ds
+' "$((SECONDS - gui_started))"
+printf 'Chrome total local startup: %ds
+' "$((SECONDS - startup_started))"

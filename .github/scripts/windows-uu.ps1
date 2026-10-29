@@ -29,17 +29,12 @@ try {
             $Signature.SignerCertificate.Subject -notlike '*NetEase (Hangzhou) Network Co., Ltd*') {
             throw 'UU Lite publisher signature invalid'
         }
+        $UiStartupWatch = [Diagnostics.Stopwatch]::StartNew()
         Start-Process -FilePath $Binary | Out-Null
-        Start-Sleep -Seconds 20
     }
     $SessionId = (Get-Process -Id $PID).SessionId
-    $Failure = 'process_missing'
-    $Processes = @(Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
-        Where-Object { $_.SessionId -eq $SessionId })
-    if ($Processes.Count -eq 0) { throw 'UU Lite process missing' }
-
-    # Process.MainWindowHandle is zero for tray-hidden windows. Enumerate actual
-    # top-level handles owned by the approved UU processes in this Session.
+    # Process.MainWindowHandle can be zero for tray-hidden windows; enumerate
+    # top-level windows owned by approved UU processes in this desktop Session.
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -62,78 +57,92 @@ public static class UULiteWindows {
     }
 }
 '@ -ErrorAction Stop
-    $Failure = 'window_unavailable'
-    $Handles = [UULiteWindows]::ForPids([int[]]@($Processes | ForEach-Object Id))
-    if ($Handles.Count -eq 0) { throw 'UU Lite top-level window missing' }
-
     Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes -ErrorAction Stop
-    $Failure = 'code_unavailable'
-    $Pairs = @()
-    foreach ($Handle in $Handles) {
-        try {
-            $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
-            if (-not $Root) { continue }
-            $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                [System.Windows.Automation.Condition]::TrueCondition)
-            $IdLabel = $false
-            $CodeLabel = $false
-            $Ids = @()
-            $Codes = @()
-            $ShareButtons = @()
-            $AllButtons = @()
-            foreach ($Item in $Items) {
-                $Name = [string]$Item.Current.Name
-                if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
-                if ($Name -match '验证码|verification code') { $CodeLabel = $true }
-                if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
-                    $AllButtons += $Item
-                }
-                if ($Name.Trim() -match '^(复制并分享|Copy( and)? Share)$') {
-                    if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
-                        $ShareButtons += $Item
-                    }
-                }
-                if ($Item.Current.ControlType.ProgrammaticName -ne 'ControlType.Text') { continue }
-                $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
-                if ($Normalized -match '^[0-9]{9}$') {
-                    $Ids += @{ Element = $Item; Value = $Normalized }
-                }
-                if ($Normalized -match '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
-                    $Codes += @{ Element = $Item; Value = $Normalized }
-                }
-            }
-            if ($IdLabel -and $CodeLabel -and $Ids.Count -eq 1 -and $Codes.Count -eq 1) {
-                # Some UU Lite builds expose two unnamed native Buttons.
-                # Identify only the unique button aligned to the verified code
-                # on its right, not an arbitrary screen coordinate or label.
-                if ($ShareButtons.Count -eq 0 -and $AllButtons.Count -eq 2) {
-                    $CodeBox = $Codes[0].Element.Current.BoundingRectangle
-                    if ($CodeBox.Width -gt 40 -and $CodeBox.Height -gt 10) {
-                        $Adjacent = @(
-                            foreach ($Button in $AllButtons) {
-                                $Box = $Button.Current.BoundingRectangle
-                                $DistanceY = [Math]::Abs(
-                                    ($Box.Top + $Box.Bottom) / 2 -
-                                    ($CodeBox.Top + $CodeBox.Bottom) / 2)
-                                if ($Button.Current.IsEnabled -and
-                                    $Box.Left -ge $CodeBox.Right -and
-                                    $Box.Width -ge 60 -and $Box.Width -le 250 -and
-                                    $Box.Height -ge 18 -and $Box.Height -le 70 -and
-                                    $DistanceY -le 45) { $Button }
+    # Poll the actual UU UI for unique ID/code controls instead of sleeping
+    # a fixed 20 seconds. The refresh path performs one immediate scan.
+    $ProbeDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $Failure = 'process_missing'
+        $Processes = @(Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
+            Where-Object { $_.SessionId -eq $SessionId })
+        $Pairs = @()
+        if ($Processes.Count -gt 0) {
+            $Failure = 'window_unavailable'
+            $Handles = [UULiteWindows]::ForPids([int[]]@($Processes | ForEach-Object Id))
+            if ($Handles.Count -gt 0) {
+                $Failure = 'code_unavailable'
+                foreach ($Handle in $Handles) {
+                    try {
+                        $Root = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+                        if (-not $Root) { continue }
+                        $Items = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                            [System.Windows.Automation.Condition]::TrueCondition)
+                        $IdLabel = $false
+                        $CodeLabel = $false
+                        $Ids = @()
+                        $Codes = @()
+                        $ShareButtons = @()
+                        $AllButtons = @()
+                        foreach ($Item in $Items) {
+                            $Name = [string]$Item.Current.Name
+                            if ($Name -match '(?i)设备.{0,3}(ID|编号)|device.{0,3}id') { $IdLabel = $true }
+                            if ($Name -match '验证码|verification code') { $CodeLabel = $true }
+                            if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
+                                $AllButtons += $Item
                             }
-                        )
-                        if ($Adjacent.Count -eq 1) { $ShareButtons = @($Adjacent[0]) }
+                            if ($Name.Trim() -match '^(复制并分享|Copy( and)? Share)$') {
+                                if ($Item.Current.ControlType.ProgrammaticName -eq 'ControlType.Button') {
+                                    $ShareButtons += $Item
+                                }
+                            }
+                            if ($Item.Current.ControlType.ProgrammaticName -ne 'ControlType.Text') { continue }
+                            $Normalized = [regex]::Replace($Name.Trim(), '[\s\-–—]', '')
+                            if ($Normalized -match '^[0-9]{9}$') {
+                                $Ids += @{ Element = $Item; Value = $Normalized }
+                            }
+                            if ($Normalized -match '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
+                                $Codes += @{ Element = $Item; Value = $Normalized }
+                            }
+                        }
+                        if ($IdLabel -and $CodeLabel -and $Ids.Count -eq 1 -and $Codes.Count -eq 1) {
+                            # Some UU Lite builds expose two unnamed native Buttons.
+                            # Identify only the unique button aligned to the verified code
+                            # on its right, not an arbitrary screen coordinate or label.
+                            if ($ShareButtons.Count -eq 0 -and $AllButtons.Count -eq 2) {
+                                $CodeBox = $Codes[0].Element.Current.BoundingRectangle
+                                if ($CodeBox.Width -gt 40 -and $CodeBox.Height -gt 10) {
+                                    $Adjacent = @(
+                                        foreach ($Button in $AllButtons) {
+                                            $Box = $Button.Current.BoundingRectangle
+                                            $DistanceY = [Math]::Abs(
+                                                ($Box.Top + $Box.Bottom) / 2 -
+                                                ($CodeBox.Top + $CodeBox.Bottom) / 2)
+                                            if ($Button.Current.IsEnabled -and
+                                                $Box.Left -ge $CodeBox.Right -and
+                                                $Box.Width -ge 60 -and $Box.Width -le 250 -and
+                                                $Box.Height -ge 18 -and $Box.Height -le 70 -and
+                                                $DistanceY -le 45) { $Button }
+                                        }
+                                    )
+                                    if ($Adjacent.Count -eq 1) { $ShareButtons = @($Adjacent[0]) }
+                                }
+                            }
+                            $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons }
+                        }
+                    } catch {
+                        # A window may close or cease exposing UIA during a remote disconnect.
+                        # Never publish partial or inferred credentials.
+                        continue
                     }
                 }
-                $Pairs += @{ Id = $Ids[0]; Code = $Codes[0]; ShareButtons = $ShareButtons }
             }
-        } catch {
-            # A window may close or cease exposing UIA during a remote disconnect.
-            # Never publish partial or inferred credentials.
-            continue
         }
-    }
-    if ($Pairs.Count -ne 1) { throw 'UU Lite connection data not uniquely accessible' }
+        if ($Pairs.Count -eq 1) { break }
+        if ($Refresh -or [DateTime]::UtcNow -ge $ProbeDeadline) {
+            throw 'UU Lite connection data not uniquely accessible'
+        }
+        Start-Sleep -Seconds 1
+    } while ($true)
     Start-Sleep -Seconds 2
     $Failure = 'code_unstable'
     $IdAgain = [regex]::Replace(([string]$Pairs[0].Id.Element.Current.Name).Trim(), '[\s\-–—]', '')
@@ -243,6 +252,7 @@ public static class UULiteWindows {
     }
     $Ready = $true
     if (-not $Refresh) {
+        Write-Output ('UU Lite UI credentials ready after {0:N1}s' -f $UiStartupWatch.Elapsed.TotalSeconds)
         Write-Output 'UU Lite is running; short-lived credentials saved for private SSH access'
     }
 } finally {
