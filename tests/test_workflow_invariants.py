@@ -57,7 +57,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("          - repository", yml)
                 self.assertIn("        default: explicit", yml)
                 self.assertIn("        default: 300", yml)
-                self.assertIn("vars.SESSION_DEFAULT_DURATION_MINUTES || '300'", yml)
+                self.assertIn("vars.SESSION_DURATION_MINUTES || '300'", yml)
                 self.assertIn("inputs.duration_mode == 'repository'", yml)
                 self.assertIn("timeout-minutes: 360", yml)
 

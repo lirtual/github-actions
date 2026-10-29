@@ -51,7 +51,7 @@ jobs:
       CAPABILITY_ID: ${{ inputs.capability_id }}
       WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
       WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
-      DURATION_MINUTES: ${{ inputs.duration_mode == 'repository' && (vars.SESSION_DEFAULT_DURATION_MINUTES || '300') || inputs.duration_minutes }}
+      DURATION_MINUTES: ${{ inputs.duration_mode == 'repository' && (vars.SESSION_DURATION_MINUTES || '300') || inputs.duration_minutes }}
       SESSION_TAILSCALE_HOSTNAME: ${{ inputs.session_mode == 'fixed' && 'session-windows' || format('sa-{0}-a{1}', github.run_id, github.run_attempt) }}
     steps:
       - name: Capture job lifetime before checkout
