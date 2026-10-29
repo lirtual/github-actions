@@ -20,7 +20,7 @@ on:
         required: true
 
 # Unpublished draft of Spec #51's immutable GitHub Task.
-# Safe by construction: it does not launch aria2/OpenList, access Koofr,
+# Safe by construction: it does not launch aria2/rclone, access cloud storage,
 # connect to MySQL, download sources or emit signed success receipts.
 # It fails closed until provider atomicity, egress and final transfer closure
 # have independent real evidence and a separate production approval.
@@ -65,5 +65,5 @@ jobs:
       - name: Block unverified download and cloud writes
         shell: bash
         run: |
-          echo 'DOWNLOAD_UNAVAILABLE: real Koofr no-clobber, isolated downloader, and complete transfer E2E not yet proven' >&2
+          echo 'DOWNLOAD_UNAVAILABLE: qualified rclone remote, atomic no-clobber, isolation and E2E not yet proven' >&2
           exit 1

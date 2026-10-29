@@ -51,8 +51,8 @@ class DownloadWorkflowTests(unittest.TestCase):
         self.assertEqual("set -euo pipefail\npython3 .github/scripts/download_batch.py",
                          commands(validate))
         self.assertEqual(
-            "echo 'DOWNLOAD_UNAVAILABLE: real Koofr no-clobber, isolated downloader, "
-            "and complete transfer E2E not yet proven' >&2\nexit 1",
+            "echo 'DOWNLOAD_UNAVAILABLE: qualified rclone remote, atomic no-clobber, "
+            "isolation and E2E not yet proven' >&2\nexit 1",
             commands(deny))
         self.assertIn("WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}", claim)
         self.assertIn("WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}", claim)
@@ -85,7 +85,7 @@ class DownloadWorkflowTests(unittest.TestCase):
         unsafe = validate.replace(
             "          python3 .github/scripts/download_batch.py",
             "          python3 .github/scripts/download_batch.py\n"
-            "          python3 .github/scripts/download_finish.py")
+            "          rclone copy /tmp/source unapproved:target")
         self.assertNotEqual(
             "set -euo pipefail\npython3 .github/scripts/download_batch.py",
             commands(unsafe))

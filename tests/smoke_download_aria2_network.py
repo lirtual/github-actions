@@ -24,7 +24,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 sys.path.insert(0, "/spec51")
 from download_aria2_readonly import Aria2Reader
 from download_source import verify_snapshot, verify_http_source_uris
-from download_stage import stage_from_reader, StageUnverified
+from download_batch import validate
 
 repo_url = os.environ.get("PUBLIC_FIXTURE_URL", "")
 expected = os.environ.get("PUBLIC_FIXTURE_SHA256", "")
@@ -136,57 +136,31 @@ with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
                     manifest["files"][0]["sha256"] != digest):
                 raise AssertionError("PUBLIC_FIXTURE_INTEGRITY_FAILED")
 
+        # The approved NEW contract uses one remote and relative directories.
+        # This remains a download-only smoke; it never qualifies any remote.
         batch = {
+            "remote": "ci-only-unqualified",
             "downloads": [
-                {"url": fixtures[i][0], "destination_path": f"/Koofr/spec51-ci-{i}"}
+                {"url": fixtures[i][0], "destination_dir": f"spec51-ci-{i}"}
                 for i in range(2)
             ],
-            "project_purpose": "CI-only test of associated repository download stage",
+            "project_purpose": "CI-only test of associated repository public artifacts",
             "duration_minutes": 1,
         }
-        batch_json = json.dumps(batch, separators=(",", ":"))
-        allocations = [{"gid": gid, "root": root, "url": fixtures[i][0]}
-                       for i, (gid, root) in enumerate(zip(gids, roots))]
-        # Fake OpenList mount: synthetic credentials and no provider connection.
-        # stage_from_reader returns in-memory intents, never makes uploads.
-        storages = [{
-            "mount_path": "/Koofr", "driver": "WebDav", "disabled": False,
-            "status": "work",
-            "addition": json.dumps({
-                "address": "https://app.koofr.net/dav/Koofr",
-                "username": "ci-only@example.invalid",
-                "password": "synthetic-ci-never-transmitted",
-                "root_folder_path": "/", "vendor": "other",
-                "tls_insecure_skip_verify": False,
-            }),
-        }]
-
-        class CapturedReader:
-            def __init__(self, evidence):
-                self.evidence = evidence
-            def read_closed(self, requested):
-                if requested != gids:
-                    raise AssertionError("SOURCE_ORDER_MISMATCH")
-                return self.evidence
-
-        intents = stage_from_reader(batch_json, allocations, storages,
-                                    CapturedReader(snapshot))
-        if (len(intents) != 2 or
-                {i["destination_parent"] for i in intents} !=
-                {"/spec51-ci-0", "/spec51-ci-1"} or
-                [i["sha256"] for i in intents] != [expected, expected_2]):
-            raise AssertionError("MULTI_SOURCE_STAGING_INTEGRITY_FAILED")
-        # One compromised source must invalidate the WHOLE batch pre-upload.
+        approved = validate(json.dumps(batch, separators=(",", ":")))
+        if len(approved["downloads"]) != 2 or approved["remote"] != "ci-only-unqualified":
+            raise AssertionError("MULTI_SOURCE_BATCH_INVALID")
+        # Tampering with even one completed GID must invalidate provenance.
         changed = json.loads(json.dumps(snapshot))
         changed["sources"][1]["files"][0]["uris"][0]["uri"] = "https://unexpected.invalid/file"
+        from download_source import SourceUnverified
         try:
-            stage_from_reader(batch_json, allocations, storages,
-                              CapturedReader(changed))
-        except StageUnverified:
+            verify_http_source_uris(changed["sources"][1]["files"], fixtures[1][0])
+        except SourceUnverified:
             pass
         else:
             raise AssertionError("MULTI_SOURCE_MISMATCH_NOT_REJECTED")
-        print("REAL_ARIA2_TWO_SOURCE_BATCH_STAGE_NO_UPLOAD_OK")
+        print("REAL_ARIA2_TWO_SOURCE_PROVENANCE_VERIFIED_NO_UPLOAD_OK")
         # Separate CI-only proof of ACTUAL overlapping network activity.
         # Two loopback HTTP responses are deliberately held until both
         # independent source GIDs are simultaneously active. Without

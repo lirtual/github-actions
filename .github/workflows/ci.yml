@@ -268,7 +268,7 @@ jobs:
 
   smoke-download-network-isolation:
     # Synthetic-only network proof on disposable GitHub-hosted Ubuntu.
-    # No user URLs, AWS credentials, OpenList DB, OIDC or actual downloader.
+    # No user URLs, cloud credentials, OIDC or user download jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

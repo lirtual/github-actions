@@ -3,14 +3,14 @@
 
 This can prove what regular files were observed locally, including nested
 directories. It does NOT prove aria2/OpenList source or child task ownership,
-destination creation, or that the remote Koofr service enforces no-clobber.
+remote destination creation or server-side atomic no-overwrite.
 Never print or serialize the returned paths to GitHub logs.
 """
 import hashlib
 import os
 import stat
 
-from download_koofr import KoofrUnsupported, _safe_parts
+from download_batch import InvalidBatch, _destination
 
 READ_BLOCK = 1024 * 1024
 
@@ -21,8 +21,8 @@ class TreeUnverified(Exception):
 
 def _safe_component(name):
     try:
-        _safe_parts("/" + name)
-    except (KoofrUnsupported, ValueError, TypeError):
+        _destination(name)
+    except (InvalidBatch, ValueError, TypeError):
         raise TreeUnverified("TREE_UNVERIFIED") from None
     return name
 
@@ -87,8 +87,8 @@ def census_tree(root):
             observed = os.fstat(folder_fd)
             with os.scandir(folder_fd) as scanner:
                 names = [entry.name for entry in scanner]
-            # Empty directories are not yet supported by the unwired Koofr
-            # file-only uploader. Never silently drop them from tree proof.
+            # File-only Task cannot verify or preserve empty subdirectories.
+            # Never silently discard these entries from the proof.
             if relative and not names:
                 raise TreeUnverified("TREE_UNVERIFIED")
             if len(names) != len(set(names)) or len(names) != len(

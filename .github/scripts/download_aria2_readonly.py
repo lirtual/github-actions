@@ -2,7 +2,7 @@
 """Read-only, loopback-exclusive aria2 JSON-RPC snapshot for Spec #51.
 
 Only six fixed read-only query methods are allowed. Does not start/stop/download tasks,
-create sockets to public hosts, access Koofr, or print credentials or URL data.
+create sockets to public hosts, access cloud storage, or print credentials or URL data.
 
 The caller must still prove it owns a fresh isolated aria2 process and has
 quiesced all source submissions before trusting any snapshots.
