@@ -331,12 +331,12 @@ class SessionProtocolTests(unittest.TestCase):
         import time
         with tempfile.TemporaryDirectory() as root:
             (Path(root) / "session-action-start").write_text(str(int(time.time())), encoding="ascii")
-            for duration in ("0", "331", "-2", "1.5", "five", "", " 300", "00331"):
+            for duration in ("0", "301", "-2", "1.5", "five", "", " 300", "00301"):
                 with self.subTest(duration=duration), mock.patch.dict(
                     os.environ, {"RUNNER_TEMP": root, "DURATION_MINUTES": duration}, clear=True
                 ), self.assertRaises(ValueError):
                     session.start()
-            for duration in ("1", "300", "330"):
+            for duration in ("1", "299", "300"):
                 with self.subTest(duration=duration), mock.patch.dict(
                     os.environ, {"RUNNER_TEMP": root, "DURATION_MINUTES": duration}, clear=True
                 ):
@@ -346,7 +346,7 @@ class SessionProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             started = Path(root) / "session-action-start"
             started.write_text("1000", encoding="ascii")
-            for duration in ["0", "331", "-3", "1e3", "abc", ""]:
+            for duration in ["0", "301", "-3", "1e3", "abc", ""]:
                 env = {"RUNNER_TEMP": root, "DURATION_MINUTES": duration}
                 with mock.patch.dict(os.environ, env, clear=True):
                     with self.subTest(duration=duration), self.assertRaises(ValueError):
@@ -400,8 +400,8 @@ class SessionProtocolTests(unittest.TestCase):
                     session.start()
                     session.start()  # Retry validates, never resets the timestamp.
                     self.assertEqual(marker.read_text(), "1200")
-                    with mock.patch.object(session.time, "time", return_value=1200 + 330 * 60 + 1):
-                        with mock.patch.dict(os.environ, {"DURATION_MINUTES": "330"}, clear=False):
+                    with mock.patch.object(session.time, "time", return_value=1200 + 300 * 60 + 1):
+                        with mock.patch.dict(os.environ, {"DURATION_MINUTES": "300"}, clear=False):
                             with mock.patch.object(session.time, "sleep") as sleeper:
                                 session.hold()
                                 sleeper.assert_not_called()

@@ -15,7 +15,7 @@ on:
         type: string
         required: true
       duration_minutes:
-        description: Session lifetime (1-330 minutes)
+        description: Session lifetime (1-300 minutes)
         type: number
         default: 300
         required: false
