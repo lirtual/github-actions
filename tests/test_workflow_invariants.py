@@ -447,6 +447,17 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn('result.get("code") == 200', startup)
         self.assertIn('get("token")', startup)
         self.assertIn('OpenList admin login verification failed', startup)
+        # The upstream admin set command bootstraps the DB itself; avoid a redundant
+        # full OpenList initialization while preserving login verification.
+        self.assertEqual(startup.count('./openlist admin set'), 1)
+        self.assertNotIn('./openlist admin >/dev/null', startup)
+        self.assertIn('OpenList total local startup:', startup)
+        self.assertIn('OpenList config and MySQL preflight:', startup)
+        self.assertIn('OpenList pinned image acquisition:', startup)
+        self.assertIn('docker image inspect "$image"', startup)
+        self.assertIn('docker pull --quiet "$image"', startup)
+        self.assertIn('OpenList admin CLI initialization:', startup)
+        self.assertIn('OpenList service and admin login:', startup)
         self.assertNotIn('print(password)', startup)
         self.assertNotIn('print(result)', startup)
         self.assertNotIn('print(payload)', startup)

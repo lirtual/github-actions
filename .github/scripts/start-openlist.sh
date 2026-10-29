@@ -9,6 +9,7 @@ if [[ -z "${SESSION_SERVICE_PASSWORD:-}" ||
 fi
 # No local SQLite fallback: OpenList requires an approved external MySQL URI.
 umask 077
+startup_started=$SECONDS
 mkdir -p "$RUNNER_TEMP/openlist-data"
 python3 .github/scripts/openlist-db-config.py "$RUNNER_TEMP/openlist-data/config.json"
 # Read-only schema guard before OpenList CLI can create tables or reset admin.
@@ -74,6 +75,7 @@ except (OSError, ValueError, KeyError, IndexError, TypeError,
     sys.exit(1)
 print("OpenList MySQL read-only preflight passed")
 PY
+printf 'OpenList config and MySQL preflight: %ds\n' "$((SECONDS - startup_started))"
 unset OPENLIST_DATABASE_URI OPENLIST_DATABASE_CA
 export OPENLIST_ADMIN_PASSWORD="$SESSION_SERVICE_PASSWORD"
 unset SESSION_SERVICE_PASSWORD
@@ -81,17 +83,30 @@ unset SESSION_SERVICE_PASSWORD
 # Pin the same OpenList runtime image for initialization and service.
 image='openlistteam/openlist@sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64'
 mount="type=bind,source=$RUNNER_TEMP/openlist-data,target=/opt/openlist/data"
-# Ensure persistent MySQL can be reached and set the native admin password.
-# Suppress all CLI diagnostic output: driver connection errors may embed credentials.
+# Explicit acquisition separates image cold-pull time from database bootstrap.
+# Reuse an already cached, digest-pinned image without a registry round trip.
+image_started=$SECONDS
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  if ! docker pull --quiet "$image" >/dev/null 2>&1; then
+    echo 'OpenList pinned image unavailable' >&2
+    exit 1
+  fi
+fi
+printf 'OpenList pinned image acquisition: %ds\n' "$((SECONDS - image_started))"
+admin_started=$SECONDS
+# One native CLI initialization is sufficient for both fresh and existing MySQL schemas.
+# Suppress CLI diagnostic output: driver connection errors may embed credentials.
 if ! docker run --rm --user "$(id -u):$(id -g)" \
     --mount "$mount" --env OPENLIST_ADMIN_PASSWORD \
     --env 'SSL_CERT_FILE=/opt/openlist/data/database-ca.pem' \
     --entrypoint /bin/sh "$image" -c \
-    './openlist admin >/dev/null 2>&1 && ./openlist admin set "$OPENLIST_ADMIN_PASSWORD" >/dev/null 2>&1' \
+    './openlist admin set "$OPENLIST_ADMIN_PASSWORD" >/dev/null 2>&1' \
     >/dev/null 2>&1; then
   echo 'OpenList external MySQL initialization failed' >&2
   exit 1
 fi
+printf 'OpenList admin CLI initialization: %ds\n' "$((SECONDS - admin_started))"
+service_started=$SECONDS
 
 docker run --detach --rm --name session-openlist \
   --user "$(id -u):$(id -g)" \
@@ -138,3 +153,5 @@ for attempt in range(10):
 else:
     raise SystemExit("OpenList admin login verification failed")
 PY
+printf 'OpenList service and admin login: %ds\n' "$((SECONDS - service_started))"
+printf 'OpenList total local startup: %ds\n' "$((SECONDS - startup_started))"
