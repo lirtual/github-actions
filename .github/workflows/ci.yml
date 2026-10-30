@@ -331,6 +331,7 @@ jobs:
           net="sa51-11111111"
           # Inspect the installed kernel firewall rules, not only source text.
           chain=SA51F11111111
+          sudo -n iptables -C "$chain" -d 168.63.129.16/32 -j REJECT
           sudo -n iptables -C "$chain" -d 1.1.1.1/32 -p udp --dport 53 -j RETURN
           sudo -n iptables -C "$chain" -d 1.1.1.1/32 -p tcp --dport 53 -j RETURN
           sudo -n iptables -C "$chain" -p tcp -m multiport --dports 80,443 -j RETURN
@@ -362,6 +363,7 @@ jobs:
           import os,socket
           gateway=os.environ['HOST_GATEWAY']
           for host,port in [(gateway,18081),('169.254.169.254',80),
+                            ('168.63.129.16',80),
                             ('127.0.0.1',18081),('10.0.0.1',80),
                             ('100.64.0.1',80),('192.168.1.1',80)]:
               try:
