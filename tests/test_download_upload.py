@@ -147,10 +147,10 @@ class UploadFailureSummaryTests(unittest.TestCase):
     def test_unknown_second_write_preserves_confirmed_and_attempted_counts(self):
         import download_upload
         env = {"BATCH_JSON": BATCH,
-               "DOWNLOAD_SOURCES_DIR": "/tmp/spec51-test-sources",
+               "DOWNLOAD_SOURCES_DIR": str(Path.cwd()),
                "DOWNLOAD_TASK_ROOT": "downloads/run-1001-1-" + "f"*32,
                "DOWNLOAD_REMOTE_NAME": "local-test",
-               "DOWNLOAD_RCLONE_CONFIG": "/tmp/spec51-test-config",
+               "DOWNLOAD_RCLONE_CONFIG": str(Path.cwd() / "spec51-test-config"),
                "DOWNLOAD_DEADLINE": str(time.monotonic() + 45)}
         log = io.StringIO()
         with patch.dict(os.environ, env):
