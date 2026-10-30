@@ -67,7 +67,9 @@ class DownloadWorkflowTests(unittest.TestCase):
                       self.execute)
         self.assertIn("DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}",
                       self.execute)
-        self.assertIn("BATCH_JSON: ${{ inputs.batch_json }}", self.execute)
+        self.assertNotIn("BATCH_JSON: ${{ inputs.batch_json }}", YAML)
+        self.assertIn("python3 .github/scripts/download_batch.py", self.validate)
+        self.assertIn("download-runner.sh", self.execute)
         self.assertIn("DOWNLOAD_TASK_ROOT: ${{ steps.task_destination.outputs.task_root }}",
                       self.execute)
         self.assertIn("ATTEMPT_ID: ${{ inputs.attempt_id }}", self.execute)
