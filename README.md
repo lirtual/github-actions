@@ -19,17 +19,17 @@ Live `workflow_dispatch` requires the workflow definition on GitHub's **default 
 
 ## Download Task (Spec #51)
 
-The bounded `.github/workflows/download.yml` Task uses aria2 and a fixed rclone Remote for repository-related public HTTP(S) artifacts. It requires a separately approved, immutable Workflow MCP plan; discovery and CI success alone do not enable production downloads.
+The bounded `.github/workflows/download.yml` Task uses aria2 and a fixed rclone Remote for repository-related public HTTP(S) artifacts. The Owner-approved production `download` Workflow is **active** for authenticated manual Runs only (no Cron/Webhook), pinned to immutable `v0.1.42-rc.5` / `c63c213d390cedb99be510bf6882eeb5ffd04edd`. Discovery and CI success alone never authorize direct Task dispatch; each execution still requires a valid Workflow MCP OIDC Claim.
 
-Configure these settings on the existing GitHub **Environment `download`** before publishing any new Task candidate:
+The existing GitHub **Environment `download`** uses these settings (verify them before any future storage change):
 
 - **Secret `DOWNLOAD_RCLONE_CONFIG_B64`**: Base64-encoded `rclone.conf`; never print the plaintext configuration or commit it.
-- **Variable `DOWNLOAD_REMOTE_NAME`**: the single approved rclone Remote name (for example `koofr`).
-- **Variable `DOWNLOAD_REMOTE_BASE_DIR`**: an **explicit, already existing** relative directory inside that Remote (for example `downloads` or `Projects/Artifacts`). Missing, invalid, differently cased or nonexistent directories are rejected; there is no implicit fallback to the cloud root.
+- **Variable `DOWNLOAD_REMOTE_NAME`**: the single approved rclone Remote name; currently `koofr`.
+- **Variable `DOWNLOAD_REMOTE_BASE_DIR`**: an **explicit, already existing** relative directory inside that Remote; currently case-sensitive `Downloads`. Missing, invalid, differently cased or nonexistent directories are rejected; there is no implicit fallback to the cloud root.
 
 The Owner controls the base directory; the caller may only provide a validated per-download relative `destination_dir` and must use the fixed Remote. Every physical GitHub Run/Attempt allocates a fresh unpredictable `<base>/run-<run-id>-<attempt>-<random>/` directory. The Task does not target existing files, retry uncertain writes or delete cloud objects on failure. Its preflight checks are not a cloud-provider atomic create-only guarantee.
 
-Changing `DOWNLOAD_REMOTE_BASE_DIR` affects only future physical Tasks. Until this change has passed the normal PR, immutable-tag and separately approved physical Koofr acceptance gates, existing `rc.4` continues to use the old `downloads/` root and no formal production download Workflow is active.
+As of 2026-10-30, Q38 is implemented and the pinned `rc.5` candidate completed real Koofr Workflow→GitHub→remote SHA-256 readback (2/2 files; [physical Run #41019094536](https://github.com/lirtual/session-actions/actions/runs/41019094536)). The dedicated test Workflow remains paused. The production Workflow accepts a single-element `download_batches` array containing one JSON `batch_json` string (that batch may hold multiple public HTTP(S) URLs); use a unique `idempotency_key` for each manual Run. Changes to the Owner-controlled Remote or base affect future Tasks and require an appropriately scoped revalidation; they do not change the pinned code revision. The Owner-accepted Q13 public-HTTPS egress boundary and Q15 non-atomic cloud race remain; live mid-upload fault injection was **Waived / Not performed**, and the Q34 signed success receipt remains **Optional / Not implemented** (`result=null`).
 
 ## Five native Session Actions
 

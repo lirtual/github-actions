@@ -2,8 +2,8 @@
 """Bounded, side-effect-free Spec #51 HTTP(S) batch syntax validator.
 
 Syntax is NOT network authorization, remote qualification, or permission to
-perform uploads. The immutable Task must remain disabled until its full gates
-(including Task root isolation and real remote readback) are satisfied.
+perform uploads. Production still requires approved OIDC Claim, restricted
+runtime egress, isolated Task root and independent remote readback.
 """
 import ipaddress
 import json

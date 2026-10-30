@@ -19,7 +19,8 @@ on:
         type: string
         required: true
 
-# Controlled candidate on main; formal production admission remains Owner-gated.
+# Production admission is managed by the Owner-approved Workflow MCP plan.
+# A direct dispatch without its OIDC Claim must fail before any download.
 # Fixed Environment secret is referenced only by the execution step AFTER
 # successful OIDC Claim, validated batch and single Task-owned namespace.
 # No create-only/atomic guarantee against competing cloud writers.

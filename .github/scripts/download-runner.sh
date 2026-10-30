@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spec #51: source network isolation + separate authorized rclone upload.
 # Called only AFTER verified GitHub OIDC Claim and bounded input validation.
-# Formal production admission remains Owner-gated; controlled E2E is supported.
+# Production admission is controlled by the Owner-approved Workflow MCP plan.
 set -euo pipefail
 umask 077
 
