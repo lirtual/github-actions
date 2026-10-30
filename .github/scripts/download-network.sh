@@ -91,7 +91,11 @@ done
 # Both containers require DNS and public HTTP(S) only. Deny arbitrary UDP,
 # non-web TCP ports, and other protocols even when the destination is public.
 # This is a protocol boundary, NOT a provider-host allowlist for rclone.
-sudo -n iptables -A "$forward" -p udp --dport 53 -j RETURN
+# Both payload containers use the same explicitly configured resolver.
+# Denying alternative public DNS ports prevents accidental resolver drift; it
+# does not prevent DoH over HTTPS and is not an FQDN egress allowlist.
+sudo -n iptables -A "$forward" -d 1.1.1.1/32 -p udp --dport 53 -j RETURN
+sudo -n iptables -A "$forward" -d 1.1.1.1/32 -p tcp --dport 53 -j RETURN
 sudo -n iptables -A "$forward" -p tcp -m multiport --dports 80,443 -j RETURN
 sudo -n iptables -A "$forward" -j REJECT
 sudo -n iptables -N "$input"
