@@ -20,6 +20,11 @@ on:
         required: true
         options: [success, failure]
         default: success
+      hold_seconds:
+        description: Optional bounded hold after signed Claim (0-120 seconds)
+        type: number
+        required: false
+        default: 0
 
 # An explicitly approved Task; this is not a general command runner.
 env:
@@ -148,6 +153,20 @@ jobs:
               sys.exit("GitHub Action Claim " + phase + " " + type(failure).__name__)
           print("GitHub physical Run ownership verified")
           PY
+
+      - name: Hold bounded Task after signed Claim
+        shell: bash
+        env:
+          HOLD_SECONDS: ${{ inputs.hold_seconds }}
+        run: |
+          if [[ ! "$HOLD_SECONDS" =~ ^(0|[1-9][0-9]?|1[01][0-9]|120)$ ]]; then
+            echo "hold_seconds must be an integer from 0 to 120" >&2
+            exit 1
+          fi
+          if [ "$HOLD_SECONDS" -gt 0 ]; then
+            echo "Holding after signed Claim for bounded cancellation verification"
+            sleep "$HOLD_SECONDS"
+          fi
 
       - name: Execute bounded verification Task
         shell: bash
