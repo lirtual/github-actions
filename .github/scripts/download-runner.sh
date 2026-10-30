@@ -16,19 +16,14 @@ fi
 export BATCH_JSON
 [[ ${ATTEMPT_ID:-} =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || deny
 [[ -n ${BATCH_JSON:-} && -n ${DOWNLOAD_REMOTE_NAME:-} && -n ${DOWNLOAD_RCLONE_CONFIG_B64:-} ]] || deny
-[[ -n ${DOWNLOAD_REMOTE_BASE_DIR:-} && -n ${DOWNLOAD_TASK_ROOT:-} ]] || deny
+[[ -n ${DOWNLOAD_REMOTE_BASE_DIR:-} ]] || deny
 [[ ${GITHUB_RUN_ID:-} =~ ^[1-9][0-9]{0,19}$ && ${GITHUB_RUN_ATTEMPT:-} =~ ^[1-9][0-9]{0,19}$ ]] || deny
-# Check the entire root against the explicitly configured base and physical
-# GitHub Run/Attempt; never trust either a caller-selected parent or suffix.
-PYTHONPATH="$repo/.github/scripts" python3 - <<'PYROOT' || deny
+# Validate the Owner-configured remote base before any download or secret use.
+PYTHONPATH="$repo/.github/scripts" python3 - <<'PYBASE' || deny
 import os
-from download_destination import approved_base_dir, verify_task_root
-base = approved_base_dir(os.environ["DOWNLOAD_REMOTE_BASE_DIR"])
-root = verify_task_root(os.environ["DOWNLOAD_TASK_ROOT"], base)
-suffix = "run-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"] + "-"
-if not root[len(base) + 1:].startswith(suffix):
-    raise SystemExit(2)
-PYROOT
+from download_destination import approved_base_dir
+approved_base_dir(os.environ.get("DOWNLOAD_REMOTE_BASE_DIR"))
+PYBASE
 for binary in docker python3 base64 sha256sum sudo timeout; do command -v "$binary" >/dev/null || deny; done
 
 python3 "$repo/.github/scripts/download_batch.py" >/dev/null || deny
@@ -137,7 +132,7 @@ run_before_deadline docker run --rm --network "$network" --dns 1.1.1.1 \
   --tmpfs /tmp:rw,nosuid,nodev,size=32m \
   --env HOME=/tmp --env BATCH_JSON \
   --env DOWNLOAD_REMOTE_NAME --env DOWNLOAD_REMOTE_BASE_DIR \
-  --env DOWNLOAD_TASK_ROOT --env DOWNLOAD_DEADLINE \
+  --env DOWNLOAD_DEADLINE \
   --env DOWNLOAD_RCLONE_CONFIG=/spec51-secret/rclone.conf \
   --env DOWNLOAD_SOURCES_DIR=/work/sources \
   --volume "$task_dir/sources:/work/sources:ro" \
