@@ -18,7 +18,7 @@ import subprocess
 import time
 
 from download_destination import plan_targets, verify_task_root
-from download_manifest import TreeUnverified, census_tree
+from download_manifest import TreeUnverified, census_tree, verify_manifest_file
 
 REMOTE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
 
@@ -176,13 +176,14 @@ def transfer_verified_batch(rclone, batch, source_roots, task_root):
         expected = by_source[index][target["source_file"]]
         file = Path(source_roots[index]) / target["source_file"]
         try:
-            # Recheck immediately before reading; upload path runs only after
-            # the sole authorized producer aria2 process has terminated.
-            actual = census_tree(source_roots[index])
-            if (next((f for f in actual["files"]
-                      if f["relative_path"] == target["source_file"]), None)
-                    != expected):
-                raise TransferUnverified("SOURCE_UNVERIFIED")
+            # The complete tree was verified once before remote side effects.
+            # aria2 has exited and the source mount is read-only. Recheck only
+            # this file through no-follow descriptors, retaining its original
+            # content fingerprint and rejecting any changed ancestor or inode.
+            try:
+                verify_manifest_file(source_roots[index], expected)
+            except TreeUnverified:
+                raise TransferUnverified("SOURCE_UNVERIFIED") from None
             rclone.upload(file, target["remote_target"])
             size, checksum = rclone.readback_sha256(target["remote_target"])
             if size != expected["size"] or checksum != expected["sha256"]:

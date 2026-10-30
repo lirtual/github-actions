@@ -165,5 +165,135 @@ class UploadFailureSummaryTests(unittest.TestCase):
         self.assertNotIn("https://", log.getvalue())
 
 
+@unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"),
+                     "focused source verifier requires POSIX no-follow descriptors")
+class FocusedFileVerificationTests(unittest.TestCase):
+    class MemoryRclone:
+        remote = "local-test"
+
+        def __init__(self):
+            self.uploaded = {}
+            self.before_upload = None
+            self.before_root = None
+
+        def create_empty_task_root(self, task_root):
+            if self.before_root is not None:
+                self.before_root()
+
+        def upload(self, path, remote_path):
+            if self.before_upload is not None:
+                self.before_upload(path, remote_path)
+            self.uploaded[remote_path] = Path(path).read_bytes()
+
+        def readback_sha256(self, remote_path):
+            content = self.uploaded[remote_path]
+            return len(content), hashlib.sha256(content).hexdigest()
+
+    def test_many_files_census_once_and_rehash_each_file_once(self):
+        import download_manifest
+        import download_upload
+        with tempfile.TemporaryDirectory(prefix="sa51-focused-") as tmp:
+            root = Path(tmp) / "source-0"
+            (root / "nested").mkdir(parents=True)
+            for i in range(48):
+                (root / "nested" / f"file-{i:02}.dat").write_bytes(
+                    bytes([i]) * 4096)
+            batch = validate(json.dumps({
+                "remote": "local-test", "project_purpose": "repository release",
+                "downloads": [{"url": "https://example.org/source",
+                               "destination_dir": "artifacts"}]}))
+            client = self.MemoryRclone()
+            with patch("download_upload.census_tree",
+                       wraps=download_manifest.census_tree) as scans:
+                with patch("download_manifest._file_digest",
+                           wraps=download_manifest._file_digest) as digests:
+                    result = transfer_verified_batch(
+                        client, batch, [root], new_task_root("1001", "1"))
+            self.assertEqual((48, 48),
+                             (result["confirmed"], result["total"]))
+            self.assertEqual(48, len(client.uploaded))
+            self.assertEqual(1, scans.call_count)
+            # One whole-tree census + one focused recheck per file. Previous
+            # implementation rehashed 48 files for EACH of the 48 uploads.
+            self.assertEqual(96, digests.call_count)
+
+    def test_modified_content_after_full_census_rejects_upload(self):
+        with tempfile.TemporaryDirectory(prefix="sa51-focused-") as tmp:
+            root = Path(tmp) / "source-0"
+            root.mkdir()
+            file = root / "artifact.bin"
+            file.write_bytes(b"original")
+            batch = validate(json.dumps({
+                "remote": "local-test", "project_purpose": "repository release",
+                "downloads": [{"url": "https://example.org/file",
+                               "destination_dir": "build"}]}))
+            client = self.MemoryRclone()
+            client.before_root = lambda: file.write_bytes(b"modified")
+            with self.assertRaises(TransferUnverified) as caught:
+                transfer_verified_batch(client, batch, [root],
+                                        new_task_root("1002", "1"))
+            self.assertEqual("SOURCE_UNVERIFIED", caught.exception.code)
+            self.assertEqual((0, 1), (caught.exception.confirmed,
+                                     caught.exception.attempted))
+            self.assertFalse(client.uploaded)
+
+    def test_replaced_ancestor_symlink_and_hardlink_fail_closed(self):
+        with tempfile.TemporaryDirectory(prefix="sa51-focused-") as tmp:
+            base = Path(tmp)
+            root = base / "source-0"
+            folder = root / "nested"
+            folder.mkdir(parents=True)
+            file = folder / "artifact.bin"
+            file.write_bytes(b"original")
+            batch = validate(json.dumps({
+                "remote": "local-test", "project_purpose": "repository release",
+                "downloads": [{"url": "https://example.org/file",
+                               "destination_dir": "build"}]}))
+            for mode in ("symlink", "hardlink"):
+                client = self.MemoryRclone()
+                def change_tree():
+                    if mode == "symlink":
+                        relocated = root / "relocated"
+                        folder.rename(relocated)
+                        folder.symlink_to(relocated, target_is_directory=True)
+                    else:
+                        os.link(file, base / "second-hardlink")
+                client.before_root = change_tree
+                with self.subTest(mode=mode), self.assertRaises(TransferUnverified) as caught:
+                    transfer_verified_batch(client, batch, [root],
+                                            new_task_root("1003", "1"))
+                self.assertEqual("SOURCE_UNVERIFIED", caught.exception.code)
+                self.assertFalse(client.uploaded)
+                if mode == "symlink":
+                    folder.unlink()
+                    (root / "relocated").rename(folder)
+                else:
+                    (base / "second-hardlink").unlink()
+
+    def test_late_file_change_preserves_confirmed_count(self):
+        with tempfile.TemporaryDirectory(prefix="sa51-focused-") as tmp:
+            root = Path(tmp) / "source-0"
+            root.mkdir()
+            (root / "a.txt").write_bytes(b"first")
+            later = root / "b.txt"
+            later.write_bytes(b"second")
+            batch = validate(json.dumps({
+                "remote": "local-test", "project_purpose": "repository release",
+                "downloads": [{"url": "https://example.org/source",
+                               "destination_dir": "build"}]}))
+            client = self.MemoryRclone()
+            def after_first(path, remote_path):
+                if Path(path).name == "a.txt":
+                    later.write_bytes(b"tamper")
+            client.before_upload = after_first
+            with self.assertRaises(TransferUnverified) as caught:
+                transfer_verified_batch(client, batch, [root],
+                                        new_task_root("1004", "1"))
+            self.assertEqual("SOURCE_UNVERIFIED", caught.exception.code)
+            self.assertEqual((1, 2), (caught.exception.confirmed,
+                                     caught.exception.attempted))
+            self.assertEqual(1, len(client.uploaded))
+
+
 if __name__ == "__main__":
     unittest.main()
