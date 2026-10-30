@@ -1,0 +1,82 @@
+name: download
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_id:
+        description: Server-owned logical Attempt ID
+        type: string
+        required: true
+      dispatch_id:
+        description: Server-owned dispatch correlation ID
+        type: string
+        required: true
+      capability_id:
+        description: Server-owned execution capability
+        type: string
+        required: true
+      batch_json:
+        description: Approved bounded artifact batch (public sources only)
+        type: string
+        required: true
+
+# Unpublished Draft PR candidate, not yet deployed or callable from main.
+# Fixed Environment secret is referenced only by the execution step AFTER
+# successful OIDC Claim, validated batch and single Task-owned namespace.
+# No create-only/atomic guarantee against competing cloud writers.
+env:
+  WORKFLOW_ACTION_TYPE: task
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    environment: download
+    timeout-minutes: 330
+    steps:
+      - name: Checkout pinned dispatched revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Claim approved physical GitHub Task before any privileged action
+        shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          CAPABILITY_ID: ${{ inputs.capability_id }}
+          WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
+          WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/session_action.py claim
+
+      - name: Validate approved public-source batch before any side effects
+        shell: bash
+        env:
+          BATCH_JSON: ${{ inputs.batch_json }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/download_batch.py
+
+      - name: Allocate server-owned Task destination namespace
+        id: task_destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/download_destination.py
+
+      - name: Execute verified isolated aria2 to rclone Task
+        shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          BATCH_JSON: ${{ inputs.batch_json }}
+          DOWNLOAD_TASK_ROOT: ${{ steps.task_destination.outputs.task_root }}
+          DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}
+          DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/download-runner.sh

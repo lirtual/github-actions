@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""Genuine aria2 HTTP artifact smoke inside the existing restricted CI bridge.
+
+Only fetches an immutable public README from this repository. No user URLs,
+storage credentials, cloud writes, Workflow Task dispatch or downloader service.
+Runs in the same private-egress-denying bridge as the socket CI tests, with
+a loopback-only ephemeral RPC port and a per-run random RPC secret.
+"""
+import hashlib
+import http.server
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import socket
+import subprocess
+import sys
+import threading
+import tempfile
+import time
+from urllib.request import ProxyHandler, Request, build_opener
+
+sys.path.insert(0, "/spec51")
+from download_aria2_readonly import Aria2Reader
+from download_source import verify_snapshot, verify_http_source_uris
+from download_batch import validate
+
+repo_url = os.environ.get("PUBLIC_FIXTURE_URL", "")
+expected = os.environ.get("PUBLIC_FIXTURE_SHA256", "")
+repo_url_2 = os.environ.get("PUBLIC_FIXTURE_URL_2", "")
+expected_2 = os.environ.get("PUBLIC_FIXTURE_SHA256_2", "")
+gateway = os.environ.get("HOST_GATEWAY", "")
+if (not re.fullmatch(r"https://raw\.githubusercontent\.com/lirtual/session-actions/[0-9a-f]{40}/README\.md", repo_url)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected)
+        or not re.fullmatch(r"https://raw\.githubusercontent\.com/lirtual/session-actions/[0-9a-f]{40}/\.github/workflows/openlist\.yml", repo_url_2)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_2)
+        or repo_url.split("/")[5] != repo_url_2.split("/")[5]
+        or not re.fullmatch(r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}", gateway)):
+    raise SystemExit("FIXTURE_CONFIG_UNVERIFIED")
+
+# The container must be unable to access the host fixture or metadata service.
+for host, port in ((gateway, 18081), ("169.254.169.254", 80)):
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            raise SystemExit("PRIVATE_EGRESS_UNSAFE")
+    except OSError:
+        pass
+
+fixtures = [(repo_url, expected, "README.md"),
+            (repo_url_2, expected_2, "openlist.yml")]
+secret = secrets.token_hex(24)
+gids = [secrets.token_hex(8), secrets.token_hex(8)]
+if gids[0] == gids[1]:
+    raise SystemExit("GID_COLLISION")
+client = build_opener(ProxyHandler({}))
+
+def rpc(method, *args):
+    request_id = secrets.token_hex(8)
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": request_id, "method": method,
+        "params": ["token:" + secret, *args],
+    }).encode()
+    request = Request("http://127.0.0.1:6800/jsonrpc", method="POST", data=body,
+                      headers={"Content-Type":"application/json"})
+    with client.open(request, timeout=3) as response:
+        if response.status != 200:
+            raise AssertionError("RPC_BAD_STATUS")
+        payload = json.loads(response.read(1024 * 1024))
+    if (payload.get("id") != request_id or
+            payload.get("jsonrpc") != "2.0" or "error" in payload):
+        raise AssertionError("RPC_BAD_RESPONSE")
+    return payload["result"]
+
+with tempfile.TemporaryDirectory(prefix="sa51-aria2-public-") as directory:
+    argv = ["aria2c", "--no-conf", "--enable-rpc=true",
+            "--rpc-listen-all=false", "--rpc-listen-port=6800",
+            "--rpc-secret=" + secret, "--disable-ipv6=true",
+            "--enable-dht=false", "--follow-torrent=false",
+            "--follow-metalink=false", "--auto-file-renaming=false",
+            "--allow-overwrite=false", "--continue=false",
+            "--file-allocation=none", "--max-tries=1",
+            "--max-connection-per-server=1", "--split=1",
+            "--max-concurrent-downloads=2",
+            "--console-log-level=error", "--dir=" + directory]
+    process = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, env={"PATH":os.environ["PATH"]})
+    try:
+        for i in range(60):
+            if process.poll() is not None:
+                raise AssertionError("ARIA2_EXITED")
+            try:
+                rpc("aria2.getGlobalStat")
+                break
+            except Exception:
+                time.sleep(.1)
+        else:
+            raise AssertionError("RPC_NOT_READY")
+
+        # Two independent immutable source allocations in ONE aria2 process,
+        # both submitted before waiting. This tests batch-GID ownership and
+        # two-active scheduling capability (not proven overlapping time).
+        roots = [os.path.join(directory, f"source-{index}") for index in range(2)]
+        for root in roots:
+            os.mkdir(root)
+        for gid, root, (url, _digest, filename) in zip(gids, roots, fixtures):
+            submitted = rpc("aria2.addUri", [url], {
+                "gid": gid, "dir": root, "out": filename,
+                "max-tries": "1", "split": "1",
+                "follow-torrent": "false", "follow-metalink": "false",
+                "auto-file-renaming": "false", "allow-overwrite": "false",
+                "continue": "false", "max-connection-per-server": "1",
+            })
+            if submitted != gid:
+                raise AssertionError("GID_MISMATCH")
+        for i in range(150):
+            states = [rpc("aria2.tellStatus", gid, ["gid", "status"])
+                      for gid in gids]
+            if all(s["status"] == "complete" for s in states):
+                break
+            if any(s["status"] in ("error", "removed") for s in states):
+                raise AssertionError("DOWNLOAD_NOT_COMPLETE")
+            time.sleep(.15)
+        else:
+            raise AssertionError("DOWNLOAD_TIMEOUT")
+
+        snapshot = Aria2Reader(secret, time.monotonic() + 25).read_closed(gids)
+        for gid, root, source, (url, digest, filename) in zip(
+                gids, roots, snapshot["sources"], fixtures):
+            status = source["status"]
+            verify_http_source_uris(source["files"], url)
+            manifest = verify_snapshot(root, gid, status, source["files"])
+            if (status.get("dir") != root or
+                    manifest["file_count"] != 1 or
+                    manifest["files"][0]["relative_path"] != filename or
+                    manifest["files"][0]["sha256"] != digest):
+                raise AssertionError("PUBLIC_FIXTURE_INTEGRITY_FAILED")
+
+        # The approved NEW contract uses one remote and relative directories.
+        # This remains a download-only smoke; it never qualifies any remote.
+        batch = {
+            "remote": "ci-only-unqualified",
+            "downloads": [
+                {"url": fixtures[i][0], "destination_dir": f"spec51-ci-{i}"}
+                for i in range(2)
+            ],
+            "project_purpose": "CI-only test of associated repository public artifacts",
+            "duration_minutes": 1,
+        }
+        approved = validate(json.dumps(batch, separators=(",", ":")))
+        if len(approved["downloads"]) != 2 or approved["remote"] != "ci-only-unqualified":
+            raise AssertionError("MULTI_SOURCE_BATCH_INVALID")
+        # Tampering with even one completed GID must invalidate provenance.
+        changed = json.loads(json.dumps(snapshot))
+        changed["sources"][1]["files"][0]["uris"][0]["uri"] = "https://unexpected.invalid/file"
+        from download_source import SourceUnverified
+        try:
+            verify_http_source_uris(changed["sources"][1]["files"], fixtures[1][0])
+        except SourceUnverified:
+            pass
+        else:
+            raise AssertionError("MULTI_SOURCE_MISMATCH_NOT_REJECTED")
+        print("REAL_ARIA2_TWO_SOURCE_PROVENANCE_VERIFIED_NO_UPLOAD_OK")
+        # Separate CI-only proof of ACTUAL overlapping network activity.
+        # Two loopback HTTP responses are deliberately held until both
+        # independent source GIDs are simultaneously active. Without
+        # max-concurrent-downloads >= 2 this test cannot complete.
+        overlap_seen = [threading.Event(), threading.Event()]
+        overlap_release = threading.Event()
+        overlap_payloads = [b"spec51-actual-overlap-first",
+                            b"spec51-actual-overlap-second"]
+
+        class HeldTwoSources(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path not in ("/first", "/second"):
+                    self.send_error(404)
+                    return
+                idx = 0 if self.path == "/first" else 1
+                overlap_seen[idx].set()
+                if not overlap_release.wait(timeout=12):
+                    self.send_error(503)
+                    return
+                blob = overlap_payloads[idx]
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(blob)))
+                self.end_headers()
+                self.wfile.write(blob)
+
+            def log_message(self, *_):
+                pass
+
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 18102),
+                                             HeldTwoSources) as overlap_server:
+            overlap_worker = threading.Thread(target=overlap_server.serve_forever,
+                                              daemon=True)
+            overlap_worker.start()
+            overlap_gids = [secrets.token_hex(8), secrets.token_hex(8)]
+            overlap_roots = [os.path.join(directory, "overlap-first"),
+                             os.path.join(directory, "overlap-second")]
+            try:
+                for i in range(2):
+                    os.mkdir(overlap_roots[i])
+                    submitted = rpc("aria2.addUri",
+                                    ["http://127.0.0.1:18102/" +
+                                     ("first" if i == 0 else "second")],
+                                    {"gid": overlap_gids[i], "dir": overlap_roots[i],
+                                     "out": "proof.bin", "max-tries": "1",
+                                     "split": "1", "max-connection-per-server": "1"})
+                    if submitted != overlap_gids[i]:
+                        raise AssertionError("OVERLAP_GID_MISMATCH")
+                if not all(event.wait(timeout=8) for event in overlap_seen):
+                    raise AssertionError("TWO_HTTP_REQUESTS_NOT_CONCURRENT")
+                active = rpc("aria2.tellActive", [["gid", "status"]])
+                if not set(overlap_gids).issubset({
+                        item.get("gid") for item in active if isinstance(item, dict)}):
+                    raise AssertionError("TWO_GIDS_NOT_SIMULTANEOUSLY_ACTIVE")
+                overlap_release.set()
+                for attempt in range(80):
+                    current = [rpc("aria2.tellStatus", gid, ["gid", "status"])
+                               for gid in overlap_gids]
+                    if all(item.get("status") == "complete" for item in current):
+                        break
+                    if any(item.get("status") in ("error", "removed")
+                           for item in current):
+                        raise AssertionError("OVERLAP_DOWNLOAD_FAILED")
+                    time.sleep(.05)
+                else:
+                    raise AssertionError("OVERLAP_DOWNLOAD_TIMEOUT")
+                for i in range(2):
+                    if (Path(overlap_roots[i]) / "proof.bin").read_bytes() != overlap_payloads[i]:
+                        raise AssertionError("OVERLAP_SOURCE_CONTENT_MISMATCH")
+                print("REAL_ARIA2_TWO_SIMULTANEOUS_ACTIVE_GIDS_OK")
+            finally:
+                overlap_release.set()
+                overlap_server.shutdown()
+                overlap_worker.join(timeout=4)
+
+        # Follow a real HTTP 302 from the loopback fixture toward the
+        # host-only address. Docker bridge isolation must reject the resulting
+        # private request even after aria2's redirect processing.
+        class RedirectPrivate(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "http://" + gateway + ":18081/")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 18101), RedirectPrivate) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                redirect_gid = secrets.token_hex(8)
+                second = rpc("aria2.addUri", ["http://127.0.0.1:18101/redirect"], {
+                    "gid": redirect_gid, "dir": directory, "out": "redirect.txt",
+                    "max-tries": "1", "connect-timeout": "2",
+                    "timeout": "3", "split": "1",
+                    "follow-torrent": "false", "follow-metalink": "false",
+                })
+                if second != redirect_gid:
+                    raise AssertionError("REDIRECT_GID_MISMATCH")
+                for i in range(60):
+                    result = rpc("aria2.tellStatus", redirect_gid, ["gid", "status"])
+                    if result["status"] == "error":
+                        break
+                    if result["status"] in ("complete", "removed"):
+                        raise AssertionError("PRIVATE_REDIRECT_EGRESS_UNSAFE")
+                    time.sleep(.1)
+                else:
+                    raise AssertionError("PRIVATE_REDIRECT_NEVER_REJECTED")
+                if ((Path(directory) / "redirect.txt").exists() and
+                        b"PRIVATE_FIXTURE" in (Path(directory) / "redirect.txt").read_bytes()):
+                    raise AssertionError("PRIVATE_REDIRECT_LEAKED_FIXTURE")
+            finally:
+                server.shutdown()
+                worker.join(timeout=4)
+
+        print("RESTRICTED_BRIDGE_REAL_ARIA2_PUBLIC_FIXTURE_OK")
+        print("RESTRICTED_BRIDGE_REAL_ARIA2_PRIVATE_REDIRECT_DENIED")
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=4)
