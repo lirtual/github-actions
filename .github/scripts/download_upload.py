@@ -10,7 +10,6 @@ import hashlib
 import json
 import math
 import os
-import posixpath
 from pathlib import Path
 import re
 import select
@@ -98,14 +97,18 @@ class IsolatedRclone:
         """
         base = approved_base_dir(base_dir)
         root = verify_task_root(task_root, base)
-        parent, leaf = posixpath.split(base)
-        entries = self._invoke(
-            ["lsjson", self.remote + ":" + parent, "--max-depth", "1"], True)
-        matching = [item for item in entries
-                    if item["Path"].casefold() == leaf.casefold()]
-        if (len(matching) != 1 or matching[0]["Path"] != leaf or
-                not matching[0]["IsDir"]):
-            raise TransferUnverified("DESTINATION_UNVERIFIED")
+        # Check every segment against an actual parent listing: backends may
+        # resolve intermediate components using case-insensitive aliases.
+        parent = ""
+        for segment in base.split("/"):
+            entries = self._invoke(
+                ["lsjson", self.remote + ":" + parent, "--max-depth", "1"], True)
+            matching = [item for item in entries
+                        if item["Path"].casefold() == segment.casefold()]
+            if (len(matching) != 1 or matching[0]["Path"] != segment or
+                    not matching[0]["IsDir"]):
+                raise TransferUnverified("DESTINATION_UNVERIFIED")
+            parent = parent + "/" + segment if parent else segment
 
         suffix = root.rsplit("/", 1)[-1]
         listing = self._invoke(

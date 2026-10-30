@@ -100,6 +100,27 @@ class LocalRcloneIntegration(unittest.TestCase):
                                     self.roots, self.root, self.base_dir)
         self.assertEqual("DESTINATION_UNVERIFIED", caught.exception.code)
 
+    def test_nested_parent_alias_is_rejected_before_any_cloud_write(self):
+        self.base_dir = "Projects/Artifacts"
+        (self.path / "projects" / "Artifacts").mkdir(parents=True)
+        self.root = new_task_root("1001", "1", self.base_dir)
+        client = self.backend()
+        original_invoke = client._invoke
+
+        def case_insensitive_remote_lookup(args, read_json=False):
+            # Simulate a case-insensitive cloud backend resolving an aliased
+            # parent: only the canonical parent listing establishes its case.
+            if args[:2] == ["lsjson", "local-test:Projects"]:
+                args = ["lsjson", "local-test:projects"] + args[2:]
+            return original_invoke(args, read_json)
+
+        client._invoke = case_insensitive_remote_lookup
+        with self.assertRaises(TransferUnverified) as caught:
+            transfer_verified_batch(client, self.batch, self.roots,
+                                    self.root, self.base_dir)
+        self.assertEqual("DESTINATION_UNVERIFIED", caught.exception.code)
+        self.assertFalse((self.path / self.root).exists())
+
     def test_existing_task_root_fails_without_touching_existing_bytes(self):
         existing = self.path / self.root
         existing.mkdir()
