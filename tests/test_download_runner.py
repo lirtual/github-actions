@@ -54,6 +54,9 @@ class DownloadRunnerContractTests(unittest.TestCase):
         self.assertIn('aria2=1.37.0-r2', SCRIPT)
         self.assertIn('rclone=1.74.1-r3', SCRIPT)
         self.assertIn('sha256sum -c -s', SCRIPT)
+        self.assertIn('DOWNLOAD_DEADLINE', SCRIPT)
+        self.assertNotIn('DOWNLOAD_SECONDS', SCRIPT)
+        self.assertIn('os.statvfs', SCRIPT)
 
     def test_remote_root_and_input_are_not_shell_interpreted(self):
         self.assertIn("DOWNLOAD_TASK_ROOT", SCRIPT)
