@@ -100,7 +100,10 @@ def main():
         root = new_task_root(os.environ.get('GITHUB_RUN_ID'),
                              os.environ.get('GITHUB_RUN_ATTEMPT'))
         output = os.environ.get('GITHUB_OUTPUT')
-        if not output or not os.path.isabs(output):
+        # This Task is Linux-only. Windows has no O_NOFOLLOW and must fail
+        # with a safe diagnostic, rather than weakening the file-open guard.
+        if (os.name != 'posix' or not hasattr(os, 'O_NOFOLLOW') or
+                not output or not os.path.isabs(output)):
             raise DestinationUnverified('DESTINATION_UNVERIFIED')
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
         fd = os.open(output, flags, 0o600)

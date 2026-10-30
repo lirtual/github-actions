@@ -75,6 +75,11 @@ class DestinationTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '4', 'GITHUB_OUTPUT': str(target)}
             command = [sys.executable, str(SCRIPTS / 'download_destination.py')]
             ok = subprocess.run(command, env=env, capture_output=True, text=True)
+            if os.name != 'posix':
+                self.assertEqual(2, ok.returncode)
+                self.assertIn('TASK_ROOT_UNAVAILABLE', ok.stderr)
+                self.assertFalse(target.exists())
+                return
             self.assertEqual(0, ok.returncode, ok.stderr)
             data = target.read_text()
             self.assertRegex(data, r'^task_root=downloads/run-12345-4-[a-f0-9]{32}\n$')
