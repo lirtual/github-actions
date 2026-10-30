@@ -63,6 +63,8 @@ jobs:
       - name: Allocate server-owned Task destination namespace
         id: task_destination
         shell: bash
+        env:
+          DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}
         run: |
           set -euo pipefail
           python3 .github/scripts/download_destination.py
@@ -73,6 +75,7 @@ jobs:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
           DOWNLOAD_TASK_ROOT: ${{ steps.task_destination.outputs.task_root }}
           DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}
+          DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}
           DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}
         run: |
           set -euo pipefail

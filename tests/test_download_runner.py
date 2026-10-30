@@ -88,6 +88,8 @@ class DownloadRunnerContractTests(unittest.TestCase):
 
     def test_remote_root_and_input_are_not_shell_interpreted(self):
         self.assertIn("DOWNLOAD_TASK_ROOT", SCRIPT)
+        self.assertIn("DOWNLOAD_REMOTE_BASE_DIR", SCRIPT)
+        self.assertIn("verify_task_root", SCRIPT)
         self.assertIn("GITHUB_RUN_ID", SCRIPT)
         self.assertIn("GITHUB_RUN_ATTEMPT", SCRIPT)
         self.assertNotIn('eval ', SCRIPT)

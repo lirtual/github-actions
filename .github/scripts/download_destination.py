@@ -16,7 +16,7 @@ import sys
 from download_batch import InvalidBatch, _destination
 
 RUN = re.compile(r'[1-9][0-9]{0,19}\Z')
-TASK_ROOT = re.compile(r'downloads/run-([1-9][0-9]{0,19})-([1-9][0-9]{0,19})-([a-f0-9]{32})\Z')
+TASK_SUFFIX = re.compile(r'run-([1-9][0-9]{0,19})-([1-9][0-9]{0,19})-([a-f0-9]{32})\Z')
 
 
 class DestinationUnverified(ValueError):
@@ -29,24 +29,37 @@ def _run_number(value):
     return value
 
 
-def new_task_root(physical_run_id, physical_attempt):
-    """Call once after physical OIDC Claim, using GitHub-provided immutable env.
+def approved_base_dir(value):
+    """An Owner-supplied relative directory, never a Task-provided path.
 
-    On physical retry, a new attempt/root is allocated; remote writes from a
-    previous unknown attempt must not be deleted or overwritten automatically.
+    Require an explicit setting; do not silently switch to the cloud root or
+    change an approved destination when its configuration is missing.
     """
+    try:
+        return _destination(value)
+    except (InvalidBatch, TypeError):
+        raise DestinationUnverified('DESTINATION_UNVERIFIED') from None
+
+
+def new_task_root(physical_run_id, physical_attempt, base_dir):
+    """Allocate a unique Task root beneath the fixed, validated Owner base."""
     run = _run_number(physical_run_id)
     attempt = _run_number(physical_attempt)
-    return f'downloads/run-{run}-{attempt}-{secrets.token_hex(16)}'
+    base = approved_base_dir(base_dir)
+    return f'{base}/run-{run}-{attempt}-{secrets.token_hex(16)}'
 
 
-def verify_task_root(root):
-    if not isinstance(root, str) or TASK_ROOT.fullmatch(root) is None:
+def verify_task_root(root, base_dir):
+    """Require the complete Task root to remain immediately under the base."""
+    base = approved_base_dir(base_dir)
+    if (not isinstance(root, str) or
+            not root.startswith(base + '/') or
+            TASK_SUFFIX.fullmatch(root[len(base) + 1:]) is None):
         raise DestinationUnverified('DESTINATION_UNVERIFIED')
     return root
 
 
-def plan_targets(batch, files_by_source, task_root):
+def plan_targets(batch, files_by_source, task_root, base_dir):
     """Return side-effect-free, whole-batch targets before any cloud write.
 
     files_by_source includes exact paths under each independent aria2 source
@@ -54,7 +67,7 @@ def plan_targets(batch, files_by_source, task_root):
     This function guarantees that normal Task destination paths are disjoint;
     no promise of server-atomic no-clobber under a malicious competing writer.
     """
-    task_root = verify_task_root(task_root)
+    task_root = verify_task_root(task_root, base_dir)
     if (not isinstance(batch, dict) or
             not isinstance(batch.get('downloads'), list) or
             not isinstance(files_by_source, (list, tuple)) or
@@ -98,7 +111,8 @@ def main():
     """
     try:
         root = new_task_root(os.environ.get('GITHUB_RUN_ID'),
-                             os.environ.get('GITHUB_RUN_ATTEMPT'))
+                             os.environ.get('GITHUB_RUN_ATTEMPT'),
+                             os.environ.get('DOWNLOAD_REMOTE_BASE_DIR'))
         output = os.environ.get('GITHUB_OUTPUT')
         # This Task is Linux-only. Windows has no O_NOFOLLOW and must fail
         # with a safe diagnostic, rather than weakening the file-open guard.

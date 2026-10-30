@@ -17,6 +17,20 @@ The action retries only temporary signed Claim HTTP 503 responses with fresh OID
 
 Live `workflow_dispatch` requires the workflow definition on GitHub's **default branch** and an owner-reviewed, SHA-bound Git tag. An approved Task on protected `v0.1.1` actually completed [GitHub Run #40056368526](https://github.com/lirtual/session-actions/actions/runs/40056368526) with signed Claim and successful Workflow MCP terminal reconciliation; CI alone would not prove this.
 
+## Download Task (Spec #51)
+
+The bounded `.github/workflows/download.yml` Task uses aria2 and a fixed rclone Remote for repository-related public HTTP(S) artifacts. It requires a separately approved, immutable Workflow MCP plan; discovery and CI success alone do not enable production downloads.
+
+Configure these settings on the existing GitHub **Environment `download`** before publishing any new Task candidate:
+
+- **Secret `DOWNLOAD_RCLONE_CONFIG_B64`**: Base64-encoded `rclone.conf`; never print the plaintext configuration or commit it.
+- **Variable `DOWNLOAD_REMOTE_NAME`**: the single approved rclone Remote name (for example `koofr`).
+- **Variable `DOWNLOAD_REMOTE_BASE_DIR`**: an **explicit, already existing** relative directory inside that Remote (for example `downloads` or `Projects/Artifacts`). Missing, invalid, differently cased or nonexistent directories are rejected; there is no implicit fallback to the cloud root.
+
+The Owner controls the base directory; the caller may only provide a validated per-download relative `destination_dir` and must use the fixed Remote. Every physical GitHub Run/Attempt allocates a fresh unpredictable `<base>/run-<run-id>-<attempt>-<random>/` directory. The Task does not target existing files, retry uncertain writes or delete cloud objects on failure. Its preflight checks are not a cloud-provider atomic create-only guarantee.
+
+Changing `DOWNLOAD_REMOTE_BASE_DIR` affects only future physical Tasks. Until this change has passed the normal PR, immutable-tag and separately approved physical Koofr acceptance gates, existing `rc.4` continues to use the old `downloads/` root and no formal production download Workflow is active.
+
 ## Five native Session Actions
 
 Each workflow lives in its own file and uses GitHub OIDC → Workflow MCP Claim → access setup → verified Ready → bounded hold → cleanup. Only the ubuntu and windows Sessions join the private Tailnet. The web Sessions use Cloudflare Quick Tunnels without a Tailscale dependency: chrome and code-server require Cloudflare email OTP, while openlist is public at the Tunnel layer and uses its own login and guest permissions:

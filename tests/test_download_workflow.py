@@ -63,9 +63,13 @@ class DownloadWorkflowTests(unittest.TestCase):
         beginning = "".join(self.sections[:-1])
         self.assertNotIn("${{ secrets.", beginning)
         self.assertNotIn("DOWNLOAD_REMOTE_NAME:", beginning)
+        self.assertIn("DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}",
+                      self.namespace)
         self.assertIn("DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}",
                       self.execute)
         self.assertIn("DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}",
+                      self.execute)
+        self.assertIn("DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}",
                       self.execute)
         self.assertNotIn("BATCH_JSON: ${{ inputs.batch_json }}", YAML)
         self.assertIn("python3 .github/scripts/download_batch.py", self.validate)

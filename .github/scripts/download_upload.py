@@ -17,7 +17,7 @@ import stat
 import subprocess
 import time
 
-from download_destination import plan_targets, verify_task_root
+from download_destination import plan_targets, verify_task_root, approved_base_dir
 from download_manifest import TreeUnverified, census_tree, verify_manifest_file
 
 REMOTE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
@@ -89,16 +89,30 @@ class IsolatedRclone:
             raise TransferUnverified("REMOTE_UNAVAILABLE")
         return value
 
-    def create_empty_task_root(self, task_root):
-        """Require an existing downloads/ parent, empty new Task root.
+    def create_empty_task_root(self, task_root, base_dir):
+        """Require an existing Owner base and an unused random Task root.
 
-        Read + mkdir is not atomic with external writers. Owner accepted
-        this residual race; do not represent it as strict no-clobber.
+        Each remote read and mkdir is non-atomic with other cloud writers.
+        A missing/mis-cased base never causes implicit parent creation.
         """
-        root = verify_task_root(task_root)
+        base = approved_base_dir(base_dir)
+        root = verify_task_root(task_root, base)
+        # Check every segment against an actual parent listing: backends may
+        # resolve intermediate components using case-insensitive aliases.
+        parent = ""
+        for segment in base.split("/"):
+            entries = self._invoke(
+                ["lsjson", self.remote + ":" + parent, "--max-depth", "1"], True)
+            matching = [item for item in entries
+                        if item["Path"].casefold() == segment.casefold()]
+            if (len(matching) != 1 or matching[0]["Path"] != segment or
+                    not matching[0]["IsDir"]):
+                raise TransferUnverified("DESTINATION_UNVERIFIED")
+            parent = parent + "/" + segment if parent else segment
+
         suffix = root.rsplit("/", 1)[-1]
         listing = self._invoke(
-            ["lsjson", self.remote + ":downloads", "--max-depth", "1"], True)
+            ["lsjson", self.remote + ":" + base, "--max-depth", "1"], True)
         if any(item["Path"].casefold() == suffix.casefold() for item in listing):
             raise TransferUnverified("DESTINATION_EXISTS")
         self._invoke(["mkdir", self.remote + ":" + root])
@@ -141,7 +155,7 @@ class IsolatedRclone:
         return size, checksum.hexdigest()
 
 
-def transfer_verified_batch(rclone, batch, source_roots, task_root):
+def transfer_verified_batch(rclone, batch, source_roots, task_root, base_dir):
     """Build complete validated plan, create Task root and verify each write.
 
     Source roots must be exclusive, quiesced aria2 locations whose actual GIDs
@@ -163,12 +177,12 @@ def transfer_verified_batch(rclone, batch, source_roots, task_root):
             raise TransferUnverified("SOURCE_UNVERIFIED") from None
     paths = [[f["relative_path"] for f in m["files"]] for m in manifests]
     try:
-        targets = plan_targets(batch, paths, task_root)
+        targets = plan_targets(batch, paths, task_root, base_dir)
     except (ValueError, KeyError, TypeError):
         raise TransferUnverified("DESTINATION_UNVERIFIED") from None
     by_source = [{f["relative_path"]: f for f in m["files"]}
                  for m in manifests]
-    rclone.create_empty_task_root(task_root)
+    rclone.create_empty_task_root(task_root, base_dir)
     confirmed = attempted = 0
     for target in targets:
         attempted += 1
@@ -227,7 +241,8 @@ def main():
             os.environ.get("DOWNLOAD_REMOTE_NAME", ""),
             deadline)
         result = transfer_verified_batch(
-            client, batch, paths, os.environ.get("DOWNLOAD_TASK_ROOT", ""))
+            client, batch, paths, os.environ.get("DOWNLOAD_TASK_ROOT", ""),
+            os.environ.get("DOWNLOAD_REMOTE_BASE_DIR"))
         if result["confirmed"] != result["total"]:
             raise TransferUnverified("REMOTE_UNVERIFIED")
         print("REMOTE_READBACK_VERIFIED files=" + str(result["confirmed"]))
