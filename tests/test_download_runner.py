@@ -1,9 +1,12 @@
-"""Spec #51 candidate runtime contract; guarded live Workflow remains disabled.
+"""Spec #51 runtime contract; formal production admission remains disabled.
 
 This is a static policy check, not proof of real hosted cloud E2E.
 """
 from pathlib import Path
+import os
 import re
+import subprocess
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +60,31 @@ class DownloadRunnerContractTests(unittest.TestCase):
         self.assertIn('DOWNLOAD_DEADLINE', SCRIPT)
         self.assertNotIn('DOWNLOAD_SECONDS', SCRIPT)
         self.assertIn('os.statvfs', SCRIPT)
+
+    def test_setup_and_payload_share_one_enforced_deadline(self):
+        self.assertIn("for binary in docker python3 base64 sha256sum sudo timeout;", SCRIPT)
+        for command in ("docker build", "docker run --rm --network none",
+                        'bash "$repo/.github/scripts/download-network.sh" setup'):
+            self.assertIn("run_before_deadline " + command, SCRIPT)
+        self.assertEqual(2, SCRIPT.count(
+            'run_before_deadline docker run --rm --network "$network"'))
+    @unittest.skipUnless(os.name == "posix", "Bash/GNU timeout runtime requires POSIX")
+    def test_setup_deadline_runtime_timeout(self):
+        helper = re.search(r"(?ms)^run_before_deadline\(\) \{\n.*?^\}", SCRIPT)
+        self.assertIsNotNone(helper)
+
+        def invoke(command, budget):
+            env = {**os.environ, "DOWNLOAD_DEADLINE":
+                   str(time.monotonic() + budget)}
+            return subprocess.run(["bash", "-c", helper.group(0) + "\n" + command],
+                                  capture_output=True, text=True, env=env,
+                                  timeout=5)
+
+        self.assertEqual(0, invoke("run_before_deadline true", 3).returncode)
+        limited = invoke("run_before_deadline sleep 2", 0.3)
+        self.assertEqual(124, limited.returncode)
+        expired = invoke("run_before_deadline true", -2)
+        self.assertEqual(124, expired.returncode)
 
     def test_remote_root_and_input_are_not_shell_interpreted(self):
         self.assertIn("DOWNLOAD_TASK_ROOT", SCRIPT)
