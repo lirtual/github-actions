@@ -6,6 +6,7 @@ Returns a private local receipt AFTER GID, URL and exact file-tree closure.
 This does not set up an egress firewall; caller must arm the proven bridge.
 """
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -129,18 +130,18 @@ def receive(batch_json, workspace, deadline):
 
 def main():
     try:
-        duration = int(os.environ.get("DOWNLOAD_SECONDS", "18000"))
-        if not 1 <= duration <= 19800:
-            raise DownloadUnverified("INVALID_DURATION")
+        deadline = float(os.environ.get("DOWNLOAD_DEADLINE", "nan"))
+        remaining = deadline - time.monotonic()
+        if not math.isfinite(deadline) or not 0 < remaining <= 19800:
+            raise DownloadUnverified("INVALID_DEADLINE")
         result = receive(os.environ.get("BATCH_JSON", ""),
-                         os.environ.get("DOWNLOAD_WORKSPACE", ""),
-                         time.monotonic() + duration)
+                         os.environ.get("DOWNLOAD_WORKSPACE", ""), deadline)
         print("RESTRICTED_ARIA2_BATCH_CLOSED",
               "sources=" + str(result["sources"]),
               "files=" + str(result["files"]))
         return 0
     except (DownloadUnverified, InvalidBatch, SourceUnverified,
-            OSError, ValueError, KeyError, TypeError) as error:
+            OSError, ValueError, KeyError, TypeError, OverflowError) as error:
         # All user and URL strings are suppressed.
         print("DOWNLOAD_UNVERIFIED", file=sys.stderr)
         return 2
