@@ -7,6 +7,13 @@ umask 077
 
 deny() { echo "DOWNLOAD_UNAVAILABLE: runtime_preflight" >&2; exit 2; }
 [[ ${RUNNER_TEMP:-} == /* && -d "$RUNNER_TEMP" ]] || deny
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Production obtains inputs from the GitHub-owned event file; the full URLs
+# must not appear in Actions step environment banners.
+if [[ -z ${BATCH_JSON:-} ]]; then
+  BATCH_JSON="$(PYTHONPATH="$repo/.github/scripts" python3 -c 'from download_batch import load_batch_json; print(load_batch_json(), end="")')"
+fi
+export BATCH_JSON
 [[ ${ATTEMPT_ID:-} =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || deny
 [[ ${DOWNLOAD_TASK_ROOT:-} =~ ^downloads/run-[1-9][0-9]{0,19}-[1-9][0-9]{0,19}-[a-f0-9]{32}$ ]] || deny
 [[ -n ${BATCH_JSON:-} && -n ${DOWNLOAD_REMOTE_NAME:-} && -n ${DOWNLOAD_RCLONE_CONFIG_B64:-} ]] || deny
@@ -14,7 +21,6 @@ deny() { echo "DOWNLOAD_UNAVAILABLE: runtime_preflight" >&2; exit 2; }
 [[ "$DOWNLOAD_TASK_ROOT" == downloads/run-"$GITHUB_RUN_ID"-"$GITHUB_RUN_ATTEMPT"-* ]] || deny
 for binary in docker python3 base64 sha256sum sudo; do command -v "$binary" >/dev/null || deny; done
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 python3 "$repo/.github/scripts/download_batch.py" >/dev/null || deny
 # No user-provided relative/absolute paths are interpolated into shell commands.
 task_dir="$(mktemp -d "$RUNNER_TEMP/spec51-task.XXXXXXXX")"
@@ -39,22 +45,33 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # Register cleanup BEFORE decoding secret material or starting side effects.
-# Task-wide time budget is constrained by validated input and physical job cap.
-DOWNLOAD_SECONDS="$(python3 - <<'PYCODE'
-import json,os
-v=json.loads(os.environ['BATCH_JSON']); minutes=v.get('duration_minutes',300)
+# Establish ONE kernel monotonic deadline for setup, source download, cloud
+# upload and readback. Reserve a bounded cleanup window without making valid
+# 1- or 2-minute Tasks impossible.
+DOWNLOAD_DEADLINE="$(python3 - <<'PYCODE'
+import json, os, time
+v=json.loads(os.environ['BATCH_JSON'])
+minutes=v.get('duration_minutes',300)
 if type(minutes) is not int or not 1 <= minutes <= 330: raise SystemExit(2)
-print(max(1,minutes*60 - 120))
+reserve=min(120, max(5, minutes * 6))
+print("%.6f" % (time.monotonic() + minutes * 60 - reserve))
 PYCODE
 )"
-export DOWNLOAD_SECONDS
+export DOWNLOAD_DEADLINE
+# Fail before any download when the ephemeral workspace is already exhausted;
+# subsequent I/O failures still fail closed without inventing a file-size cap.
+python3 - <<'PYCODE' || deny
+import os
+v=os.statvfs(os.environ['RUNNER_TEMP'])
+if v.f_bavail * v.f_frsize < 64*1024*1024 or v.f_favail < 1024:
+    raise SystemExit(2)
+PYCODE
 printf '%s' "$DOWNLOAD_RCLONE_CONFIG_B64" | base64 --decode > "$config" || deny
 chmod 600 "$config"
 unset DOWNLOAD_RCLONE_CONFIG_B64
 
-# Fixed, digest-pinned Python base; both payload tools use the same throwaway
-# image. Alpine packages are currently unpinned: production release still
-# requires version/digest closure; do not mistake passing CI for such evidence.
+# Fixed base digest and locked Alpine package versions; verify actual
+# aria2/rclone binary hashes before starting either payload container.
 docker build --quiet --tag "$image" - <<'DOCKER'
 FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
 RUN apk add --no-cache "aria2=1.37.0-r2" "rclone=1.74.1-r3"
@@ -80,7 +97,7 @@ docker run --rm --network "$network" --dns 1.1.1.1 \
   --pids-limit 128 --memory 512m --read-only --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev,size=32m \
   --env HOME=/tmp --env BATCH_JSON \
-  --env DOWNLOAD_WORKSPACE=/work --env DOWNLOAD_SECONDS \
+  --env DOWNLOAD_WORKSPACE=/work --env DOWNLOAD_DEADLINE \
   --volume "$task_dir/sources:/work:rw" \
   --volume "$repo/.github/scripts:/spec51:ro" \
   "$image" python /spec51/download_receive.py
@@ -94,7 +111,7 @@ docker run --rm --network "$network" --dns 1.1.1.1 \
   --pids-limit 128 --memory 512m --read-only --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev,size=32m \
   --env HOME=/tmp --env BATCH_JSON \
-  --env DOWNLOAD_REMOTE_NAME --env DOWNLOAD_TASK_ROOT --env DOWNLOAD_SECONDS \
+  --env DOWNLOAD_REMOTE_NAME --env DOWNLOAD_TASK_ROOT --env DOWNLOAD_DEADLINE \
   --env DOWNLOAD_RCLONE_CONFIG=/spec51-secret/rclone.conf \
   --env DOWNLOAD_SOURCES_DIR=/work/sources \
   --volume "$task_dir/sources:/work/sources:ro" \

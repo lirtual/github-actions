@@ -23,6 +23,21 @@ BATCH = json.dumps({
 
 
 class ReceiverTests(unittest.TestCase):
+    def test_entrypoint_reuses_absolute_deadline_and_rejects_expiry(self):
+        import download_receive
+        deadline = time.monotonic() + 55
+        with patch.dict(os.environ, {"BATCH_JSON": BATCH,
+                                      "DOWNLOAD_WORKSPACE": "/work",
+                                      "DOWNLOAD_DEADLINE": str(deadline)}):
+            with patch("download_receive.receive",
+                       return_value={"sources": 1, "files": 1}) as called:
+                self.assertEqual(0, download_receive.main())
+                self.assertEqual(deadline, called.call_args.args[2])
+            with patch.dict(os.environ, {"DOWNLOAD_DEADLINE": str(time.monotonic() - 1)}):
+                with patch("download_receive.receive") as called:
+                    self.assertEqual(2, download_receive.main())
+                    called.assert_not_called()
+
     def test_rejects_empty_and_invalid_batch_without_process(self):
         with tempfile.TemporaryDirectory() as tmp:
             for batch in ("{}", "[]", "", BATCH.replace(

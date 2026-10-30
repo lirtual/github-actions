@@ -329,6 +329,16 @@ jobs:
         run: |
           set -euo pipefail
           net="sa51-11111111"
+          # Inspect the installed kernel firewall rules, not only source text.
+          chain=SA51F11111111
+          sudo -n iptables -C "$chain" -d 1.1.1.1/32 -p udp --dport 53 -j RETURN
+          sudo -n iptables -C "$chain" -d 1.1.1.1/32 -p tcp --dport 53 -j RETURN
+          sudo -n iptables -C "$chain" -p tcp -m multiport --dports 80,443 -j RETURN
+          sudo -n iptables -C "$chain" -j REJECT
+          if sudo -n iptables -C "$chain" -p udp --dport 53 -j RETURN 2>/dev/null; then
+            echo 'UNSCOPED_PUBLIC_DNS_ALLOWED' >&2
+            exit 1
+          fi
           gateway="$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "$net")"
           test "$(curl --fail --silent --max-time 3 "http://$gateway:18081/")" = PRIVATE_FIXTURE
           python3 - "$gateway" <<'PYCODE'

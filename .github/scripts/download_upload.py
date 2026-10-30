@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Spec #51 draft: isolated rclone upload with independent remote readback.
+"""Spec #51: isolated rclone upload with independent remote readback.
 
-Not yet wired to the GitHub Task. Caller must first prove exclusive aria2
-source ownership/closure, restricted egress, OIDC Claim and pinned binaries.
+Called after aria2 source closure, restricted egress, verified OIDC Claim
+and runtime-pinned binaries.
 Unique Task directories reduce accidental collision, not server-atomic writes.
 No remote deletion, move, rename, retries of uncertain Task uploads or path logs.
 """
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -200,8 +201,9 @@ def main():
     from download_batch import InvalidBatch, validate
     try:
         batch = validate(os.environ.get("BATCH_JSON", ""))
-        seconds = int(os.environ.get("DOWNLOAD_SECONDS", "0"))
-        if not 1 <= seconds <= 19800:
+        deadline = float(os.environ.get("DOWNLOAD_DEADLINE", "nan"))
+        remaining = deadline - time.monotonic()
+        if not math.isfinite(deadline) or not 0 < remaining <= 19800:
             raise TransferUnverified("TIME_BUDGET_INVALID")
         source_root = Path(os.environ.get("DOWNLOAD_SOURCES_DIR", ""))
         if not source_root.is_absolute() or source_root.is_symlink():
@@ -213,7 +215,7 @@ def main():
             os.environ.get("DOWNLOAD_RCLONE_CONFIG", ""),
             batch["remote"],
             os.environ.get("DOWNLOAD_REMOTE_NAME", ""),
-            time.monotonic() + seconds)
+            deadline)
         result = transfer_verified_batch(
             client, batch, paths, os.environ.get("DOWNLOAD_TASK_ROOT", ""))
         if result["confirmed"] != result["total"]:
@@ -221,10 +223,16 @@ def main():
         print("REMOTE_READBACK_VERIFIED files=" + str(result["confirmed"]))
         return 0
     except (TransferUnverified, InvalidBatch, OSError, TypeError,
-            ValueError, KeyError) as error:
+            ValueError, KeyError, OverflowError) as error:
         code = error.code if isinstance(error, TransferUnverified) else "TASK_UNVERIFIED"
         # No paths, URLs, exception strings, OAuth config or token in logs.
-        print("DOWNLOAD_FAILED_OR_UNKNOWN:" + code, file=sys.stderr)
+        # Record counts even on an unknown or partial remote outcome; never
+        # infer success solely from objects already present in the cloud.
+        confirmed = error.confirmed if isinstance(error, TransferUnverified) else 0
+        attempted = error.attempted if isinstance(error, TransferUnverified) else 0
+        print("DOWNLOAD_FAILED_OR_UNKNOWN:" + code +
+              " confirmed=" + str(confirmed) +
+              " attempted=" + str(attempted), file=sys.stderr)
         return 2
 
 

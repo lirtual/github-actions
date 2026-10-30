@@ -83,7 +83,8 @@ class DestinationTests(unittest.TestCase):
             self.assertEqual(0, ok.returncode, ok.stderr)
             data = target.read_text()
             self.assertRegex(data, r'^task_root=downloads/run-12345-4-[a-f0-9]{32}\n$')
-            self.assertNotIn('run-12345-4-', ok.stdout + ok.stderr)
+            self.assertIn('::add-mask::downloads/run-12345-4-', ok.stdout)
+            self.assertNotIn('run-12345-4-', ok.stderr)
             for overrides in ({'GITHUB_RUN_ID': '../../escape'}, {'GITHUB_OUTPUT': ''},
                               {'GITHUB_RUN_ATTEMPT': '0'}):
                 bad = subprocess.run(command, env={**env, **overrides},

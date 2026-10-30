@@ -144,9 +144,32 @@ def validate(payload):
             'project_purpose': purpose, 'duration_minutes': duration}
 
 
+def load_batch_json():
+    """Read bounded dispatch input without placing URLs in Actions step env logs.
+
+    Tests can continue supplying BATCH_JSON directly. The production workflow
+    reads the GitHub-owned event file, not a logged step environment variable.
+    """
+    if 'BATCH_JSON' in os.environ:
+        return os.environ['BATCH_JSON']
+    event_path = os.environ.get('GITHUB_EVENT_PATH', '')
+    if not event_path or not os.path.isabs(event_path):
+        return ''
+    try:
+        with open(event_path, 'rb') as stream:
+            raw = stream.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            return ''
+        event = json.loads(raw, object_pairs_hook=_unique_pairs)
+        value = event.get('inputs', {}).get('batch_json', '')
+        return value if isinstance(value, str) else ''
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ''
+
+
 def main():
     try:
-        batch = validate(os.environ.get('BATCH_JSON', ''))
+        batch = validate(load_batch_json())
     except InvalidBatch as error:
         print('BATCH_REJECTED:' + str(error), file=sys.stderr)
         return 2
