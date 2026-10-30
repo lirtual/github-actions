@@ -553,6 +553,42 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("${{ secrets.", text[:execute])
         self.assertNotIn("actions/checkout", text[:execute])
 
+    def test_verify_task_post_claim_hold_is_strictly_bounded(self):
+        import os
+        import subprocess
+        import textwrap
+
+        if os.name == "nt":
+            self.skipTest("The verification Task and bounded hold run on ubuntu-latest")
+
+        source = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        claim = source.index("Claim approved physical Run before any task work")
+        hold = source.index("Hold bounded Task after signed Claim")
+        execute = source.index("Execute bounded verification Task")
+        self.assertLess(claim, hold)
+        self.assertLess(hold, execute)
+        self.assertIn("      hold_seconds:", source[:claim])
+        self.assertIn("        default: 0", source[:claim])
+        start = source.index("        run: |\n", hold) + len("        run: |\n")
+        script = textwrap.dedent(source[start:source.index("\n      - name: Execute", start)])
+        fake_sleep = 'sleep() { printf "SLEEP=%s\n" "$1"; }\n'
+        for value in ("0", "1", "120", "119"):
+            with self.subTest(accepted=value):
+                result = subprocess.run(
+                    ["bash", "-c", fake_sleep + script],
+                    env={**os.environ, "HOLD_SECONDS": value},
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("SLEEP=" in result.stdout, value != "0")
+        for value in ("", "-1", "121", "1000", "1.5", "00", "1e2", "$(id)", " 1"):
+            with self.subTest(rejected=value):
+                result = subprocess.run(
+                    ["bash", "-c", fake_sleep + script],
+                    env={**os.environ, "HOLD_SECONDS": value},
+                    capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("SLEEP=", result.stdout)
+
     def test_external_packages_are_immutable(self):
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
         self.assertIn("864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48", code)
