@@ -19,11 +19,10 @@ on:
         type: string
         required: true
 
-# Unpublished draft of Spec #51's immutable GitHub Task.
-# Safe by construction: it does not launch aria2/rclone, access cloud storage,
-# connect to MySQL, download sources or emit signed success receipts.
-# It fails closed until task-isolated destination creation, egress and full
-# upload/readback E2E have independent evidence and separate production approval.
+# Unpublished Draft PR candidate, not yet deployed or callable from main.
+# Fixed Environment secret is referenced only by the execution step AFTER
+# successful OIDC Claim, validated batch and single Task-owned namespace.
+# No create-only/atomic guarantee against competing cloud writers.
 env:
   WORKFLOW_ACTION_TYPE: task
 
@@ -34,6 +33,7 @@ permissions:
 jobs:
   download:
     runs-on: ubuntu-latest
+    environment: download
     timeout-minutes: 330
     steps:
       - name: Checkout pinned dispatched revision
@@ -69,8 +69,14 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/download_destination.py
 
-      - name: Block unverified download and cloud writes
+      - name: Execute verified isolated aria2 to rclone Task
         shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          BATCH_JSON: ${{ inputs.batch_json }}
+          DOWNLOAD_TASK_ROOT: ${{ steps.task_destination.outputs.task_root }}
+          DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}
+          DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}
         run: |
-          echo 'DOWNLOAD_UNAVAILABLE: isolated cloud destination, egress and E2E not yet proven' >&2
-          exit 1
+          set -euo pipefail
+          bash .github/scripts/download-runner.sh

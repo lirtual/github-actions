@@ -12,22 +12,23 @@ WORKFLOW = (ROOT / ".github/workflows/download.yml").read_text()
 
 
 class DownloadRunnerContractTests(unittest.TestCase):
-    def test_candidate_not_yet_enabled_in_physical_github_task(self):
-        self.assertIn("Block unverified download and cloud writes", WORKFLOW)
-        self.assertIn("DOWNLOAD_UNAVAILABLE:", WORKFLOW)
-        self.assertNotIn("download-runner.sh", WORKFLOW)
+    def test_candidate_wired_to_unpublished_physical_task(self):
+        self.assertIn("    environment: download", WORKFLOW)
+        self.assertIn("download-runner.sh", WORKFLOW)
+        self.assertIn("session_action.py claim", WORKFLOW)
+        self.assertNotIn("Block unverified download and cloud writes", WORKFLOW)
 
     def test_claim_precedes_credential_access_when_later_wired(self):
         self.assertLess(WORKFLOW.find("session_action.py claim"),
                         WORKFLOW.find("download_batch.py"))
         self.assertLess(WORKFLOW.find("download_batch.py"),
                         WORKFLOW.find("download_destination.py"))
-        self.assertNotIn("${{ secrets.", WORKFLOW)
+        self.assertNotIn("${{ secrets.", WORKFLOW.split("      - name: Execute verified isolated aria2 to rclone Task")[0])
 
     def test_runtime_download_container_never_receives_rclone_secret(self):
-        self.assertEqual(2, SCRIPT.count("docker run --rm --network"))
-        downloader = SCRIPT.split("docker run --rm --network")[1]
-        uploader = SCRIPT.split("docker run --rm --network")[2]
+        self.assertEqual(2, SCRIPT.count('docker run --rm --network "$network"'))
+        downloader = SCRIPT.split('docker run --rm --network "$network"')[1]
+        uploader = SCRIPT.split('docker run --rm --network "$network"')[2]
         self.assertNotIn("--volume \"$config:", downloader)
         self.assertNotIn("DOWNLOAD_RCLONE_CONFIG=", downloader)
         self.assertIn("--volume \"$config:", uploader)
@@ -50,6 +51,9 @@ class DownloadRunnerContractTests(unittest.TestCase):
         self.assertIn("unset DOWNLOAD_RCLONE_CONFIG_B64", SCRIPT)
         self.assertIn("rm -rf -- \"$task_dir\"", SCRIPT)
         self.assertRegex(SCRIPT, r"python:3\.12-alpine@sha256:[0-9a-f]{64}")
+        self.assertIn('aria2=1.37.0-r2', SCRIPT)
+        self.assertIn('rclone=1.74.1-r3', SCRIPT)
+        self.assertIn('sha256sum -c -s', SCRIPT)
 
     def test_remote_root_and_input_are_not_shell_interpreted(self):
         self.assertIn("DOWNLOAD_TASK_ROOT", SCRIPT)

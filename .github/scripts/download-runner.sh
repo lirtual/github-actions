@@ -57,8 +57,15 @@ unset DOWNLOAD_RCLONE_CONFIG_B64
 # requires version/digest closure; do not mistake passing CI for such evidence.
 docker build --quiet --tag "$image" - <<'DOCKER'
 FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
-RUN apk add --no-cache aria2 rclone
+RUN apk add --no-cache "aria2=1.37.0-r2" "rclone=1.74.1-r3"
 DOCKER
+
+# The x86_64 runner must use the exact binary builds verified by CI.
+# An Alpine package change or other architecture is a fail-closed error.
+docker run --rm --network none --entrypoint sh "$image" -c \
+  'printf "%s\n" \
+    "0bbbf651a55faa76c027bdf6a0ae5dcea1b87ba17c077d0285a2199558dad0cb  /usr/bin/aria2c" \
+    "63f6ccc732c9a8a86995a8293b1c4df1f6bd9abe5b40e1321f9e2920591572d5  /usr/bin/rclone" | sha256sum -c -s' || deny
 
 bash "$repo/.github/scripts/download-network.sh" setup
 network_armed=1

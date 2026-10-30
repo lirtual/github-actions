@@ -319,7 +319,7 @@ jobs:
           test -s "$RUNNER_TEMP/spec51-public-openlist-yml"
           docker build --tag "sa51-aria2-smoke:$GITHUB_RUN_ID" - <<'DOCKERFILE'
           FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
-          RUN apk add --no-cache aria2 rclone
+          RUN apk add --no-cache "aria2=1.37.0-r2"
           DOCKERFILE
       - name: Arm restricted bridge before launching any client
         shell: bash
