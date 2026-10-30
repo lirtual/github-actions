@@ -319,7 +319,7 @@ jobs:
           test -s "$RUNNER_TEMP/spec51-public-openlist-yml"
           docker build --tag "sa51-aria2-smoke:$GITHUB_RUN_ID" - <<'DOCKERFILE'
           FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
-          RUN apk add --no-cache aria2
+          RUN apk add --no-cache aria2 rclone
           DOCKERFILE
       - name: Arm restricted bridge before launching any client
         shell: bash
@@ -400,6 +400,71 @@ jobs:
             --volume "$PWD/.github/scripts:/spec51:ro" \
             --volume "$PWD/tests/smoke_download_aria2_network.py:/smoke.py:ro" \
             "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke.py
+      - name: Exercise real restricted aria2 to isolated local rclone readback
+        shell: bash
+        env:
+          FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          net="sa51-11111111"
+          work="$RUNNER_TEMP/spec51-end-to-end"
+          mkdir -p "$work/sources" "$work/downloads"
+          chmod 700 "$work" "$work/sources" "$work/downloads"
+          export BATCH_JSON
+          BATCH_JSON="$(python3 - "$FIXTURE_COMMIT" <<'PYCODE'
+          import json,sys
+          sha=sys.argv[1]
+          assert len(sha)==40 and all(c in '0123456789abcdef' for c in sha)
+          links=[('README.md','releases/docs'),('openlist.yml','releases/config')]
+          print(json.dumps({'remote':'local-test',
+              'downloads':[{'url':f'https://raw.githubusercontent.com/lirtual/session-actions/{sha}/'+
+                            ('README.md' if i==0 else '.github/workflows/openlist.yml'),
+                            'destination_dir':directory} for i,(_,directory) in enumerate(links)],
+              'project_purpose':'CI pinned public repository fixtures',
+              'duration_minutes':2},separators=(',',':')))
+          PYCODE
+          )"
+          docker run --rm --network "$net" --dns 1.1.1.1 \
+            --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --pids-limit 128 --memory 256m --read-only \
+            --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+            --env HOME=/tmp --env BATCH_JSON --env DOWNLOAD_WORKSPACE=/work \
+            --volume "$work/sources:/work:rw" \
+            --volume "$PWD/.github/scripts:/spec51:ro" \
+            "sa51-aria2-smoke:$GITHUB_RUN_ID" python /spec51/download_receive.py
+          test "$(sha256sum "$work/sources/source-0/README.md" | cut -d' ' -f1)" = \
+            "$(sha256sum "$RUNNER_TEMP/spec51-public-readme" | cut -d' ' -f1)"
+          test "$(sha256sum "$work/sources/source-1/openlist.yml" | cut -d' ' -f1)" = \
+            "$(sha256sum "$RUNNER_TEMP/spec51-public-openlist-yml" | cut -d' ' -f1)"
+          printf '[local-test]\ntype = local\n' > "$work/rclone.conf"
+          chmod 600 "$work/rclone.conf"
+          # Downloader container never sees rclone config; uploader has NO network.
+          docker run --rm -i --network none --cap-drop ALL \
+            --security-opt no-new-privileges:true --read-only \
+            --user "$(id -u):$(id -g)" --env HOME=/tmp \
+            --env BATCH_JSON --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT \
+            --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+            --volume "$work:/work:rw" \
+            --volume "$PWD/.github/scripts:/spec51:ro" \
+            --workdir /work "sa51-aria2-smoke:$GITHUB_RUN_ID" \
+            python - <<'PYCODE'
+          import json,os,shutil,sys,time
+          sys.path.insert(0,'/spec51')
+          from download_batch import validate
+          from download_destination import new_task_root
+          from download_upload import IsolatedRclone,transfer_verified_batch
+          batch=validate(os.environ['BATCH_JSON'])
+          root=new_task_root(os.environ['GITHUB_RUN_ID'],os.environ['GITHUB_RUN_ATTEMPT'])
+          client=IsolatedRclone(shutil.which('rclone'),'/work/rclone.conf',
+                               'local-test','local-test',time.monotonic()+90)
+          result=transfer_verified_batch(client,batch,
+              ['/work/sources/source-0','/work/sources/source-1'],root)
+          assert result['confirmed']==result['total']==2
+          print('ISOLATED_REAL_ARIA2_RCLONE_LOCAL_READBACK_E2E_OK')
+          PYCODE
+          # Cleanup owned synthetic files; no storage/cloud side effects.
+          rm -rf -- "$work"
       - name: Check real aria2 DNS answer switching cannot reach private Runner service
         shell: bash
         run: |
@@ -424,6 +489,7 @@ jobs:
           bash .github/scripts/download-network.sh cleanup || cleanup_failed=1
           docker image rm -f "sa51-aria2-smoke:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/spec51-public-readme" "$RUNNER_TEMP/spec51-public-openlist-yml"
+          rm -rf -- "$RUNNER_TEMP/spec51-end-to-end"
           if test -s "$RUNNER_TEMP/host-fixture.pid"; then
             kill "$(cat "$RUNNER_TEMP/host-fixture.pid")" 2>/dev/null || true
           fi
