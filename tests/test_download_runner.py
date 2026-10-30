@@ -68,6 +68,8 @@ class DownloadRunnerContractTests(unittest.TestCase):
             self.assertIn("run_before_deadline " + command, SCRIPT)
         self.assertEqual(2, SCRIPT.count(
             'run_before_deadline docker run --rm --network "$network"'))
+    @unittest.skipUnless(os.name == "posix", "Bash/GNU timeout runtime requires POSIX")
+    def test_setup_deadline_runtime_timeout(self):
         helper = re.search(r"(?ms)^run_before_deadline\(\) \{\n.*?^\}", SCRIPT)
         self.assertIsNotNone(helper)
 
