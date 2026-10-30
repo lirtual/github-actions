@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Strict read-only local artifact tree census for Spec #51 (UNWIRED).
+"""Strict read-only local artifact census and focused file verification.
 
-This can prove what regular files were observed locally, including nested
-directories. It does NOT prove aria2/OpenList source or child task ownership,
-remote Task-root isolation or independent cloud readback.
-Never print or serialize the returned paths to GitHub logs.
+Proves local regular-file closure, but not source GID ownership, network
+isolation or independent cloud readback. Never log source file paths.
 """
 import hashlib
 import os
@@ -133,3 +131,62 @@ def census_tree(root):
     finally:
         if root_fd is not None:
             os.close(root_fd)
+
+
+def verify_manifest_file(root, expected):
+    """Recheck one manifest entry before upload, without rescanning its siblings.
+
+    The caller has already censused the *whole* quiesced source tree, and the
+    uploader has that source mounted read-only. Walk every path component using
+    no-follow dirfds, then compare the same strong content fingerprint used by
+    census_tree. This is linear in the transferred bytes rather than in each
+    source's file_count * total_bytes.
+    """
+    if (os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or
+            not isinstance(expected, dict) or
+            set(expected) != {"relative_path", "size", "sha256", "md5"} or
+            not isinstance(expected["relative_path"], str)):
+        raise TreeUnverified("TREE_UNVERIFIED")
+    descriptors = []
+    try:
+        parts = expected["relative_path"].split("/")
+        for part in parts:
+            _safe_component(part)
+        root_fd = os.open(root, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+        descriptors.append(root_fd)
+        root_stat = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise TreeUnverified("TREE_UNVERIFIED")
+        current = root_fd
+        parents = []
+        for part in parts[:-1]:
+            before = os.stat(part, dir_fd=current, follow_symlinks=False)
+            if not stat.S_ISDIR(before.st_mode) or before.st_dev != root_stat.st_dev:
+                raise TreeUnverified("TREE_UNVERIFIED")
+            child = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY,
+                            dir_fd=current)
+            descriptors.append(child)
+            if _fingerprint(before) != _fingerprint(os.fstat(child)):
+                raise TreeUnverified("TREE_UNVERIFIED")
+            parents.append((current, part, before, child))
+            current = child
+        leaf = parts[-1]
+        before = os.stat(leaf, dir_fd=current, follow_symlinks=False)
+        if before.st_dev != root_stat.st_dev:
+            raise TreeUnverified("TREE_UNVERIFIED")
+        attributes = _file_digest(current, leaf, before, root_stat.st_dev)
+        if {"relative_path": expected["relative_path"], **attributes} != expected:
+            raise TreeUnverified("TREE_UNVERIFIED")
+        for parent_fd, name, prior, child_fd in reversed(parents):
+            if (_fingerprint(prior) != _fingerprint(os.fstat(child_fd)) or
+                    _fingerprint(prior) != _fingerprint(os.stat(
+                        name, dir_fd=parent_fd, follow_symlinks=False))):
+                raise TreeUnverified("TREE_UNVERIFIED")
+        if _fingerprint(root_stat) != _fingerprint(os.fstat(root_fd)):
+            raise TreeUnverified("TREE_UNVERIFIED")
+        return True
+    except (OSError, ValueError, TypeError):
+        raise TreeUnverified("TREE_UNVERIFIED") from None
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
