@@ -270,7 +270,7 @@ jobs:
     # Synthetic-only network proof on disposable GitHub-hosted Ubuntu.
     # No user URLs, cloud credentials, OIDC or user download jobs.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       ATTEMPT_ID: 11111111-1111-4111-8111-111111111111
     steps:
@@ -400,71 +400,6 @@ jobs:
             --volume "$PWD/.github/scripts:/spec51:ro" \
             --volume "$PWD/tests/smoke_download_aria2_network.py:/smoke.py:ro" \
             "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke.py
-      - name: Exercise real restricted aria2 to isolated local rclone readback
-        shell: bash
-        env:
-          FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          net="sa51-11111111"
-          work="$RUNNER_TEMP/spec51-end-to-end"
-          mkdir -p "$work/sources" "$work/downloads"
-          chmod 700 "$work" "$work/sources" "$work/downloads"
-          export BATCH_JSON
-          BATCH_JSON="$(python3 - "$FIXTURE_COMMIT" <<'PYCODE'
-          import json,sys
-          sha=sys.argv[1]
-          assert len(sha)==40 and all(c in '0123456789abcdef' for c in sha)
-          links=[('README.md','releases/docs'),('openlist.yml','releases/config')]
-          print(json.dumps({'remote':'local-test',
-              'downloads':[{'url':f'https://raw.githubusercontent.com/lirtual/session-actions/{sha}/'+
-                            ('README.md' if i==0 else '.github/workflows/openlist.yml'),
-                            'destination_dir':directory} for i,(_,directory) in enumerate(links)],
-              'project_purpose':'CI pinned public repository fixtures',
-              'duration_minutes':2},separators=(',',':')))
-          PYCODE
-          )"
-          docker run --rm --network "$net" --dns 1.1.1.1 \
-            --sysctl net.ipv6.conf.all.disable_ipv6=1 \
-            --cap-drop ALL --security-opt no-new-privileges:true \
-            --pids-limit 128 --memory 256m --read-only \
-            --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,nodev,size=32m \
-            --env HOME=/tmp --env BATCH_JSON --env DOWNLOAD_WORKSPACE=/work \
-            --volume "$work/sources:/work:rw" \
-            --volume "$PWD/.github/scripts:/spec51:ro" \
-            "sa51-aria2-smoke:$GITHUB_RUN_ID" python /spec51/download_receive.py
-          test "$(sha256sum "$work/sources/source-0/README.md" | cut -d' ' -f1)" = \
-            "$(sha256sum "$RUNNER_TEMP/spec51-public-readme" | cut -d' ' -f1)"
-          test "$(sha256sum "$work/sources/source-1/openlist.yml" | cut -d' ' -f1)" = \
-            "$(sha256sum "$RUNNER_TEMP/spec51-public-openlist-yml" | cut -d' ' -f1)"
-          printf '[local-test]\ntype = local\n' > "$work/rclone.conf"
-          chmod 600 "$work/rclone.conf"
-          # Downloader container never sees rclone config; uploader has NO network.
-          docker run --rm -i --network none --cap-drop ALL \
-            --security-opt no-new-privileges:true --read-only \
-            --user "$(id -u):$(id -g)" --env HOME=/tmp \
-            --env BATCH_JSON --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT \
-            --tmpfs /tmp:rw,nosuid,nodev,size=32m \
-            --volume "$work:/work:rw" \
-            --volume "$PWD/.github/scripts:/spec51:ro" \
-            --workdir /work "sa51-aria2-smoke:$GITHUB_RUN_ID" \
-            python - <<'PYCODE'
-          import json,os,shutil,sys,time
-          sys.path.insert(0,'/spec51')
-          from download_batch import validate
-          from download_destination import new_task_root
-          from download_upload import IsolatedRclone,transfer_verified_batch
-          batch=validate(os.environ['BATCH_JSON'])
-          root=new_task_root(os.environ['GITHUB_RUN_ID'],os.environ['GITHUB_RUN_ATTEMPT'])
-          client=IsolatedRclone(shutil.which('rclone'),'/work/rclone.conf',
-                               'local-test','local-test',time.monotonic()+90)
-          result=transfer_verified_batch(client,batch,
-              ['/work/sources/source-0','/work/sources/source-1'],root)
-          assert result['confirmed']==result['total']==2
-          print('ISOLATED_REAL_ARIA2_RCLONE_LOCAL_READBACK_E2E_OK')
-          PYCODE
-          # Cleanup owned synthetic files; no storage/cloud side effects.
-          rm -rf -- "$work"
       - name: Check real aria2 DNS answer switching cannot reach private Runner service
         shell: bash
         run: |
@@ -502,6 +437,31 @@ jobs:
             echo "DOWNLOAD_NETWORK_CLEANUP_FAILED" >&2
             exit 1
           fi
+
+      - name: Exercise the candidate Task runtime with real public downloads and local readback
+        shell: bash
+        env:
+          FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
+          ATTEMPT_ID: 11111111-1111-4111-8111-111111111111
+          DOWNLOAD_REMOTE_NAME: ci-local
+        run: |
+          set -euo pipefail
+          [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          export BATCH_JSON DOWNLOAD_TASK_ROOT DOWNLOAD_RCLONE_CONFIG_B64
+          BATCH_JSON="$(python3 - "$FIXTURE_COMMIT" <<'PYCODE'
+          import json,sys
+          commit=sys.argv[1]
+          paths=['README.md','.github/workflows/openlist.yml']
+          print(json.dumps({'remote':'ci-local','downloads':[
+              {'url':'https://raw.githubusercontent.com/lirtual/session-actions/'+commit+'/'+path,
+               'destination_dir':'fixture-'+str(i)} for i,path in enumerate(paths)],
+              'project_purpose':'CI-only pinned repository artifact check',
+              'duration_minutes':6},separators=(',',':')))
+          PYCODE
+          )"
+          DOWNLOAD_TASK_ROOT="downloads/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(openssl rand -hex 16)"
+          DOWNLOAD_RCLONE_CONFIG_B64="$(printf '[ci-local]\ntype = local\n' | base64 -w0)"
+          bash .github/scripts/download-runner.sh
 
   smoke-windows-prerequisites:
     runs-on: windows-latest

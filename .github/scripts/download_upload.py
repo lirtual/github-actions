@@ -192,3 +192,41 @@ def transfer_verified_batch(rclone, batch, source_roots, task_root):
                 error.code, confirmed, attempted) from None
     return {"confirmed": confirmed, "total": len(targets),
             "task_root": task_root}
+
+def main():
+    """Bounded Task entry point: never log URL, token, config or remote paths."""
+    import shutil
+    import sys
+    from download_batch import InvalidBatch, validate
+    try:
+        batch = validate(os.environ.get("BATCH_JSON", ""))
+        seconds = int(os.environ.get("DOWNLOAD_SECONDS", "0"))
+        if not 1 <= seconds <= 19800:
+            raise TransferUnverified("TIME_BUDGET_INVALID")
+        source_root = Path(os.environ.get("DOWNLOAD_SOURCES_DIR", ""))
+        if not source_root.is_absolute() or source_root.is_symlink():
+            raise TransferUnverified("SOURCE_UNVERIFIED")
+        paths = [source_root / ("source-" + str(i))
+                 for i in range(len(batch["downloads"]))]
+        client = IsolatedRclone(
+            shutil.which("rclone"),
+            os.environ.get("DOWNLOAD_RCLONE_CONFIG", ""),
+            batch["remote"],
+            os.environ.get("DOWNLOAD_REMOTE_NAME", ""),
+            time.monotonic() + seconds)
+        result = transfer_verified_batch(
+            client, batch, paths, os.environ.get("DOWNLOAD_TASK_ROOT", ""))
+        if result["confirmed"] != result["total"]:
+            raise TransferUnverified("REMOTE_UNVERIFIED")
+        print("REMOTE_READBACK_VERIFIED files=" + str(result["confirmed"]))
+        return 0
+    except (TransferUnverified, InvalidBatch, OSError, TypeError,
+            ValueError, KeyError) as error:
+        code = error.code if isinstance(error, TransferUnverified) else "TASK_UNVERIFIED"
+        # No paths, URLs, exception strings, OAuth config or token in logs.
+        print("DOWNLOAD_FAILED_OR_UNKNOWN:" + code, file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
