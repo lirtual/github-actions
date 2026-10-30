@@ -50,7 +50,8 @@ class LocalRcloneIntegration(unittest.TestCase):
         (self.roots[0] / "same.zip").write_bytes(b"first" * 1000)
         (self.roots[1] / "same.zip").write_bytes(b"second" * 1000)
         self.batch = validate(BATCH)
-        self.root = new_task_root("1001", "1")
+        self.base_dir = "downloads"
+        self.root = new_task_root("1001", "1", self.base_dir)
 
     def backend(self):
         return IsolatedRclone(
@@ -59,7 +60,7 @@ class LocalRcloneIntegration(unittest.TestCase):
 
     def test_two_sources_same_filename_are_isolated_and_read_back(self):
         result = transfer_verified_batch(
-            self.backend(), self.batch, self.roots, self.root)
+            self.backend(), self.batch, self.roots, self.root, self.base_dir)
         self.assertEqual((2, 2), (result["confirmed"], result["total"]))
         self.assertEqual(self.root, result["task_root"])
         for index, part in enumerate(("first", "second")):
@@ -68,6 +69,37 @@ class LocalRcloneIntegration(unittest.TestCase):
             self.assertEqual((self.roots[index] / "same.zip").read_bytes(),
                              uploaded.read_bytes())
 
+    def test_existing_custom_base_supports_real_rclone_readback(self):
+        self.base_dir = "Projects/Artifacts"
+        (self.path / self.base_dir).mkdir(parents=True)
+        self.root = new_task_root("1001", "1", self.base_dir)
+        result = transfer_verified_batch(
+            self.backend(), self.batch, self.roots, self.root, self.base_dir)
+        self.assertEqual((2, 2), (result["confirmed"], result["total"]))
+        self.assertTrue((self.path / self.root /
+                         "releases/first/same.zip").is_file())
+        self.assertFalse((self.path / "downloads" / self.root).exists())
+
+    def test_missing_custom_base_cannot_be_created_implicitly(self):
+        self.base_dir = "Projects/Missing"
+        (self.path / "Projects").mkdir()
+        self.root = new_task_root("1001", "1", self.base_dir)
+        with self.assertRaises(TransferUnverified) as caught:
+            transfer_verified_batch(self.backend(), self.batch,
+                                    self.roots, self.root, self.base_dir)
+        self.assertIn(caught.exception.code,
+                      ("DESTINATION_UNVERIFIED", "REMOTE_UNAVAILABLE"))
+        self.assertFalse((self.path / self.base_dir).exists())
+
+    def test_base_name_case_alias_is_not_accepted(self):
+        self.base_dir = "Projects/Artifacts"
+        (self.path / "Projects" / "artifacts").mkdir(parents=True)
+        self.root = new_task_root("1001", "1", self.base_dir)
+        with self.assertRaises(TransferUnverified) as caught:
+            transfer_verified_batch(self.backend(), self.batch,
+                                    self.roots, self.root, self.base_dir)
+        self.assertEqual("DESTINATION_UNVERIFIED", caught.exception.code)
+
     def test_existing_task_root_fails_without_touching_existing_bytes(self):
         existing = self.path / self.root
         existing.mkdir()
@@ -75,7 +107,7 @@ class LocalRcloneIntegration(unittest.TestCase):
         protected.write_bytes(b"do-not-touch")
         with self.assertRaises(TransferUnverified) as caught:
             transfer_verified_batch(self.backend(), self.batch,
-                                    self.roots, self.root)
+                                    self.roots, self.root, self.base_dir)
         self.assertEqual("DESTINATION_EXISTS", caught.exception.code)
         self.assertEqual(b"do-not-touch", protected.read_bytes())
 
@@ -83,7 +115,7 @@ class LocalRcloneIntegration(unittest.TestCase):
         (self.path / "downloads").rmdir()
         with self.assertRaises(TransferUnverified):
             transfer_verified_batch(self.backend(), self.batch,
-                                    self.roots, self.root)
+                                    self.roots, self.root, self.base_dir)
         self.assertFalse((self.path / self.root).exists())
 
     def test_user_supplied_remote_cannot_differ_from_approved(self):
@@ -96,7 +128,7 @@ class LocalRcloneIntegration(unittest.TestCase):
         self.batch["remote"] = "another"
         with self.assertRaises(TransferUnverified) as caught:
             transfer_verified_batch(self.backend(), self.batch,
-                                    self.roots, self.root)
+                                    self.roots, self.root, self.base_dir)
         self.assertEqual("REMOTE_UNAVAILABLE", caught.exception.code)
         self.assertFalse((self.path / self.root).exists())
 
@@ -109,7 +141,7 @@ class LocalRcloneIntegration(unittest.TestCase):
         self.batch["downloads"][1]["destination_dir"] = "releases/first"
         with self.assertRaises(TransferUnverified) as caught:
             transfer_verified_batch(self.backend(), self.batch,
-                                    self.roots, self.root)
+                                    self.roots, self.root, self.base_dir)
         self.assertEqual("DESTINATION_UNVERIFIED", caught.exception.code)
         self.assertFalse((self.path / self.root).exists())
 
@@ -126,7 +158,7 @@ class LocalRcloneIntegration(unittest.TestCase):
 
         instance.upload = fail_second
         with self.assertRaises(TransferUnverified) as caught:
-            transfer_verified_batch(instance, self.batch, self.roots, self.root)
+            transfer_verified_batch(instance, self.batch, self.roots, self.root, self.base_dir)
         self.assertEqual((1, 2), (caught.exception.confirmed,
                                   caught.exception.attempted))
         self.assertEqual("REMOTE_UNKNOWN", caught.exception.code)
@@ -137,7 +169,7 @@ class LocalRcloneIntegration(unittest.TestCase):
         captured = io.StringIO()
         with redirect_stdout(captured):
             result = transfer_verified_batch(
-                self.backend(), self.batch, self.roots, self.root)
+                self.backend(), self.batch, self.roots, self.root, self.base_dir)
         self.assertEqual(2, result["confirmed"])
         rows = [row for row in captured.getvalue().splitlines()
                 if row.startswith("DOWNLOAD_FILE_VERIFIED ")]
@@ -156,7 +188,7 @@ class LocalRcloneIntegration(unittest.TestCase):
         instance = self.backend()
         instance.readback_sha256 = lambda _path: (999, "0" * 64)
         with self.assertRaises(TransferUnverified) as caught:
-            transfer_verified_batch(instance, self.batch, self.roots, self.root)
+            transfer_verified_batch(instance, self.batch, self.roots, self.root, self.base_dir)
         self.assertEqual("REMOTE_UNVERIFIED", caught.exception.code)
         self.assertEqual(0, caught.exception.confirmed)
         self.assertEqual(1, caught.exception.attempted)
@@ -169,6 +201,7 @@ class UploadFailureSummaryTests(unittest.TestCase):
                "DOWNLOAD_SOURCES_DIR": str(Path.cwd()),
                "DOWNLOAD_TASK_ROOT": "downloads/run-1001-1-" + "f"*32,
                "DOWNLOAD_REMOTE_NAME": "local-test",
+               "DOWNLOAD_REMOTE_BASE_DIR": "downloads",
                "DOWNLOAD_RCLONE_CONFIG": str(Path.cwd() / "spec51-test-config"),
                "DOWNLOAD_DEADLINE": str(time.monotonic() + 45)}
         log = io.StringIO()
@@ -195,7 +228,7 @@ class FocusedFileVerificationTests(unittest.TestCase):
             self.before_upload = None
             self.before_root = None
 
-        def create_empty_task_root(self, task_root):
+        def create_empty_task_root(self, task_root, base_dir):
             if self.before_root is not None:
                 self.before_root()
 
@@ -227,7 +260,7 @@ class FocusedFileVerificationTests(unittest.TestCase):
                 with patch("download_manifest._file_digest",
                            wraps=download_manifest._file_digest) as digests:
                     result = transfer_verified_batch(
-                        client, batch, [root], new_task_root("1001", "1"))
+                        client, batch, [root], new_task_root("1001", "1", "downloads"), "downloads")
             self.assertEqual((48, 48),
                              (result["confirmed"], result["total"]))
             self.assertEqual(48, len(client.uploaded))
@@ -250,7 +283,7 @@ class FocusedFileVerificationTests(unittest.TestCase):
             client.before_root = lambda: file.write_bytes(b"modified")
             with self.assertRaises(TransferUnverified) as caught:
                 transfer_verified_batch(client, batch, [root],
-                                        new_task_root("1002", "1"))
+                                        new_task_root("1002", "1", "downloads"), "downloads")
             self.assertEqual("SOURCE_UNVERIFIED", caught.exception.code)
             self.assertEqual((0, 1), (caught.exception.confirmed,
                                      caught.exception.attempted))
@@ -280,7 +313,7 @@ class FocusedFileVerificationTests(unittest.TestCase):
                 client.before_root = change_tree
                 with self.subTest(mode=mode), self.assertRaises(TransferUnverified) as caught:
                     transfer_verified_batch(client, batch, [root],
-                                            new_task_root("1003", "1"))
+                                            new_task_root("1003", "1", "downloads"), "downloads")
                 self.assertEqual("SOURCE_UNVERIFIED", caught.exception.code)
                 self.assertFalse(client.uploaded)
                 if mode == "symlink":
@@ -307,7 +340,7 @@ class FocusedFileVerificationTests(unittest.TestCase):
             client.before_upload = after_first
             with self.assertRaises(TransferUnverified) as caught:
                 transfer_verified_batch(client, batch, [root],
-                                        new_task_root("1004", "1"))
+                                        new_task_root("1004", "1", "downloads"), "downloads")
             self.assertEqual("SOURCE_UNVERIFIED", caught.exception.code)
             self.assertEqual((1, 2), (caught.exception.confirmed,
                                      caught.exception.attempted))

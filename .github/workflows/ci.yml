@@ -471,6 +471,7 @@ jobs:
           FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
           ATTEMPT_ID: 11111111-1111-4111-8111-111111111111
           DOWNLOAD_REMOTE_NAME: ci-local
+          DOWNLOAD_REMOTE_BASE_DIR: downloads
         run: |
           set -euo pipefail
           [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
