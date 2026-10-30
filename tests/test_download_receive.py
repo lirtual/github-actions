@@ -1,4 +1,6 @@
 """Spec #51 isolated receiver: fail closed before launching aria2."""
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -6,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / ".github/scripts"
@@ -23,6 +26,21 @@ BATCH = json.dumps({
 
 
 class ReceiverTests(unittest.TestCase):
+    def test_verified_source_audit_binds_gid_and_url_without_leaking_url(self):
+        import download_receive
+        source = "https://example.org/unpublished/release.zip"
+        out = io.StringIO()
+        with redirect_stdout(out):
+            download_receive._emit_source_audit(
+                1, "0123456789abcdef", source, {"file_count": 2, "total_bytes": 42})
+        value = out.getvalue()
+        self.assertIn("DOWNLOAD_SOURCE_VERIFIED source_index=1", value)
+        self.assertIn("gid=0123456789abcdef", value)
+        self.assertIn("url_sha256=" + hashlib.sha256(source.encode()).hexdigest(), value)
+        self.assertIn("status=complete files=2 bytes=42", value)
+        self.assertNotIn("unpublished", value)
+        self.assertNotIn("https://", value)
+
     def test_entrypoint_reuses_absolute_deadline_and_rejects_expiry(self):
         import download_receive
         deadline = time.monotonic() + 55

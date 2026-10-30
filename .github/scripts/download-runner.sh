@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spec #51: source network isolation + separate authorized rclone upload.
 # Called only AFTER verified GitHub OIDC Claim and bounded input validation.
-# This is a candidate runtime; download.yml remains fail-closed until released.
+# Formal production admission remains Owner-gated; controlled E2E is supported.
 set -euo pipefail
 umask 077
 
@@ -19,7 +19,7 @@ export BATCH_JSON
 [[ -n ${BATCH_JSON:-} && -n ${DOWNLOAD_REMOTE_NAME:-} && -n ${DOWNLOAD_RCLONE_CONFIG_B64:-} ]] || deny
 [[ ${GITHUB_RUN_ID:-} =~ ^[1-9][0-9]{0,19}$ && ${GITHUB_RUN_ATTEMPT:-} =~ ^[1-9][0-9]{0,19}$ ]] || deny
 [[ "$DOWNLOAD_TASK_ROOT" == downloads/run-"$GITHUB_RUN_ID"-"$GITHUB_RUN_ATTEMPT"-* ]] || deny
-for binary in docker python3 base64 sha256sum sudo; do command -v "$binary" >/dev/null || deny; done
+for binary in docker python3 base64 sha256sum sudo timeout; do command -v "$binary" >/dev/null || deny; done
 
 python3 "$repo/.github/scripts/download_batch.py" >/dev/null || deny
 # No user-provided relative/absolute paths are interpolated into shell commands.
@@ -58,6 +58,21 @@ print("%.6f" % (time.monotonic() + minutes * 60 - reserve))
 PYCODE
 )"
 export DOWNLOAD_DEADLINE
+# Bound blocking setup as well as transfer/readback by the same Task deadline.
+# GNU timeout stops a stuck Docker CLI with time reserved for normal cleanup.
+run_before_deadline() {
+  local remaining
+  remaining="$(python3 - <<'PYTIME'
+import os
+import time
+seconds = float(os.environ["DOWNLOAD_DEADLINE"]) - time.monotonic()
+if seconds <= 1:
+    raise SystemExit(124)
+print(f"{seconds:.3f}s")
+PYTIME
+  )" || return 124
+  timeout --signal=TERM --kill-after=5s "$remaining" "$@"
+}
 # Fail before any download when the ephemeral workspace is already exhausted;
 # subsequent I/O failures still fail closed without inventing a file-size cap.
 python3 - <<'PYCODE' || deny
@@ -72,26 +87,26 @@ unset DOWNLOAD_RCLONE_CONFIG_B64
 
 # Fixed base digest and locked Alpine package versions; verify actual
 # aria2/rclone binary hashes before starting either payload container.
-docker build --quiet --tag "$image" - <<'DOCKER'
+run_before_deadline docker build --quiet --tag "$image" - <<'DOCKER'
 FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
 RUN apk add --no-cache "aria2=1.37.0-r2" "rclone=1.74.1-r3"
 DOCKER
 
 # The x86_64 runner must use the exact binary builds verified by CI.
 # An Alpine package change or other architecture is a fail-closed error.
-docker run --rm --network none --entrypoint sh "$image" -c \
+run_before_deadline docker run --rm --network none --entrypoint sh "$image" -c \
   'printf "%s\n" \
     "0bbbf651a55faa76c027bdf6a0ae5dcea1b87ba17c077d0285a2199558dad0cb  /usr/bin/aria2c" \
     "63f6ccc732c9a8a86995a8293b1c4df1f6bd9abe5b40e1321f9e2920591572d5  /usr/bin/rclone" | sha256sum -c -s' || deny
 
-bash "$repo/.github/scripts/download-network.sh" setup
+run_before_deadline bash "$repo/.github/scripts/download-network.sh" setup
 network_armed=1
 suffix="$(printf '%s' "$ATTEMPT_ID" | cut -c1-8 | tr '[:upper:]' '[:lower:]')"
 network="sa51-$suffix"
 
 # No token, rclone config, host home, Docker socket, or GitHub metadata is
 # available to untrusted HTTP(S) download content.
-docker run --rm --network "$network" --dns 1.1.1.1 \
+run_before_deadline docker run --rm --network "$network" --dns 1.1.1.1 \
   --sysctl net.ipv6.conf.all.disable_ipv6=1 \
   --cap-drop ALL --security-opt no-new-privileges:true \
   --pids-limit 128 --memory 512m --read-only --user "$(id -u):$(id -g)" \
@@ -105,7 +120,7 @@ docker run --rm --network "$network" --dns 1.1.1.1 \
 # Full source closure is proven before upload; the producer exited and its
 # root is mounted read-only. The uploader alone can read the OAuth config.
 # It cannot access private/metadata addresses, the host or Docker socket.
-docker run --rm --network "$network" --dns 1.1.1.1 \
+run_before_deadline docker run --rm --network "$network" --dns 1.1.1.1 \
   --sysctl net.ipv6.conf.all.disable_ipv6=1 \
   --cap-drop ALL --security-opt no-new-privileges:true \
   --pids-limit 128 --memory 512m --read-only --user "$(id -u):$(id -g)" \

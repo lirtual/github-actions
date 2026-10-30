@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import io
 
 SCRIPTS = Path(__file__).resolve().parents[1] / ".github/scripts"
@@ -132,6 +132,25 @@ class LocalRcloneIntegration(unittest.TestCase):
         self.assertEqual("REMOTE_UNKNOWN", caught.exception.code)
         self.assertTrue((self.path / self.root /
                          "releases/first/same.zip").exists())
+
+    def test_verified_file_audit_is_hash_bound_and_path_redacted(self):
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            result = transfer_verified_batch(
+                self.backend(), self.batch, self.roots, self.root)
+        self.assertEqual(2, result["confirmed"])
+        rows = [row for row in captured.getvalue().splitlines()
+                if row.startswith("DOWNLOAD_FILE_VERIFIED ")]
+        self.assertEqual(2, len(rows))
+        for index, row in enumerate(rows):
+            self.assertIn("source_index=" + str(index), row)
+            self.assertIn("target_sha256=", row)
+            self.assertIn("sha256=", row)
+            self.assertIn("size=", row)
+            self.assertNotIn(self.root, row)
+            self.assertNotIn("same.zip", row)
+            self.assertNotIn("releases/", row)
+            self.assertNotIn("https://", row)
 
     def test_remote_content_mismatch_does_not_claim_success(self):
         instance = self.backend()

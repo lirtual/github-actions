@@ -1,6 +1,6 @@
 """Spec #51: physical GitHub Task Claim/order and credential isolation guards.
 
-Candidate workflow is Draft-only; CI checks do not claim cloud deployment.
+CI static checks do not replace the separate controlled cloud E2E.
 """
 import re
 import unittest

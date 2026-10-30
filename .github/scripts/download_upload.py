@@ -189,6 +189,15 @@ def transfer_verified_batch(rclone, batch, source_roots, task_root):
             if size != expected["size"] or checksum != expected["sha256"]:
                 raise TransferUnverified("REMOTE_UNVERIFIED")
             confirmed += 1
+            # A public GitHub log can retain a per-file, privacy-safe
+            # confirmation without disclosing URL/remote/path or cloud tokens.
+            # The exact target is privately reconstructible from the batch,
+            # actual local manifest and the Task root, not exposed here.
+            print("DOWNLOAD_FILE_VERIFIED",
+                  "source_index=" + str(index),
+                  "target_sha256=" + hashlib.sha256(
+                      target["relative_target"].encode("utf-8")).hexdigest(),
+                  "size=" + str(size), "sha256=" + checksum, flush=True)
         except TransferUnverified as error:
             raise TransferUnverified(
                 error.code, confirmed, attempted) from None

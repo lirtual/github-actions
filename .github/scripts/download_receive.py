@@ -5,6 +5,7 @@ No cloud configuration or host Docker socket. Only public HTTP(S) batch sources.
 Returns a private local receipt AFTER GID, URL and exact file-tree closure.
 This does not set up an egress firewall; caller must arm the proven bridge.
 """
+import hashlib
 import json
 import math
 import os
@@ -22,6 +23,17 @@ from download_source import SourceUnverified, verify_http_source_uris, verify_sn
 
 class DownloadUnverified(Exception):
     pass
+
+
+def _emit_source_audit(index, gid, approved_url, manifest):
+    """Verify-origin evidence, without publishing public-project source URLs."""
+    print("DOWNLOAD_SOURCE_VERIFIED",
+          "source_index=" + str(index),
+          "gid=" + gid,
+          "url_sha256=" + hashlib.sha256(approved_url.encode("utf-8")).hexdigest(),
+          "status=complete",
+          "files=" + str(manifest["file_count"]),
+          "bytes=" + str(manifest["total_bytes"]), flush=True)
 
 
 def _rpc(secret, method, *args):
@@ -114,8 +126,13 @@ def receive(batch_json, workspace, deadline):
             if record["status"].get("dir") != str(root):
                 raise DownloadUnverified("SOURCE_DIR_MISMATCH")
             verify_http_source_uris(record["files"], link["url"])
-            manifests.append(verify_snapshot(
-                str(root), gid, record["status"], record["files"]))
+            manifest = verify_snapshot(
+                str(root), gid, record["status"], record["files"])
+            manifests.append(manifest)
+            # The public repository's Job logs must never expose raw URLs,
+            # names or complete paths. Input-held URL digests let an Owner
+            # correlate actual verified aria2 GIDs with the approved batch.
+            _emit_source_audit(len(manifests) - 1, gid, link["url"], manifest)
         return {"sources": len(gids),
                 "files": sum(m["file_count"] for m in manifests),
                 "bytes": sum(m["total_bytes"] for m in manifests)}
