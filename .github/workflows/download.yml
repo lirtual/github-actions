@@ -22,8 +22,8 @@ on:
 # Unpublished draft of Spec #51's immutable GitHub Task.
 # Safe by construction: it does not launch aria2/rclone, access cloud storage,
 # connect to MySQL, download sources or emit signed success receipts.
-# It fails closed until provider atomicity, egress and final transfer closure
-# have independent real evidence and a separate production approval.
+# It fails closed until task-isolated destination creation, egress and full
+# upload/readback E2E have independent evidence and separate production approval.
 env:
   WORKFLOW_ACTION_TYPE: task
 
@@ -62,8 +62,15 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/download_batch.py
 
+      - name: Allocate server-owned Task destination namespace
+        id: task_destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/download_destination.py
+
       - name: Block unverified download and cloud writes
         shell: bash
         run: |
-          echo 'DOWNLOAD_UNAVAILABLE: qualified rclone remote, atomic no-clobber, isolation and E2E not yet proven' >&2
+          echo 'DOWNLOAD_UNAVAILABLE: isolated cloud destination, egress and E2E not yet proven' >&2
           exit 1

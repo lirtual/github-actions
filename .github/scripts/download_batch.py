@@ -3,7 +3,7 @@
 
 Syntax is NOT network authorization, remote qualification, or permission to
 perform uploads. The immutable Task must remain disabled until its full gates
-(including independent storage atomicity proof) are satisfied.
+(including Task root isolation and real remote readback) are satisfied.
 """
 import ipaddress
 import json
@@ -151,7 +151,7 @@ def main():
         print('BATCH_REJECTED:' + str(error), file=sys.stderr)
         return 2
     print('BATCH_SYNTAX_VALID: links=' + str(len(batch['downloads'])))
-    print('RUNTIME_NOT_AUTHORIZED: isolation, destination and remote atomicity unverified')
+    print('RUNTIME_NOT_AUTHORIZED: task root isolation, egress and remote readback unverified')
     return 0
 
 

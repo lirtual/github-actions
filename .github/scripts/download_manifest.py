@@ -3,7 +3,7 @@
 
 This can prove what regular files were observed locally, including nested
 directories. It does NOT prove aria2/OpenList source or child task ownership,
-remote destination creation or server-side atomic no-overwrite.
+remote Task-root isolation or independent cloud readback.
 Never print or serialize the returned paths to GitHub logs.
 """
 import hashlib

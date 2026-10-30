@@ -37,27 +37,30 @@ class DownloadWorkflowTests(unittest.TestCase):
 
     def test_exact_steps_prevent_premature_download_or_upload(self):
         steps = re.split(r"(?m)^      - name: ", YAML)
-        self.assertEqual(5, len(steps), "unexpected Task step added")
-        checkout, claim, validate, deny = steps[1:]
+        self.assertEqual(6, len(steps), "unexpected Task step added")
+        checkout, claim, validate, namespace, deny = steps[1:]
         self.assertTrue(checkout.startswith("Checkout pinned dispatched revision\n"))
         self.assertTrue(claim.startswith("Claim approved physical GitHub Task before any privileged action\n"))
         self.assertTrue(validate.startswith("Validate approved public-source batch before any side effects\n"))
+        self.assertTrue(namespace.startswith("Allocate server-owned Task destination namespace\n"))
+        self.assertIn("id: task_destination", namespace)
         self.assertTrue(deny.startswith("Block unverified download and cloud writes\n"))
         self.assertEqual(1, YAML.count("        uses:"))
-        self.assertEqual(3, YAML.count("        run: |"))
+        self.assertEqual(4, YAML.count("        run: |"))
         self.assertIn("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683", checkout)
         self.assertEqual("set -euo pipefail\npython3 .github/scripts/session_action.py claim",
                          commands(claim))
         self.assertEqual("set -euo pipefail\npython3 .github/scripts/download_batch.py",
                          commands(validate))
         self.assertEqual(
-            "echo 'DOWNLOAD_UNAVAILABLE: qualified rclone remote, atomic no-clobber, "
-            "isolation and E2E not yet proven' >&2\nexit 1",
+            "echo 'DOWNLOAD_UNAVAILABLE: isolated cloud destination, "
+            "egress and E2E not yet proven' >&2\nexit 1",
             commands(deny))
         self.assertIn("WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}", claim)
         self.assertIn("WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}", claim)
         self.assertIn("BATCH_JSON: ${{ inputs.batch_json }}", validate)
-        for step in (claim, validate, deny):
+        self.assertEqual("set -euo pipefail\npython3 .github/scripts/download_destination.py", commands(namespace))
+        for step in (claim, validate, namespace, deny):
             self.assertNotIn("        uses:", step)
             self.assertIn("        shell: bash", step)
 
@@ -80,7 +83,7 @@ class DownloadWorkflowTests(unittest.TestCase):
                     YAML.replace(original, original + injected))
 
     def test_premature_inserted_upload_is_rejected_by_exact_command_guard(self):
-        _prefix, _checkout, _claim, validate, _deny = re.split(
+        _prefix, _checkout, _claim, validate, _namespace, _deny = re.split(
             r"(?m)^      - name: ", YAML)
         unsafe = validate.replace(
             "          python3 .github/scripts/download_batch.py",
