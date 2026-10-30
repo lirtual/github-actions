@@ -110,6 +110,9 @@ def main():
         with os.fdopen(fd, 'a', encoding='ascii') as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise DestinationUnverified('DESTINATION_UNVERIFIED')
+            # The add-mask command takes effect before subsequent step env
+            # banners reveal outputs; do not print the private suffix in logs.
+            print('::add-mask::' + root, flush=True)
             stream.write('task_root=' + root + '\n')
         print('TASK_ROOT_ALLOCATED')
         return 0
