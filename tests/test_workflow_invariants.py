@@ -558,6 +558,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
         import subprocess
         import textwrap
 
+        if os.name == "nt":
+            self.skipTest("The verification Task and bounded hold run on ubuntu-latest")
+
         source = (ROOT / ".github/workflows/verify-action.yml").read_text()
         claim = source.index("Claim approved physical Run before any task work")
         hold = source.index("Hold bounded Task after signed Claim")
