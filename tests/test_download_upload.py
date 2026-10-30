@@ -11,6 +11,9 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+from contextlib import redirect_stderr
+import io
 
 SCRIPTS = Path(__file__).resolve().parents[1] / ".github/scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -142,3 +145,24 @@ class LocalRcloneIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class UploadFailureSummaryTests(unittest.TestCase):
+    def test_unknown_second_write_preserves_confirmed_and_attempted_counts(self):
+        import download_upload
+        env = {"BATCH_JSON": BATCH,
+               "DOWNLOAD_SOURCES_DIR": "/tmp/spec51-test-sources",
+               "DOWNLOAD_TASK_ROOT": "downloads/run-1001-1-" + "f"*32,
+               "DOWNLOAD_REMOTE_NAME": "local-test",
+               "DOWNLOAD_RCLONE_CONFIG": "/tmp/spec51-test-config",
+               "DOWNLOAD_DEADLINE": str(time.monotonic() + 45)}
+        log = io.StringIO()
+        with patch.dict(os.environ, env):
+            with patch("download_upload.IsolatedRclone") as client:
+                client.return_value.remote = "local-test"
+                with patch("download_upload.transfer_verified_batch",
+                           side_effect=TransferUnverified("REMOTE_UNKNOWN", confirmed=1,
+                                                         attempted=2)):
+                    with redirect_stderr(log):
+                        self.assertEqual(2, download_upload.main())
+        self.assertIn("REMOTE_UNKNOWN confirmed=1 attempted=2", log.getvalue())
+        self.assertNotIn("https://", log.getvalue())
