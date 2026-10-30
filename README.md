@@ -27,9 +27,28 @@ The existing GitHub **Environment `download`** uses these settings (verify them 
 - **Variable `DOWNLOAD_REMOTE_NAME`**: the single approved rclone Remote name; currently `koofr`.
 - **Variable `DOWNLOAD_REMOTE_BASE_DIR`**: an **explicit, already existing** relative directory inside that Remote; currently case-sensitive `Downloads`. Missing, invalid, differently cased or nonexistent directories are rejected; there is no implicit fallback to the cloud root.
 
-The Owner controls the base directory; the caller may only provide a validated per-download relative `destination_dir` and must use the fixed Remote. Every physical GitHub Run/Attempt allocates a fresh unpredictable `<base>/run-<run-id>-<attempt>-<random>/` directory. The Task does not target existing files, retry uncertain writes or delete cloud objects on failure. Its preflight checks are not a cloud-provider atomic create-only guarantee.
+The Owner controls the destination root, and the Task caller cannot override it.
+**Next release candidate (local changes, not yet deployed):** a URL-only batch
+writes directly to `<remote>:<base>/<downloaded-filename>` (currently
+`koofr:Downloads/<downloaded-filename>`), without any `run-...` directory.
+The existing optional validated `destination_dir` remains available for
+explicit relative subdirectories. Each batch checks all target paths and
+case-insensitive aliases before the first upload, rejects existing objects,
+uses rclone `--immutable` and independently reads back SHA-256. There is no
+cloud-provider atomic create-only guarantee: another writer can still race
+between existence checks and writes. A conflict fails, never silently replaces
+an already-discovered file. Partial/unknown uploads remain non-success and are
+never automatically replayed or deleted.
 
-As of 2026-10-30, Q38 is implemented and the prior pinned `rc.5` candidate completed real Koofr Workflow→GitHub→remote SHA-256 readback (2/2 files; [physical Run #41019094536](https://github.com/lirtual/session-actions/actions/runs/41019094536)). The production `rc.6` Azure WireServer egress-only patch passed [PR CI](https://github.com/lirtual/session-actions/actions/runs/41022550372) and [main CI](https://github.com/lirtual/session-actions/actions/runs/41022698376); a separate live `rc.6` Koofr transfer was not performed. The dedicated test Workflow remains paused. The production Workflow accepts a single-element `download_batches` array containing one JSON `batch_json` string (that batch may hold multiple public HTTP(S) URLs); use a unique `idempotency_key` for each manual Run. Changes to the Owner-controlled Remote or base affect future Tasks and require an appropriately scoped revalidation; they do not change the pinned code revision. The Owner-accepted Q13 public-HTTPS egress boundary and Q15 non-atomic cloud race remain; live mid-upload fault injection was **Waived / Not performed**, and the Q34 signed success receipt remains **Optional / Not implemented** (`result=null`).
+The **currently published** `rc.6` Workflow still creates isolated random
+Task roots until a new immutable release and a separately authorized production
+publication occur. The old `rc.5` production Koofr E2E and `rc.6` network
+regression evidence remain valid for those exact revisions only. Production
+uses manual, authenticated runs with single-element `download_batches` where
+the one JSON batch may contain multiple public HTTP(S) URLs. The existing
+Q13 public-HTTPS egress guarantee, Q15 non-atomic write residual risk,
+Owner-waived live mid-upload fault injection, and Q34 optional signed success
+receipt remain unchanged.
 
 ## Five native Session Actions
 

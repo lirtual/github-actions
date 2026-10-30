@@ -17,7 +17,7 @@ import stat
 import subprocess
 import time
 
-from download_destination import plan_targets, verify_task_root, approved_base_dir
+from download_destination import plan_targets, approved_base_dir
 from download_manifest import TreeUnverified, census_tree, verify_manifest_file
 
 REMOTE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
@@ -89,16 +89,13 @@ class IsolatedRclone:
             raise TransferUnverified("REMOTE_UNAVAILABLE")
         return value
 
-    def create_empty_task_root(self, task_root, base_dir):
-        """Require an existing Owner base and an unused random Task root.
+    def verify_destinations_absent(self, targets, base_dir):
+        """Fail before the first upload if any target exists, including case aliases.
 
-        Each remote read and mkdir is non-atomic with other cloud writers.
-        A missing/mis-cased base never causes implicit parent creation.
+        Cloud listings and uploads are not atomic against other writers.
+        --immutable provides defense in depth but is not a server create-only lock.
         """
         base = approved_base_dir(base_dir)
-        root = verify_task_root(task_root, base)
-        # Check every segment against an actual parent listing: backends may
-        # resolve intermediate components using case-insensitive aliases.
         parent = ""
         for segment in base.split("/"):
             entries = self._invoke(
@@ -110,18 +107,35 @@ class IsolatedRclone:
                 raise TransferUnverified("DESTINATION_UNVERIFIED")
             parent = parent + "/" + segment if parent else segment
 
-        suffix = root.rsplit("/", 1)[-1]
-        listing = self._invoke(
-            ["lsjson", self.remote + ":" + base, "--max-depth", "1"], True)
-        if any(item["Path"].casefold() == suffix.casefold() for item in listing):
-            raise TransferUnverified("DESTINATION_EXISTS")
-        self._invoke(["mkdir", self.remote + ":" + root])
-        if self._invoke(
-                ["lsjson", self.remote + ":" + root, "--max-depth", "1"], True):
-            raise TransferUnverified("DESTINATION_EXISTS")
+        # Cache listings so a batch checks every destination before any write.
+        listings = {}
+        for target in targets:
+            segments = target["relative_target"].split("/")
+            directory = base
+            for i, segment in enumerate(segments):
+                if directory not in listings:
+                    listings[directory] = self._invoke(
+                        ["lsjson", self.remote + ":" + directory,
+                         "--max-depth", "1"], True)
+                matches = [item for item in listings[directory]
+                           if item["Path"].casefold() == segment.casefold()]
+                if len(matches) > 1:
+                    raise TransferUnverified("DESTINATION_UNVERIFIED")
+                if i == len(segments) - 1:
+                    if matches:
+                        raise TransferUnverified("DESTINATION_EXISTS")
+                    break
+                if not matches:
+                    # Absent parent: no existing file can live below it.
+                    break
+                if matches[0]["Path"] != segment or not matches[0]["IsDir"]:
+                    raise TransferUnverified("DESTINATION_UNVERIFIED")
+                directory += "/" + segment
 
     def upload(self, local_file, remote_path):
-        self._invoke(["copyto", str(local_file), self.remote + ":" + remote_path])
+        # Never deliberately overwrite a different existing object.
+        self._invoke(["copyto", str(local_file), self.remote + ":" + remote_path,
+                      "--immutable"])
 
     def readback_sha256(self, remote_path):
         """Stream and hash rclone cat; do not buffer whole remote file."""
@@ -155,8 +169,8 @@ class IsolatedRclone:
         return size, checksum.hexdigest()
 
 
-def transfer_verified_batch(rclone, batch, source_roots, task_root, base_dir):
-    """Build complete validated plan, create Task root and verify each write.
+def transfer_verified_batch(rclone, batch, source_roots, base_dir):
+    """Build complete validated plan, reject existing targets and verify writes.
 
     Source roots must be exclusive, quiesced aria2 locations whose actual GIDs
     and source URLs were already verified before calling. No remote rollback.
@@ -177,12 +191,12 @@ def transfer_verified_batch(rclone, batch, source_roots, task_root, base_dir):
             raise TransferUnverified("SOURCE_UNVERIFIED") from None
     paths = [[f["relative_path"] for f in m["files"]] for m in manifests]
     try:
-        targets = plan_targets(batch, paths, task_root, base_dir)
+        targets = plan_targets(batch, paths, base_dir)
     except (ValueError, KeyError, TypeError):
         raise TransferUnverified("DESTINATION_UNVERIFIED") from None
     by_source = [{f["relative_path"]: f for f in m["files"]}
                  for m in manifests]
-    rclone.create_empty_task_root(task_root, base_dir)
+    rclone.verify_destinations_absent(targets, base_dir)
     confirmed = attempted = 0
     for target in targets:
         attempted += 1
@@ -215,8 +229,7 @@ def transfer_verified_batch(rclone, batch, source_roots, task_root, base_dir):
         except TransferUnverified as error:
             raise TransferUnverified(
                 error.code, confirmed, attempted) from None
-    return {"confirmed": confirmed, "total": len(targets),
-            "task_root": task_root}
+    return {"confirmed": confirmed, "total": len(targets)}
 
 def main():
     """Bounded Task entry point: never log URL, token, config or remote paths."""
@@ -241,8 +254,7 @@ def main():
             os.environ.get("DOWNLOAD_REMOTE_NAME", ""),
             deadline)
         result = transfer_verified_batch(
-            client, batch, paths, os.environ.get("DOWNLOAD_TASK_ROOT", ""),
-            os.environ.get("DOWNLOAD_REMOTE_BASE_DIR"))
+            client, batch, paths, os.environ.get("DOWNLOAD_REMOTE_BASE_DIR"))
         if result["confirmed"] != result["total"]:
             raise TransferUnverified("REMOTE_UNVERIFIED")
         print("REMOTE_READBACK_VERIFIED files=" + str(result["confirmed"]))

@@ -56,6 +56,12 @@ class DownloadBatchTests(unittest.TestCase):
         del batch['duration_minutes']
         self.assertEqual(300, download.validate(json.dumps(batch))['duration_minutes'])
 
+    def test_url_only_defaults_to_direct_owner_root(self):
+        approved = download.validate(sample(downloads=[
+            {'url': 'https://example.org/Clash.Verge-2.5.8-1.aarch64.rpm'}]))
+        self.assertEqual('', approved['downloads'][0]['destination_dir'])
+        self.assertNotIn('destination_path', approved['downloads'][0])
+
     def test_reject_second_or_dynamic_remote_and_legacy_openlist(self):
         for remote in ('', 'Koofr:/folder', '/Koofr', '../drive', 'foo/bar', 'a.b',
                        'remote name', '_hidden', 'http://host', 'x'*65):

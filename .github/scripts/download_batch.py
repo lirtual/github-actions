@@ -127,10 +127,11 @@ def validate(payload):
     approved = []
     dirs = []
     for item in sources:
-        if not isinstance(item, dict) or set(item) != LINK_FIELDS:
+        if (not isinstance(item, dict) or
+                set(item) not in ({'url'}, LINK_FIELDS)):
             raise InvalidBatch('downloads_invalid')
         url = _source(item['url'])
-        dest = _destination(item['destination_dir'])
+        dest = _destination(item['destination_dir']) if 'destination_dir' in item else ''
         # Different spelling of the same directory is an alias. Identical
         # directory paths are allowed; actual FILE collisions must be checked
         # after downloads, before the first upload.

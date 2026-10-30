@@ -22,8 +22,8 @@ on:
 # Production admission is managed by the Owner-approved Workflow MCP plan.
 # A direct dispatch without its OIDC Claim must fail before any download.
 # Fixed Environment secret is referenced only by the execution step AFTER
-# successful OIDC Claim, validated batch and single Task-owned namespace.
-# No create-only/atomic guarantee against competing cloud writers.
+# successful OIDC Claim and validated public-source batch.
+# Direct uploads fail on detected destination conflicts; no cloud-atomic guarantee.
 env:
   WORKFLOW_ACTION_TYPE: task
 
@@ -61,20 +61,10 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/download_batch.py
 
-      - name: Allocate server-owned Task destination namespace
-        id: task_destination
-        shell: bash
-        env:
-          DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/download_destination.py
-
       - name: Execute verified isolated aria2 to rclone Task
         shell: bash
         env:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
-          DOWNLOAD_TASK_ROOT: ${{ steps.task_destination.outputs.task_root }}
           DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}
           DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}
           DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}

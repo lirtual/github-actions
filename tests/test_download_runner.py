@@ -1,4 +1,4 @@
-"""Spec #51 runtime contract; formal production admission remains disabled.
+"""Spec #51 live runtime contract for the published Owner-approved Task.
 
 This is a static policy check, not proof of real hosted cloud E2E.
 """
@@ -24,8 +24,6 @@ class DownloadRunnerContractTests(unittest.TestCase):
     def test_claim_precedes_credential_access_when_later_wired(self):
         self.assertLess(WORKFLOW.find("session_action.py claim"),
                         WORKFLOW.find("download_batch.py"))
-        self.assertLess(WORKFLOW.find("download_batch.py"),
-                        WORKFLOW.find("download_destination.py"))
         self.assertNotIn("${{ secrets.", WORKFLOW.split("      - name: Execute verified isolated aria2 to rclone Task")[0])
 
     def test_runtime_download_container_never_receives_rclone_secret(self):
@@ -87,9 +85,9 @@ class DownloadRunnerContractTests(unittest.TestCase):
         self.assertEqual(124, expired.returncode)
 
     def test_remote_root_and_input_are_not_shell_interpreted(self):
-        self.assertIn("DOWNLOAD_TASK_ROOT", SCRIPT)
+        self.assertNotIn("DOWNLOAD_TASK_ROOT", SCRIPT)
         self.assertIn("DOWNLOAD_REMOTE_BASE_DIR", SCRIPT)
-        self.assertIn("verify_task_root", SCRIPT)
+        self.assertIn("approved_base_dir", SCRIPT)
         self.assertIn("GITHUB_RUN_ID", SCRIPT)
         self.assertIn("GITHUB_RUN_ATTEMPT", SCRIPT)
         self.assertNotIn('eval ', SCRIPT)

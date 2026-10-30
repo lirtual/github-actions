@@ -477,19 +477,18 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          export BATCH_JSON DOWNLOAD_TASK_ROOT DOWNLOAD_RCLONE_CONFIG_B64
+          export BATCH_JSON DOWNLOAD_RCLONE_CONFIG_B64
           BATCH_JSON="$(python3 - "$FIXTURE_COMMIT" <<'PYCODE'
           import json,sys
           commit=sys.argv[1]
           paths=['README.md','.github/workflows/openlist.yml']
           print(json.dumps({'remote':'ci-local','downloads':[
-              {'url':'https://raw.githubusercontent.com/lirtual/session-actions/'+commit+'/'+path,
-               'destination_dir':'fixture-'+str(i)} for i,path in enumerate(paths)],
+              {'url':'https://raw.githubusercontent.com/lirtual/session-actions/'+commit+'/'+path}
+              for path in paths],
               'project_purpose':'CI-only pinned repository artifact check',
               'duration_minutes':6},separators=(',',':')))
           PYCODE
           )"
-          DOWNLOAD_TASK_ROOT="downloads/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(openssl rand -hex 16)"
           DOWNLOAD_RCLONE_CONFIG_B64="$(printf '[ci-local]\ntype = local\n' | base64 -w0)"
           bash .github/scripts/download-runner.sh
 

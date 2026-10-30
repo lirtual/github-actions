@@ -20,8 +20,8 @@ def commands(step):
 class DownloadWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.sections = re.split(r"(?m)^      - name: ", YAML)
-        self.assertEqual(6, len(self.sections), "Task step ordering/number changed")
-        self.checkout, self.claim, self.validate, self.namespace, self.execute = self.sections[1:]
+        self.assertEqual(5, len(self.sections), "Task step ordering/number changed")
+        self.checkout, self.claim, self.validate, self.execute = self.sections[1:]
 
     def test_contract_exactly_one_bounded_task(self):
         self.assertTrue(YAML.startswith("name: download\n"))
@@ -45,26 +45,21 @@ class DownloadWorkflowTests(unittest.TestCase):
         self.assertTrue(self.checkout.startswith("Checkout pinned dispatched revision\n"))
         self.assertTrue(self.claim.startswith("Claim approved physical GitHub Task before any privileged action\n"))
         self.assertTrue(self.validate.startswith("Validate approved public-source batch before any side effects\n"))
-        self.assertTrue(self.namespace.startswith("Allocate server-owned Task destination namespace\n"))
         self.assertTrue(self.execute.startswith("Execute verified isolated aria2 to rclone Task\n"))
         self.assertEqual(1, YAML.count("        uses:"))
-        self.assertEqual(4, YAML.count("        run: |"))
+        self.assertEqual(3, YAML.count("        run: |"))
         self.assertEqual("set -euo pipefail\npython3 .github/scripts/session_action.py claim",
                          commands(self.claim))
         self.assertEqual("set -euo pipefail\npython3 .github/scripts/download_batch.py",
                          commands(self.validate))
-        self.assertEqual("set -euo pipefail\npython3 .github/scripts/download_destination.py",
-                         commands(self.namespace))
         self.assertEqual("set -euo pipefail\nbash .github/scripts/download-runner.sh",
                          commands(self.execute))
-        self.assertIn("id: task_destination", self.namespace)
+        self.assertNotIn("task_destination", YAML)
 
     def test_cloud_credentials_referenced_only_in_final_step(self):
         beginning = "".join(self.sections[:-1])
         self.assertNotIn("${{ secrets.", beginning)
         self.assertNotIn("DOWNLOAD_REMOTE_NAME:", beginning)
-        self.assertIn("DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}",
-                      self.namespace)
         self.assertIn("DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}",
                       self.execute)
         self.assertIn("DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}",
@@ -74,8 +69,7 @@ class DownloadWorkflowTests(unittest.TestCase):
         self.assertNotIn("BATCH_JSON: ${{ inputs.batch_json }}", YAML)
         self.assertIn("python3 .github/scripts/download_batch.py", self.validate)
         self.assertIn("download-runner.sh", self.execute)
-        self.assertIn("DOWNLOAD_TASK_ROOT: ${{ steps.task_destination.outputs.task_root }}",
-                      self.execute)
+        self.assertNotIn("DOWNLOAD_TASK_ROOT:", YAML)
         self.assertIn("ATTEMPT_ID: ${{ inputs.attempt_id }}", self.execute)
         self.assertIn("WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}",
                       self.claim)
