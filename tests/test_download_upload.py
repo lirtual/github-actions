@@ -143,9 +143,6 @@ class LocalRcloneIntegration(unittest.TestCase):
         self.assertEqual(1, caught.exception.attempted)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class UploadFailureSummaryTests(unittest.TestCase):
     def test_unknown_second_write_preserves_confirmed_and_attempted_counts(self):
         import download_upload
@@ -166,3 +163,7 @@ class UploadFailureSummaryTests(unittest.TestCase):
                         self.assertEqual(2, download_upload.main())
         self.assertIn("REMOTE_UNKNOWN confirmed=1 attempted=2", log.getvalue())
         self.assertNotIn("https://", log.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
