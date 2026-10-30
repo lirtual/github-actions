@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
+import tempfile
 
 FILE = Path(__file__).resolve().parents[1] / '.github/scripts/download_batch.py'
 spec = importlib.util.spec_from_file_location('download_batch', FILE)
@@ -28,6 +30,22 @@ def sample(**changes):
 
 
 class DownloadBatchTests(unittest.TestCase):
+    def test_event_file_avoids_logging_raw_batch_env(self):
+        expected = sample()
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"inputs": {"batch_json": expected}}))
+            with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}, clear=True):
+                self.assertEqual(expected, download.load_batch_json())
+                self.assertEqual(2, len(download.validate(download.load_batch_json())["downloads"]))
+            event.write_text(json.dumps({"inputs": {"batch_json": "x" * 5000}}))
+            with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}, clear=True):
+                with self.assertRaises(download.InvalidBatch):
+                    download.validate(download.load_batch_json())
+            event.write_text(json.dumps({"inputs": {}}))
+            with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event)}, clear=True):
+                self.assertEqual("", download.load_batch_json())
+
     def test_one_fixed_remote_many_sources_and_default_duration(self):
         manifest = download.validate(sample())
         self.assertEqual('approved-remote', manifest['remote'])
