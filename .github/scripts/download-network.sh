@@ -118,7 +118,8 @@ if [[ "$(docker network inspect -f '{{.EnableIPv6}}' "$network")" != false ||
   echo 'DOWNLOAD_NETWORK_DENIED network_mismatch' >&2
   exit 1
 fi
-# Construct complete chains before inserting their jump hooks.\n# The Azure WireServer VIP 168.63.129.16 looks public but exposes VM platform services.
+# Construct complete chains before inserting their jump hooks.
+# The Azure WireServer VIP 168.63.129.16 looks public but exposes VM platform services.
 sudo -n iptables -N "$forward"
 sudo -n iptables -A "$forward" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 for cidr in \
