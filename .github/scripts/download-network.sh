@@ -15,13 +15,53 @@ input="SA51I$suffix"
 mode="$1"
 
 cleanup() {
+  # Never remove firewall isolation while a Task container may still be
+  # running. A killed Docker CLI can leave its --rm container alive. Only
+  # containers attached to this Attempt-owned disposable network are removed.
+  local attached remaining id
+  attached="$(docker ps -aq --filter "network=$network")" || {
+    echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+    return 1
+  }
+  if [[ -n "$attached" ]]; then
+    while IFS= read -r id; do
+      [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || {
+        echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+        return 1
+      }
+      timeout --signal=TERM --kill-after=5s 20s docker rm -f "$id" >/dev/null || {
+        echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+        return 1
+      }
+    done <<< "$attached"
+  fi
+  # Destroy the isolated bridge BEFORE lifting its firewall restrictions.
+  # A Docker daemon error or still-attached endpoint must leave the rules
+  # intact. A never-created network is safe only if Docker confirms absence.
+  if ! timeout --signal=TERM --kill-after=5s 20s docker network rm "$network" >/dev/null 2>&1; then
+    remaining="$(docker network ls --filter "name=^${network}$" --format '{{.Name}}')" || {
+      echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+      return 1
+    }
+    [[ -z "$remaining" ]] || {
+      echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+      return 1
+    }
+  fi
+  remaining="$(docker network ls --filter "name=^${network}$" --format '{{.Name}}')" || {
+    echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+    return 1
+  }
+  [[ -z "$remaining" ]] || {
+    echo 'DOWNLOAD_NETWORK_CLEANUP_FAILED' >&2
+    return 1
+  }
   sudo -n iptables -D DOCKER-USER -i "$bridge" -j "$forward" 2>/dev/null || true
   sudo -n iptables -D INPUT -i "$bridge" -j "$input" 2>/dev/null || true
   sudo -n iptables -F "$forward" 2>/dev/null || true
   sudo -n iptables -X "$forward" 2>/dev/null || true
   sudo -n iptables -F "$input" 2>/dev/null || true
   sudo -n iptables -X "$input" 2>/dev/null || true
-  docker network rm "$network" >/dev/null 2>&1 || true
   # A cleanup operation must not return success with a still-live firewall
   # hook, dedicated chain or network. This is also the hosted CI clean gate.
   if sudo -n iptables -C DOCKER-USER -i "$bridge" -j "$forward" 2>/dev/null ||

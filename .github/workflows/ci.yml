@@ -425,6 +425,19 @@ jobs:
             --env HOST_GATEWAY \
             --volume "$PWD/tests/smoke_download_dns_rebind.py:/smoke-dns.py:ro" \
             "sa51-aria2-smoke:$GITHUB_RUN_ID" python /smoke-dns.py
+      - name: Verify still-running disposable container cannot outlive bridge cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          net=sa51-11111111
+          probe="sa51-cleanup-probe-$GITHUB_RUN_ID"
+          # This fixture has no secrets, user files, or host mounts.
+          docker run -d --name "$probe" --network "$net" \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --read-only python:3.12-alpine sleep 120 >/dev/null
+          test -n "$(docker ps -q --filter "name=^/$probe$")"
+          echo "REAL_DOCKER_ATTACHED_ORPHAN_FIXTURE_READY"
+
       - name: Remove isolated firewall rules, network and host fixture
         if: always()
         shell: bash
@@ -432,6 +445,10 @@ jobs:
           set -euo pipefail
           cleanup_failed=0
           bash .github/scripts/download-network.sh cleanup || cleanup_failed=1
+          if docker container inspect "sa51-cleanup-probe-$GITHUB_RUN_ID" >/dev/null 2>&1; then
+            echo 'DOWNLOAD_NETWORK_ORPHAN_STILL_RUNNING' >&2
+            cleanup_failed=1
+          fi
           docker image rm -f "sa51-aria2-smoke:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/spec51-public-readme" "$RUNNER_TEMP/spec51-public-openlist-yml"
           rm -rf -- "$RUNNER_TEMP/spec51-end-to-end"
