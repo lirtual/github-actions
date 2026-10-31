@@ -411,6 +411,27 @@ class SessionProtocolTests(unittest.TestCase):
                         session.start()
 
 
+    def test_signed_ready_freezes_physical_runner_duration_only_for_tailnet_sessions(self):
+        with tempfile.TemporaryDirectory() as path:
+            for workflow in ("ubuntu", "windows"):
+                env = self.settings()
+                env.update({"RUNNER_TEMP": path, "GITHUB_REPOSITORY": "lirtual/github-actions",
+                            "GITHUB_WORKFLOW": workflow, "DURATION_MINUTES": "7"})
+                with mock.patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(session.signed_status_payload(ATTEMPT, "ready"),
+                                     {"attemptId": ATTEMPT, "durationMinutes": 7})
+                    self.assertEqual(session.signed_status_payload(ATTEMPT, "claim"),
+                                     {"attemptId": ATTEMPT})
+                    os.environ["DURATION_MINUTES"] = "301"
+                    with self.assertRaises(ValueError):
+                        session.signed_status_payload(ATTEMPT, "ready")
+            env = self.settings()
+            env.update({"RUNNER_TEMP": path, "GITHUB_REPOSITORY": "lirtual/github-actions",
+                        "GITHUB_WORKFLOW": "chrome", "DURATION_MINUTES": "8"})
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(session.signed_status_payload(ATTEMPT, "ready"),
+                                 {"attemptId": ATTEMPT})
+
     def test_signed_ready_attaches_only_the_verified_temporary_web_url(self):
         with tempfile.TemporaryDirectory() as path:
             settings = self.settings()
