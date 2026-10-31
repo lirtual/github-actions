@@ -9,6 +9,14 @@ Implementation is tracked by [Spec #1](https://github.com/lirtual/github-actions
 ## Native Task acceptance
 
 `.github/workflows/verify-action.yml` is a minimal **Task** for validating the approved Workflow MCP lifecycle (not a persistent Session or general-purpose shell). It declares all three required server-owned identity inputs; only the bounded `outcome` choice is caller-selectable.
+The verification Task can optionally set `emit_artifact: true` on a newly
+reviewed immutable Tag. Only after its signed Claim and successful work it
+uploads one static, public-safe `workflow-verified.json` GitHub Artifact
+(`workflow-verified`, one-day retention). The default is `false`, preserving
+existing Task cost, output and failure behavior; no OIDC token, Attempt ID,
+Session data or download credential is included. This Artifact is fetched only
+as owner-authorized, provenance-checked metadata through Workflow MCP
+`workflow_result`, not stored in D1 or published as a download URL.
 
 Before an owner-approved live acceptance, the repository owner must configure these **non-secret Actions variables** with the already-approved Workflow MCP endpoint and audience:
 
