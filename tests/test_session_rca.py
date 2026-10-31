@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 from pathlib import Path
 import tarfile
 import tempfile
@@ -151,6 +152,59 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             rca.confirm_windows_registration(Child())
         self.assertIn('registration exited successfully', output.getvalue())
         self.assertIn('WSS online is not yet confirmed', output.getvalue())
+
+    def test_windows_transport_probe_emits_only_allowlisted_status(self):
+        class Result:
+            def __init__(self, value, code=0):
+                self.returncode = code
+                self.stdout = value
+        def check(result, expected):
+            calls = []
+            def run(argv, **opts):
+                calls.append((argv, opts))
+                return result
+            value = rca.observe_windows_transport(
+                1234, r"C:\\Runner\\private\\node.exe", run=run, delay=lambda _: None)
+            self.assertEqual(value, expected)
+            self.assertEqual(len(calls), 1)
+            argv, opts = calls[0]
+            self.assertIn("ParentProcessId = 1234", argv[-1])
+            self.assertIn("--session-transport", argv[-1])
+            self.assertIn(r'(?:^|\s)', argv[-1])
+            self.assertIn("node.exe", argv[-1])
+            self.assertIs(opts['stderr'], rca.subprocess.DEVNULL)
+            self.assertLessEqual(opts['timeout'], 10)
+        check(Result(b"alive\n"), "alive")
+        check(Result(b"exited\n"), "exited")
+        check(Result(b"UNTRUSTED_SECRET_CONTENT"), "unknown")
+        check(Result(b"alive\n", code=1), "unknown")
+
+    def test_windows_transport_probe_timeout_is_unknown(self):
+        def hang(*args, **kwargs):
+            raise rca.subprocess.TimeoutExpired("synthetic", 1)
+        self.assertEqual(rca.observe_windows_transport(
+            1234, r"C:\\Runner\\node.exe", run=hang, delay=lambda _: None), "unknown")
+        self.assertEqual(rca.observe_windows_transport(
+            0, r"C:\\Runner\\node.exe", run=hang, delay=lambda _: None), "unknown")
+
+    @unittest.skipUnless(sys.platform == 'win32' and os.environ.get('GITHUB_ACTIONS') == 'true',
+                         'Native Windows CI only')
+    def test_native_windows_transport_probe_against_synthetic_process(self):
+        # Synthetic child has no credentials, network, Session identity or real RCA.
+        import subprocess as sp
+        import sys
+        import time
+        child = sp.Popen([sys.executable, '-c', 'import time; time.sleep(20)',
+                          '--session-transport'], stdout=sp.DEVNULL,
+                         stderr=sp.DEVNULL)
+        try:
+            self.assertEqual(rca.observe_windows_transport(
+                os.getpid(), sys.executable, delay=lambda _: time.sleep(1)), 'alive')
+        finally:
+            child.kill()
+            child.wait(timeout=5)
+        self.assertEqual(rca.observe_windows_transport(
+            os.getpid(), sys.executable, delay=lambda _: None), 'exited')
 
     def test_partial_pin_denied_before_download(self):
         result, calls = self.invoke(bundle(), {'SESSION_RCA_RELEASE_TAG': ''})

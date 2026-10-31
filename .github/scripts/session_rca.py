@@ -8,6 +8,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import tarfile
 import urllib.request
 import zipfile
@@ -119,6 +120,40 @@ def confirm_windows_registration(process, timeout=45):
     print("Session RCA Windows registration exited successfully; WSS online is not yet confirmed.")
 
 
+
+def observe_windows_transport(parent_pid, executable, *, run=subprocess.run,
+                              delay=time.sleep):
+    """One bounded native process snapshot; status is not proof of WSS online."""
+    if not isinstance(parent_pid, int) or parent_pid <= 0:
+        return "unknown"
+    # The entry is the SHA-pinned, already verified Node executable. Match
+    # both its exact native image path and the transport-only argv marker.
+    safe_path = str(executable).replace("'", "''")
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$expected='{safe_path}'; "
+        f"$children=@(Get-CimInstance Win32_Process -Filter 'ParentProcessId = {parent_pid}' -ErrorAction Stop); "
+        "$found=$false; "
+        "foreach($child in $children){ "
+        "if([string]::Equals($child.ExecutablePath,$expected,"
+        "[StringComparison]::OrdinalIgnoreCase) -and "
+        "$child.CommandLine -match '(?i)(?:^|\\s)--session-transport(?:\\s|$)'){"
+        "$found=$true} }; "
+        "if($found){'alive'}else{'exited'}"
+    )
+    try:
+        delay(3)
+        ps = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        result = run([str(ps), "-NoProfile", "-NonInteractive", "-Command", script],
+                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+        if result.returncode != 0:
+            return "unknown"
+        value = result.stdout.decode("utf-8", "replace").strip()
+        return value if value in ("alive", "exited") else "unknown"
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+
+
 def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen):
     tag = env.get("SESSION_RCA_RELEASE_TAG", "").strip()
     sha = env.get("SESSION_RCA_RELEASE_SHA256", "").strip()
@@ -162,6 +197,10 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     print(f"Session RCA job-scoped foreground Agent launched (pid {process.pid}); online admission remains authoritative.")
     if windows:
         confirm_windows_registration(process)
+        # No raw process/command-line data is logged, only a fixed snapshot.
+        # A live child is not necessarily authenticated to the WSS server.
+        state = observe_windows_transport(process.pid, node)
+        print(f"Session RCA Windows credential-free transport: {state}; WSS admission remains authoritative.")
     return True
 
 
