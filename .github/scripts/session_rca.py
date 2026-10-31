@@ -142,10 +142,11 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
 def main():
     try:
         start()
-    except (BootstrapError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError) as exc:
+    except (BootstrapError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError):
+        # Mark this optional Step as failed, while continue-on-error preserves Hold.
         # Never print external HTTP errors, OIDC tokens, private keys or OS paths.
         print("Session RCA unavailable (optional bootstrap rejected); SSH/RDP remains available.")
-        return 0
+        return 1
     return 0
 
 
