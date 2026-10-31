@@ -553,6 +553,26 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("${{ secrets.", text[:execute])
         self.assertNotIn("actions/checkout", text[:execute])
 
+    def test_verify_task_optional_artifact_is_claim_guarded_bounded_and_nonsecret(self):
+        source = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        claim = source.index("Claim approved physical Run before any task work")
+        execute = source.index("Execute bounded verification Task")
+        result = source.index("Submit small signed Task result after successful work")
+        write = source.index("Write bounded public verification artifact")
+        upload = source.index("Upload bounded public verification artifact")
+        self.assertTrue(claim < execute < result < write < upload)
+        header = source[:claim]
+        self.assertIn("      emit_artifact:", header)
+        self.assertIn("        type: boolean\n        required: false\n        default: false", header)
+        self.assertEqual(source.count("if: ${{ success() && inputs.emit_artifact }}"), 2)
+        self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", source[upload:])
+        self.assertIn('''{"verification":"passed","schema_version":1}''', source[write:upload])
+        self.assertIn("          retention-days: 1", source[upload:])
+        self.assertIn("          if-no-files-found: error", source[upload:])
+        self.assertNotIn("${{ secrets.", source[write:])
+        self.assertNotIn("${{ inputs.attempt_id }}", source[write:])
+        self.assertNotIn("${{ inputs.dispatch_id }}", source[write:])
+
     def test_verify_task_post_claim_hold_is_strictly_bounded(self):
         import os
         import subprocess

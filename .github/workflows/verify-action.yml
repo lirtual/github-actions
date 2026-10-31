@@ -25,6 +25,11 @@ on:
         type: number
         required: false
         default: 0
+      emit_artifact:
+        description: Opt in to a one-day, credential-free verification JSON artifact
+        type: boolean
+        required: false
+        default: false
 
 # An explicitly approved Task; this is not a general command runner.
 env:
@@ -250,3 +255,19 @@ jobs:
               sys.exit("Task result unavailable")
           print("Signed bounded Task result submitted")
           PY
+
+      - name: Write bounded public verification artifact
+        if: ${{ success() && inputs.emit_artifact }}
+        shell: bash
+        run: |
+          printf '%s\n' '{"verification":"passed","schema_version":1}' > "$RUNNER_TEMP/workflow-verified.json"
+          test "$(wc -c < "$RUNNER_TEMP/workflow-verified.json")" -lt 128
+
+      - name: Upload bounded public verification artifact
+        if: ${{ success() && inputs.emit_artifact }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: workflow-verified
+          path: ${{ runner.temp }}/workflow-verified.json
+          if-no-files-found: error
+          retention-days: 1
