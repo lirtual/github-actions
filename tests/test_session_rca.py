@@ -206,6 +206,29 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertEqual(rca.observe_windows_transport(
             os.getpid(), sys.executable, delay=lambda _: None), 'exited')
 
+    def test_child_stage_reader_only_reports_allowlisted_values(self):
+        with tempfile.TemporaryDirectory() as root:
+            stage = Path(root) / "session-rca" / "transport-stage"
+            stage.parent.mkdir()
+            self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
+            for value in ("pending","entered","challenge_start","wss_error","connected"):
+                stage.write_bytes((value+"\n").encode())
+                self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),value)
+            for raw in (b"OIDC_TOKEN_SECRET\n",b"challenge_ok\nMORE_SECRET",
+                        b"wss_open\r\n",b"A"*65,b"\xff\n"):
+                stage.write_bytes(raw)
+                self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
+
+    def test_child_stage_reader_rejects_linked_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root)/"session-rca"
+            path.mkdir()
+            outside=Path(root)/"outside"
+            outside.write_text("connected\n")
+            marker=path/"transport-stage"
+            marker.symlink_to(outside)
+            self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
+
     def test_partial_pin_denied_before_download(self):
         result, calls = self.invoke(bundle(), {'SESSION_RCA_RELEASE_TAG': ''})
         self.assertEqual(result, 'denied')

@@ -154,6 +154,34 @@ def observe_windows_transport(parent_pid, executable, *, run=subprocess.run,
         return "unknown"
 
 
+
+# Read only a fixed checkpoint from the Agent's existing Windows job-private
+# store. Unknown/untrusted content is never reproduced in Actions logs.
+TRANSPORT_STAGES = frozenset({
+    "pending", "entered", "identity_ready", "signed_recovered", "receipts_ready",
+    "challenge_start", "challenge_ok", "challenge_rejected",
+    "wss_start", "wss_open", "wss_error", "wss_policy", "wss_timeout",
+    "connected",
+})
+
+
+def observe_windows_child_stage(runner_temp, delay=time.sleep):
+    stage = Path(runner_temp) / "session-rca" / "transport-stage"
+    try:
+        if stage.parent.is_symlink() or stage.is_symlink() or not stage.is_file():
+            return "unknown"
+        # No extra background service, log file, or process tracing.
+        delay(12)
+        with stage.open("rb") as handle:
+            raw = handle.read(65)
+        if len(raw) > 64 or not raw.endswith(b"\n"):
+            return "unknown"
+        value = raw[:-1].decode("ascii")
+        return value if value in TRANSPORT_STAGES else "unknown"
+    except (OSError, UnicodeError):
+        return "unknown"
+
+
 def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen):
     tag = env.get("SESSION_RCA_RELEASE_TAG", "").strip()
     sha = env.get("SESSION_RCA_RELEASE_SHA256", "").strip()
@@ -201,6 +229,8 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         # A live child is not necessarily authenticated to the WSS server.
         state = observe_windows_transport(process.pid, node)
         print(f"Session RCA Windows credential-free transport: {state}; WSS admission remains authoritative.")
+        stage_status = observe_windows_child_stage(temp)
+        print(f"Session RCA Windows child stage: {stage_status}; WSS admission remains authoritative.")
     return True
 
 
