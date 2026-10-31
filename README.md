@@ -42,6 +42,18 @@ The currently published `v0.1.42-rc.9` source uploads a URL-only batch directly 
 
 The earlier `rc.5` production Koofr E2E and `rc.6` network-regression results remain evidence for those exact revisions only; neither independently proves an `rc.9` remote upload. Production uses manual, authenticated Runs with single-element `download_batches` whose JSON batch may include multiple public HTTP(S) URLs. The existing Q13 public-HTTPS egress guarantee, Q15 non-atomic write residual risk, Owner-waived live mid-upload fault injection, and Q34 optional signed success receipt remain unchanged.
 
+## Optional Session RCA bootstrap (Spec #62 — candidate only)
+
+The reviewed Windows/Ubuntu Sessions retain signed Ready, SSH/RDP, Hold and cleanup. After signed Ready an optional, bounded bootstrap may launch a **job-scoped foreground RCA Agent** using the existing authenticated Remote Control protocol; the workflow does not install or reconfigure any personal Agent, scheduled task or permanent device. Bootstrap failures cannot fail the underlying Session; `list_devices` and Workflow's live authorization (not bootstrap success) determine actual online availability.
+
+The bootstrap is **disabled by default**. Only after the separately authorized, source-reviewed Agent Release is published, the Owner can configure the following GitHub Actions **non-secret repository variables** from the exact official immutable Release asset digests:
+
+- `SESSION_RCA_RELEASE_TAG` — approved Agent Release tag, e.g. `v0.1.40` (example only, not a published pin).
+- `SESSION_RCA_LINUX_X64_SHA256` — SHA-256 of the matching `linux-x64-glibc.tar.gz` Release asset.
+- `SESSION_RCA_WINDOWS_X64_SHA256` — SHA-256 of the matching `windows-x64.zip` Release asset.
+
+The bootstrap checks GitHub-hosted Runner/Session identity, HTTPS transfer, exact asset SHA-256, bounded archive types/paths and bundle metadata before executing the job-private packaged Session entrypoint. An absent/mismatched pin denies only RCA; no unpinned fallback or independent 24-hour grant exists. Each immutable Workflow Plan must still be re-reviewed and republished against the correct new GitHub Actions Tag. **No production configuration changes or live Session E2E are claimed by this candidate PR.** Repository-mode duration remains RCA-denied until Workflow can independently attest the frozen effective duration; SSH/RDP continues to honor the repository variable unchanged.
+
 ## Five native Session Actions
 
 Each workflow lives in its own file and uses GitHub OIDC → Workflow MCP Claim → access setup → verified Ready → bounded hold → cleanup. Only the ubuntu and windows Sessions join the private Tailnet. The web Sessions use Cloudflare Quick Tunnels without a Tailscale dependency: chrome and code-server require Cloudflare email OTP, while openlist is public at the Tunnel layer and uses its own login and guest permissions:
