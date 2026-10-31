@@ -91,6 +91,14 @@ jobs:
         run: bash .github/scripts/ubuntu-ssh.sh
       - name: Signed Ready after private SSH is configured
         run: python3 .github/scripts/session_action.py ready
+      - name: Start optional pinned Session RCA after signed Ready
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          SESSION_RCA_RELEASE_TAG: ${{ vars.SESSION_RCA_RELEASE_TAG }}
+          SESSION_RCA_RELEASE_SHA256: ${{ vars.SESSION_RCA_LINUX_X64_SHA256 }}
+        run: python3 .github/scripts/session_rca.py
       - name: Hold until selected lifetime or GitHub cancellation
         run: python3 .github/scripts/session_action.py hold
       - name: Stop Ubuntu SSH and remove session settings

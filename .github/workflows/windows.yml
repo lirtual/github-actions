@@ -130,6 +130,15 @@ jobs:
       - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
         run: python .github/scripts/session_action.py ready
+      - name: Start optional pinned Session RCA after signed Ready
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          SESSION_RCA_RELEASE_TAG: ${{ vars.SESSION_RCA_RELEASE_TAG }}
+          SESSION_RCA_RELEASE_SHA256: ${{ vars.SESSION_RCA_WINDOWS_X64_SHA256 }}
+        run: python .github/scripts/session_rca.py
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh
         env:
