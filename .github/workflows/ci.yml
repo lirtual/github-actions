@@ -309,12 +309,12 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          url="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/README.md"
+          url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${FIXTURE_COMMIT}/README.md"
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 \
             "$url" --output "$RUNNER_TEMP/spec51-public-readme"
           test -s "$RUNNER_TEMP/spec51-public-readme"
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 \
-            "https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/.github/workflows/openlist.yml" \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${FIXTURE_COMMIT}/.github/workflows/openlist.yml" \
             --output "$RUNNER_TEMP/spec51-public-openlist-yml"
           test -s "$RUNNER_TEMP/spec51-public-openlist-yml"
           docker build --tag "sa51-aria2-smoke:$GITHUB_RUN_ID" - <<'DOCKERFILE'
@@ -396,10 +396,10 @@ jobs:
           net="sa51-11111111"
           gateway="$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "$net")"
           export HOST_GATEWAY="$gateway"
-          export PUBLIC_FIXTURE_URL="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/README.md"
+          export PUBLIC_FIXTURE_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${FIXTURE_COMMIT}/README.md"
           PUBLIC_FIXTURE_SHA256="$(sha256sum "$RUNNER_TEMP/spec51-public-readme" | cut -d' ' -f1)"
           export PUBLIC_FIXTURE_SHA256
-          export PUBLIC_FIXTURE_URL_2="https://raw.githubusercontent.com/lirtual/session-actions/${FIXTURE_COMMIT}/.github/workflows/openlist.yml"
+          export PUBLIC_FIXTURE_URL_2="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${FIXTURE_COMMIT}/.github/workflows/openlist.yml"
           PUBLIC_FIXTURE_SHA256_2="$(sha256sum "$RUNNER_TEMP/spec51-public-openlist-yml" | cut -d' ' -f1)"
           export PUBLIC_FIXTURE_SHA256_2
           docker run --rm --network "$net" --dns 1.1.1.1 \
@@ -407,7 +407,7 @@ jobs:
             --cap-drop ALL --security-opt no-new-privileges:true \
             --pids-limit 128 --memory 256m --read-only \
             --tmpfs /tmp:rw,nosuid,nodev,size=32m \
-            --env HOST_GATEWAY --env PUBLIC_FIXTURE_URL --env PUBLIC_FIXTURE_SHA256 \
+            --env GITHUB_REPOSITORY --env HOST_GATEWAY --env PUBLIC_FIXTURE_URL --env PUBLIC_FIXTURE_SHA256 \
             --env PUBLIC_FIXTURE_URL_2 --env PUBLIC_FIXTURE_SHA256_2 \
             --volume "$PWD/.github/scripts:/spec51:ro" \
             --volume "$PWD/tests/smoke_download_aria2_network.py:/smoke.py:ro" \
@@ -479,11 +479,11 @@ jobs:
           [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           export BATCH_JSON DOWNLOAD_RCLONE_CONFIG_B64
           BATCH_JSON="$(python3 - "$FIXTURE_COMMIT" <<'PYCODE'
-          import json,sys
+          import json,os,sys
           commit=sys.argv[1]
           paths=['README.md','.github/workflows/openlist.yml']
           print(json.dumps({'remote':'ci-local','downloads':[
-              {'url':'https://raw.githubusercontent.com/lirtual/session-actions/'+commit+'/'+path}
+              {'url':'https://raw.githubusercontent.com/'+os.environ['GITHUB_REPOSITORY']+'/'+commit+'/'+path}
               for path in paths],
               'project_purpose':'CI-only pinned repository artifact check',
               'duration_minutes':6},separators=(',',':')))

@@ -31,9 +31,11 @@ expected = os.environ.get("PUBLIC_FIXTURE_SHA256", "")
 repo_url_2 = os.environ.get("PUBLIC_FIXTURE_URL_2", "")
 expected_2 = os.environ.get("PUBLIC_FIXTURE_SHA256_2", "")
 gateway = os.environ.get("HOST_GATEWAY", "")
-if (not re.fullmatch(r"https://raw\.githubusercontent\.com/lirtual/session-actions/[0-9a-f]{40}/README\.md", repo_url)
+repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+if (not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo_name)
+        or not re.fullmatch(r"https://raw\.githubusercontent\.com/" + re.escape(repo_name) + r"/[0-9a-f]{40}/README\.md", repo_url)
         or not re.fullmatch(r"[0-9a-f]{64}", expected)
-        or not re.fullmatch(r"https://raw\.githubusercontent\.com/lirtual/session-actions/[0-9a-f]{40}/\.github/workflows/openlist\.yml", repo_url_2)
+        or not re.fullmatch(r"https://raw\.githubusercontent\.com/" + re.escape(repo_name) + r"/[0-9a-f]{40}/\.github/workflows/openlist\.yml", repo_url_2)
         or not re.fullmatch(r"[0-9a-f]{64}", expected_2)
         or repo_url.split("/")[5] != repo_url_2.split("/")[5]
         or not re.fullmatch(r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}", gateway)):
