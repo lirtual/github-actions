@@ -96,8 +96,8 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(len(calls), 1)
         argv, opts = calls[0]
-        self.assertTrue(argv[0].endswith('/bin/node'))
-        self.assertTrue(argv[1].endswith('/apps/remote-control-agent/src/session-rca-main.js'))
+        self.assertTrue(argv[0].replace('\\', '/').endswith('/bin/node'))
+        self.assertTrue(argv[1].replace('\\', '/').endswith('/apps/remote-control-agent/src/session-rca-main.js'))
         self.assertTrue(opts['start_new_session'])
         self.assertEqual(opts['env']['GITHUB_REPOSITORY'], 'lirtual/github-actions')
 
