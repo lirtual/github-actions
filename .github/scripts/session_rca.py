@@ -95,6 +95,30 @@ def download_pinned(url, archive, sha, opener=urllib.request.urlopen):
         raise BootstrapError("Pinned release digest mismatch")
 
 
+
+def confirm_windows_registration(process, timeout=45):
+    # Only the OIDC-bearing one-shot parent is observed. Its zero exit means
+    # transport spawn was accepted, NOT that WSS connected or remains online.
+    # Never capture stdout/stderr, tokens, paths or raw OS errors.
+    try:
+        exit_code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # An overdue registration parent must not retain the GitHub OIDC
+        # request credential. Reap it without extending the optional Step.
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            raise BootstrapError("Windows RCA registration cleanup unconfirmed.") from None
+        raise BootstrapError("Windows RCA registration timed out.") from None
+    if exit_code != 0:
+        raise BootstrapError("Windows RCA registration exited unsuccessfully.")
+    print("Session RCA Windows registration exited successfully; WSS online is not yet confirmed.")
+
+
 def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen):
     tag = env.get("SESSION_RCA_RELEASE_TAG", "").strip()
     sha = env.get("SESSION_RCA_RELEASE_SHA256", "").strip()
@@ -136,6 +160,8 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      creationflags=flags, start_new_session=not windows)
     print(f"Session RCA job-scoped foreground Agent launched (pid {process.pid}); online admission remains authoritative.")
+    if windows:
+        confirm_windows_registration(process)
     return True
 
 
