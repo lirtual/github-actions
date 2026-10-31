@@ -77,7 +77,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             calls = []
             def launch(argv, **kwargs):
                 calls.append((argv, kwargs))
-                return type('Child', (), {'pid': 1234})()
+                return type('Child', (), {'pid': 1234, 'wait': lambda self, timeout: 0})()
             with mock.patch.object(rca.sys, 'platform', 'win32' if windows else 'linux'):
                 with mock.patch.object(rca.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True):
                     outcome = None
@@ -107,6 +107,50 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0][0][1].endswith('session-rca-windows.js'))
         self.assertFalse(calls[0][1]['start_new_session'])
+        self.assertIs(calls[0][1]['stderr'], rca.subprocess.DEVNULL)
+        self.assertIs(calls[0][1]['stdout'], rca.subprocess.DEVNULL)
+
+    def test_windows_registration_nonzero_exit_fails_without_error_output(self):
+        from contextlib import redirect_stdout
+        for code in (1, 17):
+            class Child:
+                def wait(self, timeout):
+                    self.timeout = timeout
+                    return code
+            output = io.StringIO()
+            with redirect_stdout(output):
+                with self.assertRaises(rca.BootstrapError):
+                    rca.confirm_windows_registration(Child())
+            self.assertEqual(output.getvalue(), '')
+
+    def test_windows_registration_timeout_kills_and_reaps_oidc_parent(self):
+        class Child:
+            killed = False
+            reaped = False
+            def wait(self, timeout):
+                if not self.killed:
+                    raise rca.subprocess.TimeoutExpired('synthetic', timeout)
+                self.reaped = True
+                return -9
+            def kill(self):
+                self.killed = True
+        process = Child()
+        with self.assertRaises(rca.BootstrapError):
+            rca.confirm_windows_registration(process, timeout=1)
+        self.assertTrue(process.killed)
+        self.assertTrue(process.reaped)
+
+    def test_windows_registration_zero_exit_does_not_claim_wss_online(self):
+        from contextlib import redirect_stdout
+        output = io.StringIO()
+        class Child:
+            def wait(self, timeout):
+                self.timeout = timeout
+                return 0
+        with redirect_stdout(output):
+            rca.confirm_windows_registration(Child())
+        self.assertIn('registration exited successfully', output.getvalue())
+        self.assertIn('WSS online is not yet confirmed', output.getvalue())
 
     def test_partial_pin_denied_before_download(self):
         result, calls = self.invoke(bundle(), {'SESSION_RCA_RELEASE_TAG': ''})
