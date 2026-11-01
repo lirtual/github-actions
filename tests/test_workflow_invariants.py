@@ -190,6 +190,573 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("Complete the email one-time PIN gate", tunnel)
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
+    def test_tunnel_help_feature_probe_handles_long_output_without_sigpipe(self):
+        """The guarded cloudflared help probe must drain stdout under pipefail.
+
+        A grep -q early match closes the pipe and can make cloudflared exit 141,
+        before it has even started the protected Tunnel.
+        """
+        import shlex
+        import subprocess
+        import sys
+
+        tunnel = (ROOT / ".github/scripts/start-tunnel.sh").read_text()
+        match = re.search(r'(?m)^\s*"\$binary" tunnel --help 2>&1 \| (.+)
+        rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
+        self.assertNotIn("Set-LocalUser", rdp)
+        self.assertNotIn("SESSION_RDP_PASSWORD", rdp)
+        self.assertIn("SESSION_SYSTEM_PASSWORD", rdp)
+        self.assertIn("Get-LocalUser -Name ([Environment]::UserName)", rdp)
+        self.assertNotIn("New-LocalUser", rdp)
+        self.assertIn("UserAuthentication -Value 1", rdp)
+        self.assertIn("fDenyTSConnections -Value 0", rdp)
+        self.assertIn("-LocalPort 3389 -LocalAddress $TailnetAddress", rdp)
+        self.assertIn("Start-Service TermService", rdp)
+        windows = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertNotIn("secrets.SESSION_RDP_PASSWORD", windows)
+        self.assertIn("Remove-NetFirewallRule -Name SessionActionsTailscaleRDP", windows)
+        self.assertIn("fDenyTSConnections -Value 1", windows)
+
+    def test_windows_ssh_fast_path_keeps_missing_capability_fallback(self):
+        ssh = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("Test-Path -LiteralPath $Sshd -PathType Leaf", ssh)
+        self.assertIn("Get-Service sshd -ErrorAction SilentlyContinue", ssh)
+        self.assertIn("Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'", ssh)
+        self.assertIn("Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'", ssh)
+        self.assertIn("OpenSSH Server installation incomplete", ssh)
+        self.assertLess(
+            ssh.index("Get-Service sshd -ErrorAction SilentlyContinue"),
+            ssh.index("Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'"),
+        )
+        self.assertLess(ssh.index("$Sshd -t"), ssh.index("$Sshd -T"))
+        self.assertIn("passwordauthentication yes", ssh)
+        self.assertIn("listenaddress ", ssh)
+        self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH'", ssh)
+        self.assertIn("Start-Service sshd -ErrorAction Stop", ssh)
+
+    def test_windows_ssh_startup_profiler_does_not_disclose_secrets(self):
+        ssh = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("Windows SSH local password policy:", ssh)
+        self.assertIn("Windows SSH capability availability:", ssh)
+        self.assertIn("Windows SSH configuration, service and listener validation:", ssh)
+        self.assertIn("Windows SSH total local setup:", ssh)
+        self.assertIn("Diagnostics.Stopwatch", ssh)
+        self.assertIn("Get-WindowsCapability", ssh)
+        self.assertIn("secedit.exe /configure", ssh)
+        self.assertIn("Set-LocalUser -Name $Username -Password $SecurePassword", ssh)
+        self.assertNotIn("Write-Output $Password", ssh)
+        self.assertIn("SESSION_SYSTEM_PASSWORD", ssh)
+
+    def test_windows_rdp_disconnect_returns_only_runner_session_to_console(self):
+        rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
+        handoff = (ROOT / ".github/scripts/windows-rdp-handoff.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("'windows-rdp-handoff.ps1') -Install", rdp)
+        self.assertIn("RUNNER_ENVIRONMENT: ${{ runner.environment }}", workflow)
+        self.assertIn("SessionActionsRdpConsoleHandoff", workflow)
+        self.assertIn("Unregister-ScheduledTask", workflow)
+        self.assertIn("$env:RUNNER_ENVIRONMENT -ne 'github-hosted'", handoff)
+        self.assertIn("<StateChange>RemoteDisconnect</StateChange>", handoff)
+        self.assertIn("<LogonType>InteractiveToken</LogonType>", handoff)
+        self.assertIn("<RunLevel>HighestAvailable</RunLevel>", handoff)
+        self.assertIn("MultipleInstancesPolicy>IgnoreNew", handoff)
+        self.assertIn("quser.exe", handoff)
+        self.assertIn("CandidateIds.Count -ne 1", handoff)
+        self.assertIn("'/dest:console'", handoff)
+        self.assertNotIn("LockWorkStation", handoff)
+        self.assertNotIn("Set-ItemProperty", handoff)
+        self.assertNotIn("$env:SESSIONNAME", handoff)
+
+    def test_uu_share_invite_is_optional_and_not_automatically_disclosed(self):
+        script = (ROOT / ".github/scripts/windows-uu.ps1").read_text(encoding="utf-8")
+        hold = (ROOT / ".github/scripts/session_action.py").read_text()
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("复制并分享", script)
+        self.assertIn("GetCurrentPattern(", script)
+        self.assertIn("[System.Windows.Automation.InvokePattern]::Pattern", script)
+        self.assertIn("$ClipboardPrimed", script)
+        self.assertIn("$AllButtons.Count -eq 2", script)
+        self.assertIn("$CodeBox.Right", script)
+        self.assertIn("$DistanceY -le 45", script)
+        self.assertIn("$Adjacent.Count -eq 1", script)
+        self.assertIn("$Marker = 'uu-share-'", script)
+        self.assertIn("Set-Clipboard -Value $Marker", script)
+        self.assertIn("$Current -cne $Marker", script)
+        self.assertIn("if (-not $Refresh", script)
+        self.assertIn("if ($Refresh", script)
+        self.assertIn("if ($ShareUrl) { $Payload.share_url = $ShareUrl }", script)
+        self.assertIn("UU_SHARE_URL.fullmatch", hold)
+        self.assertIn("UU_LITE_SHARE_URL_UNAVAILABLE=true", ci)
+        self.assertNotIn("Write-Output $ShareUrl", script)
+        self.assertNotIn("Write-Host $ShareUrl", script)
+
+    def test_first_round_service_startup_optimizations_preserve_security(self):
+        chrome = (ROOT / ".github/scripts/start-chrome.sh").read_text()
+        uu = (ROOT / ".github/scripts/windows-uu.ps1").read_text(encoding="utf-8")
+        self.assertIn('docker image inspect "$image"', chrome)
+        self.assertIn('docker pull "$image"', chrome)
+        self.assertIn("Chrome pinned image acquisition:", chrome)
+        self.assertIn("Chrome GUI and local HTTP readiness:", chrome)
+        self.assertIn("Chrome total local startup:", chrome)
+        self.assertIn('127.0.0.1:3000:3000', chrome)
+        self.assertIn('if [[ "$status" == 200 ]]', chrome)
+        self.assertIn("Get-AuthenticodeSignature", uu)
+        self.assertNotIn("Start-Sleep -Seconds 20", uu)
+        self.assertIn("AddSeconds(30)", uu)
+        self.assertIn("$Refresh -or [DateTime]::UtcNow -ge $ProbeDeadline", uu)
+        self.assertIn("if ($Pairs.Count -eq 1) { break }", uu)
+        self.assertIn("Start-Sleep -Seconds 1", uu)
+        self.assertIn("Start-Sleep -Seconds 2", uu)
+        self.assertIn("UU Lite UI credentials ready after", uu)
+        self.assertIn("GetCurrentPattern(", uu)
+        self.assertIn("$IdAgain -cne $Pairs[0].Id.Value", uu)
+
+    def test_ubuntu_uses_existing_runner_user_and_real_password_ssh(self):
+        workflow = (ROOT / ".github/workflows/ubuntu.yml").read_text()
+        script = (ROOT / ".github/scripts/ubuntu-ssh.sh").read_text()
+        self.assertIn('account="$(id -un)"', script)
+        self.assertIn('printf \'%s:%s\\n\' "$account" "$SESSION_SYSTEM_PASSWORD" | sudo chpasswd', script)
+        self.assertIn('sudo tailscale set --ssh=false', script)
+        self.assertNotIn('sudo tailscale set --ssh\n', workflow)
+        self.assertNotIn('useradd', script)
+        self.assertNotIn('adduser', script)
+        self.assertNotIn('New-LocalUser', script)
+        self.assertIn('PasswordAuthentication yes', script)
+        self.assertIn('PubkeyAuthentication no', script)
+        self.assertIn('AuthenticationMethods password', script)
+        self.assertIn('ListenAddress $tailnet_ip', script)
+        self.assertIn('sudo /usr/sbin/sshd -t', script)
+        self.assertIn('sudo systemctl restart ssh', script)
+        self.assertIn('sudo ss -H -ltn', script)
+        self.assertIn('"$ssh_listeners" != "$tailnet_ip:22"', script)
+        self.assertIn('sudo systemctl stop ssh', workflow)
+        self.assertIn('SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}', workflow)
+        self.assertNotIn('16 characters', script)
+        self.assertNotIn('Length -lt 16', script)
+
+    def test_windows_ssh_uses_default_runner_account_not_a_new_user(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("$Username = [Environment]::UserName", text)
+        self.assertIn("Get-LocalUser -Name $Username", text)
+        self.assertIn("$Account.SID.Value -ne $Identity.User.Value", text)
+        self.assertIn("[Security.Principal.WindowsBuiltInRole]::Administrator", text)
+        self.assertIn("Set-LocalUser -Name $Username -Password $SecurePassword", text)
+        self.assertNotIn("New-LocalUser", text)
+        self.assertNotIn("Remove-LocalUser", text)
+        self.assertNotIn("sessionuser", text)
+
+    def test_windows_password_is_secret_and_fails_closed(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        workflow = (ROOT / ".github/workflows/windows.yml").read_text()
+        self.assertIn("$env:SESSION_SYSTEM_PASSWORD", text)
+        self.assertIn("[string]::IsNullOrEmpty($Password)", text)
+        self.assertNotIn("$Password.Length -lt 16", text)
+        self.assertIn("$Password.Length -lt 8", text)
+        self.assertIn("MinimumPasswordLength = 8", text)
+        self.assertIn("PasswordComplexity = 0", text)
+        self.assertIn("$env:RUNNER_ENVIRONMENT -ne 'github-hosted'", text)
+        self.assertIn("runner.environment", workflow)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", text)
+        self.assertIn("$env:SESSION_SYSTEM_PASSWORD = $null", text)
+        self.assertIn("secrets.SESSION_SYSTEM_PASSWORD", workflow)
+        self.assertNotIn("vars.SESSION_SYSTEM_PASSWORD", workflow)
+        self.assertNotIn("SESSION_SSH_PUBLIC_KEY", workflow + text)
+        self.assertNotIn("Write-Output $Password", text)
+        self.assertNotIn("Write-Host $Password", text)
+        self.assertNotIn("LogLevel DEBUG3", text)
+        self.assertNotIn("SyslogFacility LOCAL0", text)
+
+    def test_windows_tailnet_firewall_and_listener_are_scoped(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        self.assertIn("New-NetFirewallRule -Name 'SessionActionsTailscaleSSH' -DisplayName", text)
+        self.assertIn("-LocalAddress $TailnetAddress -RemoteAddress '100.64.0.0/10' -InterfaceAlias", text)
+        self.assertIn("('ListenAddress ' + $TailnetAddress)", text)
+        self.assertIn("Get-NetTCPConnection -State Listen -LocalPort 22", text)
+        self.assertIn("$Listeners.Count -ne 1", text)
+        self.assertIn("$Listeners[0].LocalAddress -ne $TailnetAddress", text)
+        self.assertIn("Disable-NetFirewallRule", text)
+
+    def test_windows_sshd_reloads_password_only_policy(self):
+        text = (ROOT / ".github/scripts/windows-ssh.ps1").read_text()
+        config = text.index("& $Sshd -t")
+        effective = text.index("$EffectiveConfig = & $Sshd -T")
+        stop = text.index("Stop-Service sshd -ErrorAction Stop")
+        start = text.index("Start-Service sshd -ErrorAction Stop")
+        self.assertLess(config, effective)
+        self.assertLess(effective, stop)
+        self.assertLess(stop, start)
+        self.assertIn("'PasswordAuthentication yes'", text)
+        self.assertIn("'PubkeyAuthentication no'", text)
+        self.assertIn("'AuthenticationMethods password'", text)
+        self.assertIn("('AllowUsers ' + $Username.ToLowerInvariant())", text)
+        self.assertIn("('listenaddress ' + $TailnetAddress + ':22')", text)
+        self.assertNotIn("AuthorizedKeysFile", text)
+        self.assertNotIn("'AllowUsers sessionuser'", text)
+
+    def test_openlist_mysql_uri_modes_and_validation(self):
+        import runpy
+        parser = runpy.run_path(str(ROOT / ".github/scripts/openlist-db-config.py"))
+        parse = parser["parse_mysql_uri"]
+        base = "mysql://appuser:p%5Fass@db.example.invalid:18691/tenantdb?ssl-mode=REQUIRED"
+        config = parse(base)
+        self.assertEqual(config["type"], "mysql")
+        self.assertEqual(config["host"], "db.example.invalid")
+        self.assertEqual(config["port"], 18691)
+        self.assertEqual(config["name"], "tenantdb")
+        self.assertEqual(config["password"], "p_ass")
+        self.assertEqual(config["table_prefix"], "x_")
+        self.assertEqual(config["ssl_mode"], "true")
+        verified = parse(base.replace("REQUIRED", "VERIFY_IDENTITY"))
+        self.assertEqual(verified["ssl_mode"], "true")
+        for invalid in [
+            base.replace("REQUIRED", "DISABLED"),
+            base.replace("REQUIRED", "PREFERRED"),
+            base.replace("?ssl-mode=REQUIRED", ""),
+            base + "&extra=1",
+            base.replace("mysql://", "postgres://"),
+            base.replace("/tenantdb?", "/?"),
+            base.replace("appuser", "user@injected"),
+            base.replace("p%5Fass", ""),
+            base.replace("db.example.invalid", "bad host"),
+        ]:
+            with self.subTest(uri=invalid):
+                with self.assertRaises(ValueError):
+                    parse(invalid)
+
+    def test_aiven_ca_pem_bundle_validation(self):
+        import runpy
+        module = runpy.run_path(str(ROOT / ".github/scripts/openlist-db-config.py"))
+        validate_ca = module["validate_ca"]
+        ca = (ROOT / "tests/fixtures/test-ca.pem").read_text()
+        self.assertEqual(validate_ca(ca), ca)
+        self.assertEqual(validate_ca(ca + ca), ca + ca)
+        for invalid in ("", "not a PEM certificate", ca + "\\nsecret", ca.replace("CERTIFICATE", "PRIVATE KEY")):
+            with self.subTest(invalid=invalid[:30]):
+                with self.assertRaises(ValueError):
+                    validate_ca(invalid)
+
+    def test_openlist_mysql_uri_config_is_private_and_has_no_sqlite_fallback(self):
+        import json
+        import os
+        import stat
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "openlist-data"
+            target.mkdir()
+            config_path = target / "config.json"
+            env = dict(os.environ)
+            env["RUNNER_TEMP"] = temp
+            env["OPENLIST_DATABASE_URI"] = "mysql://openlist:s3cret@mysql.example.invalid:18691/testdb?ssl-mode=REQUIRED"
+            ca = (ROOT / "tests/fixtures/test-ca.pem").read_text()
+            env["OPENLIST_DATABASE_CA"] = ca
+            script = ROOT / ".github/scripts/openlist-db-config.py"
+            result = subprocess.run(
+                ["python", str(script), str(config_path)],
+                env=env, text=True, capture_output=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("s3cret", result.stdout + result.stderr)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
+            data = json.loads(config_path.read_text())
+            self.assertEqual(data["database"]["name"], "testdb")
+            self.assertEqual(data["database"]["ssl_mode"], "true")
+            self.assertEqual(data["database"]["password"], "s3cret")
+            self.assertEqual(data["database"]["ssl_mode"], "true")
+            pem_path = target / "database-ca.pem"
+            self.assertEqual(pem_path.read_text(), ca)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(pem_path.stat().st_mode), 0o600)
+            self.assertNotEqual(data["jwt_secret"], "")
+            result = subprocess.run(
+                ["python", str(script), str(config_path)],
+                env=env, text=True, capture_output=True, timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("s3cret", result.stdout + result.stderr)
+            # A missing/invalid CA must fail without creating any secret files.
+            config_path.unlink()
+            pem_path.unlink()
+            env["OPENLIST_DATABASE_CA"] = "not a PEM certificate"
+            rejected = subprocess.run(
+                ["python", str(script), str(config_path)],
+                env=env, text=True, capture_output=True, timeout=10,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertNotIn("s3cret", rejected.stdout + rejected.stderr)
+            self.assertFalse(config_path.exists())
+            self.assertFalse(pem_path.exists())
+        start = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        self.assertIn("OPENLIST_DATABASE_URI", start)
+        self.assertIn("openlist-db-config.py", start)
+        self.assertIn("openlist admin set", start)
+        self.assertIn("SSL_CERT_FILE=/opt/openlist/data/database-ca.pem", start)
+        self.assertIn("unset OPENLIST_DATABASE_URI OPENLIST_DATABASE_CA", start)
+        self.assertIn("OpenList admin password reset failed", start)
+        self.assertNotIn("sqlite3", start)
+        workflow = (ROOT / ".github/workflows/openlist.yml").read_text()
+        self.assertIn("OPENLIST_DATABASE_URI: ${{ secrets.OPENLIST_DATABASE_URI }}", workflow)
+        self.assertIn("OPENLIST_DATABASE_CA: ${{ secrets.OPENLIST_DATABASE_CA }}", workflow)
+        self.assertIn('rm -f "$RUNNER_TEMP/openlist-data/config.json"', workflow)
+
+    def test_openlist_ready_requires_admin_authentication(self):
+        # The real Ubuntu service smoke runs this script with an isolated,
+        # non-production password; Ready cannot rely on homepage HTTP 200.
+        startup = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        self.assertIn('OPENLIST_ADMIN_PASSWORD', startup)
+        self.assertIn('/api/auth/login', startup)
+        self.assertIn('result.get("code") == 200', startup)
+        self.assertIn('get("token")', startup)
+        self.assertIn('OpenList admin login verification failed', startup)
+        # The upstream admin set command bootstraps the DB itself; avoid a redundant
+        # full OpenList initialization while preserving login verification.
+        self.assertEqual(startup.count('./openlist admin set'), 1)
+        self.assertNotIn('./openlist admin >/dev/null', startup)
+        self.assertIn('OpenList total local startup:', startup)
+        self.assertIn('OpenList config and MySQL preflight:', startup)
+        self.assertIn('OpenList pinned image acquisition:', startup)
+        self.assertIn('docker image inspect "$image"', startup)
+        self.assertIn('docker pull --quiet "$image"', startup)
+        self.assertIn('OpenList one-time admin password reset:', startup)
+        self.assertIn('OpenList service and admin login:', startup)
+        self.assertNotIn('print(password)', startup)
+        self.assertNotIn('print(result)', startup)
+        self.assertNotIn('print(payload)', startup)
+
+    def test_openlist_password_reset_requires_explicit_manual_recovery(self):
+        startup = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        session = (ROOT / ".github/workflows/openlist.yml").read_text()
+        reset = (ROOT / ".github/workflows/openlist-admin-reset.yml").read_text()
+        self.assertIn("reset_admin=false", startup)
+        self.assertIn("--reset-admin)", startup)
+        self.assertIn('if [[ "$reset_admin" == true ]]; then', startup)
+        self.assertEqual(startup.count("./openlist admin set"), 1)
+        self.assertLess(startup.index('if [[ "$reset_admin" == true ]]'),
+                        startup.index("./openlist admin set"))
+        self.assertIn("OpenList admin login verification failed", startup)
+        self.assertIn('group: openlist-persistent-database', session)
+        self.assertIn('group: openlist-persistent-database', reset)
+        self.assertIn('cancel-in-progress: false', session)
+        self.assertIn('cancel-in-progress: false', reset)
+        self.assertIn("  workflow_dispatch:", reset)
+        self.assertNotIn("  push:", reset)
+        self.assertNotIn("  schedule:", reset)
+        self.assertIn("CONFIRM: ${{ inputs.confirm }}", reset)
+        self.assertIn("refs/heads/main", reset)
+        self.assertIn("'RESET_OPENLIST_ADMIN'", reset)
+        self.assertLess(reset.index("Confirm explicit main-branch"),
+                        reset.index("Reset persistent OpenList"))
+        self.assertIn("secrets.SESSION_SERVICE_PASSWORD", reset)
+        self.assertIn("secrets.OPENLIST_DATABASE_URI", reset)
+        self.assertIn("secrets.OPENLIST_DATABASE_CA", reset)
+        self.assertIn("bash .github/scripts/start-openlist.sh --reset-admin", reset)
+        self.assertIn("if: always()", reset)
+        self.assertNotIn("id-token: write", reset)
+        self.assertNotIn("start-tunnel.sh", reset)
+
+    def test_task_cannot_execute_before_a_signed_claim(self):
+        text = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        self.assertIn("id-token: write", text)
+        claim = text.index("Claim approved physical Run before any task work")
+        execute = text.index("Execute bounded verification Task")
+        self.assertLess(claim, execute)
+        self.assertNotIn("${{ secrets.", text[:execute])
+        self.assertNotIn("actions/checkout", text[:execute])
+
+    def test_verify_task_optional_artifact_is_claim_guarded_bounded_and_nonsecret(self):
+        source = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        claim = source.index("Claim approved physical Run before any task work")
+        execute = source.index("Execute bounded verification Task")
+        result = source.index("Submit small signed Task result after successful work")
+        write = source.index("Write bounded public verification artifact")
+        upload = source.index("Upload bounded public verification artifact")
+        self.assertTrue(claim < execute < result < write < upload)
+        header = source[:claim]
+        self.assertIn("      emit_artifact:", header)
+        self.assertIn("        type: boolean\n        required: false\n        default: false", header)
+        self.assertEqual(source.count("if: ${{ success() && inputs.emit_artifact }}"), 2)
+        self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", source[upload:])
+        self.assertIn('''{"verification":"passed","schema_version":1}''', source[write:upload])
+        self.assertIn("          retention-days: 1", source[upload:])
+        self.assertIn("          if-no-files-found: error", source[upload:])
+        self.assertNotIn("${{ secrets.", source[write:])
+        self.assertNotIn("${{ inputs.attempt_id }}", source[write:])
+        self.assertNotIn("${{ inputs.dispatch_id }}", source[write:])
+
+    def test_verify_task_post_claim_hold_is_strictly_bounded(self):
+        import os
+        import subprocess
+        import textwrap
+
+        if os.name == "nt":
+            self.skipTest("The verification Task and bounded hold run on ubuntu-latest")
+
+        source = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        claim = source.index("Claim approved physical Run before any task work")
+        hold = source.index("Hold bounded Task after signed Claim")
+        execute = source.index("Execute bounded verification Task")
+        self.assertLess(claim, hold)
+        self.assertLess(hold, execute)
+        self.assertIn("      hold_seconds:", source[:claim])
+        self.assertIn("        default: 0", source[:claim])
+        start = source.index("        run: |\n", hold) + len("        run: |\n")
+        script = textwrap.dedent(source[start:source.index("\n      - name: Execute", start)])
+        fake_sleep = 'sleep() { printf "SLEEP=%s\n" "$1"; }\n'
+        for value in ("0", "1", "120", "119"):
+            with self.subTest(accepted=value):
+                result = subprocess.run(
+                    ["bash", "-c", fake_sleep + script],
+                    env={**os.environ, "HOLD_SECONDS": value},
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("SLEEP=" in result.stdout, value != "0")
+        for value in ("", "-1", "121", "1000", "1.5", "00", "1e2", "$(id)", " 1"):
+            with self.subTest(rejected=value):
+                result = subprocess.run(
+                    ["bash", "-c", fake_sleep + script],
+                    env={**os.environ, "HOLD_SECONDS": value},
+                    capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("SLEEP=", result.stdout)
+
+    def test_external_packages_are_immutable(self):
+        code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
+        self.assertIn("864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48", code)
+        self.assertIn("sha256sum -c -", code)
+        image = (ROOT / ".github/scripts/start-openlist.sh").read_text()
+        self.assertIn("openlistteam/openlist@sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64", image)
+        self.assertNotIn("openlistteam/openlist:v4.2.6", image)
+
+
+    def test_task_signed_claim_transport_recovery_and_403_denial(self):
+        # Execute the actual embedded Task script, not a copy of its logic.
+        import contextlib
+        import http.client
+        import io
+        import json
+        import os
+        import textwrap
+        import urllib.error
+        from unittest import mock
+
+        source = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        code = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1]
+                               .split("\n          PY", 1)[0])
+        environment = {
+            "ATTEMPT_ID": "11111111-1111-4111-8111-111111111111",
+            "DISPATCH_ID": "22222222-2222-4222-8222-222222222222",
+            "CAPABILITY_ID": "github.action",
+            "CLAIM_URL": "https://claim.example/github/action/claim",
+            "OIDC_AUDIENCE": "workflow-github-action:production",
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example/token",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "DO-NOT-PRINT-THIS-SECRET",
+        }
+
+        class Reply:
+            status = 200
+            def __init__(self, value):
+                self.data = io.BytesIO(json.dumps(value).encode())
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, size=-1):
+                return self.data.read(size)
+
+        for statuses, expected_calls, should_succeed in [
+            ([503, "already_claimed"], 2, True),
+            ([503, "claimed"], 2, True),
+            ([ConnectionResetError("lost HTTP 200"), "already_claimed"], 2, True),
+            ([http.client.IncompleteRead(b'{"result":', 9), "already_claimed"], 2, True),
+            ([ConnectionResetError("lost HTTP 200"), 403], 2, False),
+            ([302], 1, False),
+            ([403], 1, False),
+        ]:
+            with self.subTest(statuses=statuses):
+                responses = list(statuses)
+                observed_tokens = []
+                claim_tokens = []
+
+                def respond(request, timeout=0):
+                    if request.full_url.startswith("https://oidc.example/"):
+                        token = "jwt-" + str(len(observed_tokens) + 1)
+                        observed_tokens.append(token)
+                        return Reply({"value": token})
+                    claim_tokens.append(request.get_header("Authorization"))
+                    result = responses.pop(0)
+                    if isinstance(result, BaseException):
+                        raise result
+                    if isinstance(result, int):
+                        raise urllib.error.HTTPError(request.full_url, result,
+                                                     "temporary or denied", {}, None)
+                    return Reply({"result": result})
+
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with mock.patch.dict(os.environ, environment, clear=True):
+                    with mock.patch("urllib.request.build_opener") as build_opener:
+                        build_opener.return_value.open.side_effect = respond
+                        with mock.patch("time.sleep") as sleep:
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                if should_succeed:
+                                    exec(compile(code, "Task Claim", "exec"), {})
+                                else:
+                                    with self.assertRaises(SystemExit) as captured:
+                                        exec(compile(code, "Task Claim", "exec"), {})
+                            self.assertEqual(sleep.call_count, 1 if expected_calls == 2 else 0)
+                self.assertEqual(len(observed_tokens), expected_calls)
+                self.assertEqual(claim_tokens,
+                                 ["Bearer " + value for value in observed_tokens])
+                self.assertNotIn(environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
+                                 stdout.getvalue() + stderr.getvalue())
+                self.assertNotIn("jwt-", stderr.getvalue())
+                if not should_succeed:
+                    self.assertIn("GitHub Action Claim claim_request HTTP",
+                                  str(captured.exception.code))
+                    self.assertNotIn(environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
+                                     str(captured.exception.code))
+
+        # A failed GitHub token mint is distinguished from a worker Claim 403.
+        # The exception message may contain a token-bearing URL: never echo it.
+        stderr = io.StringIO()
+        claim_calls = []
+        def oidc_denied(request, timeout=0):
+            if "oidc.example" not in request.full_url:
+                claim_calls.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 401,
+                                         "sensitive URL and bearer must not print",
+                                         {}, None)
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with mock.patch("urllib.request.build_opener") as build_opener:
+                build_opener.return_value.open.side_effect = oidc_denied
+                with contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as captured_oidc:
+                        exec(compile(code, "Task Claim OIDC rejection", "exec"), {})
+        self.assertEqual(claim_calls, [])
+        self.assertIn("GitHub Action Claim oidc_request HTTP 401",
+                      str(captured_oidc.exception.code))
+        self.assertNotIn("oidc.example", str(captured_oidc.exception.code))
+        self.assertNotIn("DO-NOT-PRINT-THIS-SECRET", str(captured_oidc.exception.code))
+
+
+if __name__ == "__main__":
+    unittest.main()
+, tunnel)
+        self.assertIsNotNone(match)
+        probe = match.group(1)
+        self.assertEqual(probe, "grep -F -- '--allowed-mail' >/dev/null")
+        producer_code = "import sys; sys.stdout.write('--allowed-mail\\n' + 'x'*1000000)"
+        producer = shlex.quote(sys.executable) + " -c " + shlex.quote(producer_code)
+        check = subprocess.run(
+            ["bash", "-c", "set -o pipefail; " + producer + " | " + probe],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(check.returncode, 0, check.stderr)
+
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
         rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
         self.assertNotIn("Set-LocalUser", rdp)
