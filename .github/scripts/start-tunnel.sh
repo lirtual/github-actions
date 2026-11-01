@@ -31,7 +31,8 @@ printf '%s  %s\n' '053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0db
 chmod 0700 "$binary"
 "$binary" --version | grep -Fq '2026.10.3'
 if [[ "$service" != openlist ]]; then
-  "$binary" tunnel --help 2>&1 | grep -Fq -- '--allowed-mail'
+  # Consume the entire help stream: grep -q may close early and trigger SIGPIPE (141) under pipefail.
+  "$binary" tunnel --help 2>&1 | grep -F -- '--allowed-mail' >/dev/null
 fi
 
 log="$RUNNER_TEMP/session-tunnel.log"
