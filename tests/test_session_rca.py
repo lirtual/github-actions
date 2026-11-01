@@ -211,13 +211,37 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             stage = Path(root) / "session-rca" / "transport-stage"
             stage.parent.mkdir()
             self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
-            for value in ("pending","entered","challenge_start","wss_error","connected"):
+            for value in ("pending","entered","store_ready","pem_ready","challenge_start","wss_error","connected"):
                 stage.write_bytes((value+"\n").encode())
                 self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),value)
             for raw in (b"OIDC_TOKEN_SECRET\n",b"challenge_ok\nMORE_SECRET",
                         b"wss_open\r\n",b"A"*65,b"\xff\n"):
                 stage.write_bytes(raw)
                 self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
+
+    def test_child_stage_reader_handles_late_identity_progress(self):
+        with tempfile.TemporaryDirectory() as root:
+            marker = Path(root) / "session-rca" / "transport-stage"
+            marker.parent.mkdir()
+            marker.write_bytes(b"entered\n")
+            intervals = []
+            def delay(seconds):
+                intervals.append(seconds)
+                if len(intervals) == 2:
+                    marker.write_bytes(b"identity_ready\n")
+            self.assertEqual(rca.observe_windows_child_stage(root, delay=delay),
+                             "identity_ready")
+            self.assertEqual(intervals, [12, 8])
+
+    def test_child_stage_reader_returns_early_stage_after_bounded_window(self):
+        with tempfile.TemporaryDirectory() as root:
+            marker = Path(root) / "session-rca" / "transport-stage"
+            marker.parent.mkdir()
+            marker.write_bytes(b"pem_ready\n")
+            intervals = []
+            self.assertEqual(rca.observe_windows_child_stage(
+                root, delay=lambda seconds: intervals.append(seconds)), "pem_ready")
+            self.assertEqual(intervals, [12, 8, 8])
 
     def test_child_stage_reader_rejects_linked_files(self):
         with tempfile.TemporaryDirectory() as root:
