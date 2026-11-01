@@ -205,6 +205,10 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIsNotNone(match)
         probe = match.group(1)
         self.assertEqual(probe, "grep -F -- '--allowed-mail' >/dev/null")
+        # The producer uses POSIX shell paths. Windows still checks the exact
+        # guarded probe above; exercise SIGPIPE behavior on native POSIX.
+        if sys.platform == "win32":
+            return
         producer_code = "import sys; sys.stdout.write('--allowed-mail\\n' + 'x'*1000000)"
         producer = shlex.quote(sys.executable) + " -c " + shlex.quote(producer_code)
         check = subprocess.run(
