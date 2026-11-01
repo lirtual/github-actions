@@ -158,7 +158,7 @@ def observe_windows_transport(parent_pid, executable, *, run=subprocess.run,
 # Read only a fixed checkpoint from the Agent's existing Windows job-private
 # store. Unknown/untrusted content is never reproduced in Actions logs.
 TRANSPORT_STAGES = frozenset({
-    "pending", "entered", "identity_ready", "signed_recovered", "receipts_ready",
+    "pending", "entered", "store_ready", "pem_ready", "identity_ready", "signed_recovered", "receipts_ready",
     "challenge_start", "challenge_ok", "challenge_rejected",
     "wss_start", "wss_open", "wss_error", "wss_policy", "wss_timeout",
     "connected",
@@ -170,14 +170,21 @@ def observe_windows_child_stage(runner_temp, delay=time.sleep):
     try:
         if stage.parent.is_symlink() or stage.is_symlink() or not stage.is_file():
             return "unknown"
-        # No extra background service, log file, or process tracing.
-        delay(12)
-        with stage.open("rb") as handle:
-            raw = handle.read(65)
-        if len(raw) > 64 or not raw.endswith(b"\n"):
-            return "unknown"
-        value = raw[:-1].decode("ascii")
-        return value if value in TRANSPORT_STAGES else "unknown"
+        # A single 12s snapshot can report "entered" before native ACL
+        # verification finishes. Only early stages receive bounded retries.
+        early = {"pending", "entered", "store_ready", "pem_ready"}
+        for wait in (12, 8, 8):
+            delay(wait)
+            with stage.open("rb") as handle:
+                raw = handle.read(65)
+            if len(raw) > 64 or not raw.endswith(b"\n"):
+                return "unknown"
+            value = raw[:-1].decode("ascii")
+            if value not in TRANSPORT_STAGES:
+                return "unknown"
+            if value not in early:
+                return value
+        return value
     except (OSError, UnicodeError):
         return "unknown"
 
