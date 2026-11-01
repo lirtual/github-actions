@@ -190,6 +190,36 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertNotIn("Complete the email one-time PIN gate", tunnel)
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 
+    def test_tunnel_help_feature_probe_handles_long_output_without_sigpipe(self):
+        """The guarded cloudflared help probe must drain stdout under pipefail.
+
+        A grep -q early match closes the pipe and can make cloudflared exit 141,
+        before it has even started the protected Tunnel.
+        """
+        import shlex
+        import subprocess
+        import sys
+
+        tunnel = (ROOT / ".github/scripts/start-tunnel.sh").read_text()
+        match = re.search(r'(?m)^\s*"\$binary" tunnel --help 2>&1 \| (.+)$', tunnel)
+        self.assertIsNotNone(match)
+        probe = match.group(1)
+        self.assertEqual(probe, "grep -F -- '--allowed-mail' >/dev/null")
+        # The producer uses POSIX shell paths. Windows still checks the exact
+        # guarded probe above; exercise SIGPIPE behavior on native POSIX.
+        if sys.platform == "win32":
+            return
+        producer_code = "import sys; sys.stdout.write('--allowed-mail\\n' + 'x'*1000000)"
+        producer = shlex.quote(sys.executable) + " -c " + shlex.quote(producer_code)
+        check = subprocess.run(
+            ["bash", "-c", "set -o pipefail; " + producer + " | " + probe],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(check.returncode, 0, check.stderr)
+
     def test_windows_rdp_uses_existing_account_and_private_firewall(self):
         rdp = (ROOT / ".github/scripts/windows-rdp.ps1").read_text()
         self.assertNotIn("Set-LocalUser", rdp)
