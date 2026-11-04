@@ -1,12 +1,8 @@
 name: Static Workflow Contract
 on:
+  # Verify every main update; PRs retain the existing affected-path filter.
   push:
     branches: [main]
-    paths:
-      - .github/workflows/**
-      - README.md
-      - .github/scripts/**
-      - tests/**
   pull_request:
     paths:
       - .github/workflows/**
