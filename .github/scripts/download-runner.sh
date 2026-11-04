@@ -94,7 +94,7 @@ unset DOWNLOAD_RCLONE_CONFIG_B64
 # aria2/rclone binary hashes before starting either payload container.
 run_before_deadline docker build --quiet --tag "$image" - <<'DOCKER'
 FROM python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
-RUN apk add --no-cache "aria2=1.37.0-r2" "rclone=1.74.1-r3"
+RUN apk add --no-cache "aria2=1.37.0-r2" "rclone=1.75.2-r0"
 DOCKER
 
 # The x86_64 runner must use the exact binary builds verified by CI.
@@ -102,7 +102,7 @@ DOCKER
 run_before_deadline docker run --rm --network none --entrypoint sh "$image" -c \
   'printf "%s\n" \
     "0bbbf651a55faa76c027bdf6a0ae5dcea1b87ba17c077d0285a2199558dad0cb  /usr/bin/aria2c" \
-    "63f6ccc732c9a8a86995a8293b1c4df1f6bd9abe5b40e1321f9e2920591572d5  /usr/bin/rclone" | sha256sum -c -s' || deny
+    "aa4d25a07f6e18bc04556062e34cc2a8c7e361381a857bd0f5a3f766152a214f  /usr/bin/rclone" | sha256sum -c -s' || deny
 
 run_before_deadline bash "$repo/.github/scripts/download-network.sh" setup
 network_armed=1
