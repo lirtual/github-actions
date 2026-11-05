@@ -39,9 +39,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
                                 yml.index("Checkout pinned dispatched revision"))
                 if name in ("ubuntu", "windows"):
                     self.assertIn("oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}", yml)
-                    self.assertIn("audience: ${{ vars.TS_AUDIENCE }}", yml)
+                    self.assertIn("audience: ${{ format('api.tailscale.com/{0}', vars.TS_OAUTH_CLIENT_ID) }}", yml)
                 self.assertNotIn("secrets.TS_OAUTH_CLIENT_ID", yml)
-                self.assertNotIn("secrets.TS_AUDIENCE", yml)
+                self.assertNotIn("vars.TS_AUDIENCE", yml)
 
                 self.assertIn("WORKFLOW_ACTION_TYPE: session", yml)
                 self.assertIn("session_action.py claim", yml)
@@ -98,9 +98,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
                         self.assertNotIn("${{ secrets.", text[join:ready])
                     self.assertIn("start-tunnel.sh", text[join:ready])
                     if name == "openlist":
-                        self.assertNotIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
+                        self.assertNotIn("vars.OWNER_EMAIL", text[join:ready])
                     else:
-                        self.assertIn("vars.SESSION_TUNNEL_ALLOWED_EMAIL", text[join:ready])
+                        self.assertIn("vars.OWNER_EMAIL", text[join:ready])
                     self.assertIn("actions/upload-artifact@", text[join:ready])
                     self.assertNotIn("sudo tailscale set --ssh\\n", text[join:ready])
                     self.assertNotIn("secrets.OPENLIST_ADMIN_PASSWORD", text)
@@ -173,8 +173,8 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("session-tunnel-url", tunnel)
         self.assertIn("GITHUB_STEP_SUMMARY", tunnel)
         self.assertIn("Cloudflare Tunnel exited before Ready", tunnel)
-        self.assertIn('SESSION_TUNNEL_ALLOWED_EMAIL must be one explicit email address', tunnel)
-        self.assertIn('SESSION_TUNNEL_ALLOWED_EMAIL', tunnel)
+        self.assertIn('OWNER_EMAIL must be one explicit email address', tunnel)
+        self.assertIn('OWNER_EMAIL', tunnel)
         self.assertIn("--allowed-mail", tunnel)
         self.assertIn('"$binary" tunnel --help', tunnel)
         self.assertIn('if [[ ! "$allowed_mail" =~', tunnel)
@@ -187,6 +187,9 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn('login.trycloudflare.com/authorize', tunnel)
         self.assertIn("email one-time PIN is the only access gate", tunnel)
         self.assertIn("OpenList handles user login and guest permissions", tunnel)
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("OWNER_EMAIL: ci@example.com", ci)
+        self.assertNotIn("vars.OWNER_EMAIL", ci)
         self.assertNotIn("Complete the email one-time PIN gate", tunnel)
         self.assertNotIn('secrets.SESSION_SERVICE_PASSWORD', tunnel)
 

@@ -4,7 +4,7 @@
 No random Task root. Existing remote files are never intentional targets;
 actual provider create-only atomicity is not guaranteed.
 """
-from download_batch import InvalidBatch, _destination
+from download_batch import InvalidBatch, REMOTE, _destination
 
 
 class DestinationUnverified(ValueError):
@@ -17,6 +17,16 @@ def approved_base_dir(value):
         return _destination(value)
     except (InvalidBatch, TypeError):
         raise DestinationUnverified("DESTINATION_UNVERIFIED") from None
+
+
+def approved_remote_path(value):
+    """Parse the single Owner-approved rclone remote:existing-relative-directory."""
+    if not isinstance(value, str) or value.count(":") != 1:
+        raise DestinationUnverified("DESTINATION_UNVERIFIED")
+    remote, base = value.split(":", 1)
+    if REMOTE.fullmatch(remote) is None:
+        raise DestinationUnverified("DESTINATION_UNVERIFIED")
+    return remote, approved_base_dir(base)
 
 
 def plan_targets(batch, files_by_source, base_dir):

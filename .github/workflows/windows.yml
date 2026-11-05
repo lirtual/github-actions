@@ -79,7 +79,7 @@ jobs:
         uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf
         with:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ vars.TS_AUDIENCE }}
+          audience: ${{ format('api.tailscale.com/{0}', vars.TS_OAUTH_CLIENT_ID) }}
           tags: tag:session-actions
           hostname: ${{ env.SESSION_TAILSCALE_HOSTNAME }}
       - name: Verify allocated Tailnet name before privileged access
@@ -130,14 +130,12 @@ jobs:
       - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
         run: python .github/scripts/session_action.py ready
-      - name: Start optional pinned Session RCA after signed Ready
+      - name: Start optional latest verified Session RCA after signed Ready
         continue-on-error: true
         timeout-minutes: 2
         shell: pwsh
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
-          SESSION_RCA_RELEASE_TAG: ${{ vars.SESSION_RCA_RELEASE_TAG }}
-          SESSION_RCA_RELEASE_SHA256: ${{ vars.SESSION_RCA_WINDOWS_X64_SHA256 }}
         run: python .github/scripts/session_rca.py
       - name: Hold until selected lifetime or GitHub cancellation
         shell: pwsh

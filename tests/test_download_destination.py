@@ -69,6 +69,18 @@ class DestinationTests(unittest.TestCase):
         self.assertEqual('Projects/Artifacts',
                          dest.approved_base_dir('Projects/Artifacts'))
 
+    def test_approved_remote_path_preserves_existing_destination_rules(self):
+        self.assertEqual(('koofr', 'Downloads'),
+                         dest.approved_remote_path('koofr:Downloads'))
+        self.assertEqual(('ci-local', 'Nested/Downloads'),
+                         dest.approved_remote_path('ci-local:Nested/Downloads'))
+        for value in (None, '', 'koofr', ':Downloads', 'koofr:', 'koofr:/',
+                      'koofr:../escape', 'koofr:Downloads/', 'koofr:downloads\\\\escape',
+                      'koofr:Downloads:other', 'koofr:Downloads/..', 'koofr:\\nsecret',
+                      'invalid.name:Downloads', 'koofr:Downloads//file'):
+            with self.subTest(value=value), self.assertRaises(dest.DestinationUnverified):
+                dest.approved_remote_path(value)
+
     def test_untrusted_target_control_is_never_accepted(self):
         b = json.loads(json.dumps({'remote':'koofr', 'project_purpose':'test',
                                   'downloads':[{'url':'https://example.org/a'}]}))

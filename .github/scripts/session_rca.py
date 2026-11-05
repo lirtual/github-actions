@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional, SHA-256 pinned, job-private RCA Session bootstrap. Never pairs a personal device."""
+"""Optional, SHA-256 verified latest Release Session RCA bootstrap. Never pairs a personal device."""
 import hashlib
 import json
 import os
@@ -17,8 +17,12 @@ REPOSITORY = "lirtual/remote-control-agent"
 LIMIT = 180 * 1024 * 1024
 UNPACKED_LIMIT = 250 * 1024 * 1024
 COUNT_LIMIT = 200
-TAG = re.compile(r"v0\.[1-9][0-9]*\.[0-9]+(?:-[a-z0-9][a-z0-9.-]*)?\Z")
+# Complete versions may be GitHub prereleases; -rc / other suffixed tags cannot auto-run.
+TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+RELEASE_PAGE_SIZE = 100
+RELEASE_PAGE_LIMIT = 5
+RELEASE_RESPONSE_LIMIT = 8 * 1024 * 1024
 
 
 class BootstrapError(Exception):
@@ -95,6 +99,64 @@ def download_pinned(url, archive, sha, opener=urllib.request.urlopen):
     if not size or h.hexdigest() != sha:
         raise BootstrapError("Pinned release digest mismatch")
 
+
+
+
+def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
+    """Find the highest complete immutable Release, then verify its exact asset."""
+    eligible = []
+    for page in range(1, RELEASE_PAGE_LIMIT + 1):
+        url = (f"https://api.github.com/repos/{REPOSITORY}/releases"
+               f"?per_page={RELEASE_PAGE_SIZE}&page={page}")
+        request = urllib.request.Request(url, headers={
+            "User-Agent": "github-actions-session-rca",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        with opener(request, timeout=8) as response:
+            if response.geturl() != url:
+                raise BootstrapError("Unexpected GitHub Releases API redirect")
+            raw = response.read(RELEASE_RESPONSE_LIMIT + 1)
+        if len(raw) > RELEASE_RESPONSE_LIMIT:
+            raise BootstrapError("Release metadata exceeds limit")
+        releases = json.loads(raw)
+        if not isinstance(releases, list) or len(releases) > RELEASE_PAGE_SIZE:
+            raise BootstrapError("Invalid Release metadata")
+        for release in releases:
+            if not isinstance(release, dict):
+                raise BootstrapError("Invalid Release entry")
+            tag = release.get("tag_name")
+            if (isinstance(tag, str) and len(tag) <= 32
+                    and TAG.fullmatch(tag) and release.get("draft") is False):
+                eligible.append((tuple(map(int, tag[1:].split("."))), tag, release))
+        if len(releases) < RELEASE_PAGE_SIZE:
+            break
+    else:
+        raise BootstrapError("Release listing pagination incomplete")
+    if not eligible:
+        raise BootstrapError("No eligible full Release")
+    _, tag, release = max(eligible, key=lambda row: row[0])
+    if release.get("immutable") is not True:
+        raise BootstrapError("Latest Release is not immutable")
+    name = f"remote-control-agent-{tag}-{target}.{extension}"
+    url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise BootstrapError("Release assets unavailable")
+    matches = [asset for asset in assets
+               if isinstance(asset, dict) and asset.get("name") == name]
+    if len(matches) != 1:
+        raise BootstrapError("Matching Release asset missing or ambiguous")
+    asset = matches[0]
+    digest = asset.get("digest")
+    size = asset.get("size")
+    if (asset.get("state") != "uploaded" or
+            asset.get("browser_download_url") != url or
+            not isinstance(digest, str) or not digest.startswith("sha256:") or
+            not DIGEST.fullmatch(digest[7:]) or
+            type(size) is not int or not 0 < size <= LIMIT):
+        raise BootstrapError("Unverified Release asset")
+    return tag, digest[7:], url
 
 
 def confirm_windows_registration(process, timeout=45):
@@ -189,14 +251,8 @@ def observe_windows_child_stage(runner_temp, delay=time.sleep):
         return "unknown"
 
 
-def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen):
-    tag = env.get("SESSION_RCA_RELEASE_TAG", "").strip()
-    sha = env.get("SESSION_RCA_RELEASE_SHA256", "").strip()
-    if not tag and not sha:
-        print("Session RCA not configured; SSH/RDP remains available.")
-        return False
-    if not TAG.fullmatch(tag) or not DIGEST.fullmatch(sha):
-        raise BootstrapError("Incomplete or invalid Session RCA immutable release pin")
+def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen,
+          select_release=resolve_latest_release):
     windows = sys.platform == "win32"
     workflow = "windows" if windows else "ubuntu"
     if (env.get("GITHUB_ACTIONS") != "true" or env.get("RUNNER_ENVIRONMENT") != "github-hosted"
@@ -209,8 +265,12 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         raise BootstrapError("Missing job-scoped runtime directory")
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
+    tag, sha, url = select_release(target, extension, opener)
+    if not TAG.fullmatch(tag) or not DIGEST.fullmatch(sha):
+        raise BootstrapError("Unverified Release selection")
     name = f"remote-control-agent-{tag}-{target}.{extension}"
-    url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+    if url != f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}":
+        raise BootstrapError("Unexpected Release download URL")
     stage = Path(temp) / "session-rca-reviewed-release"
     stage.mkdir(mode=0o700, exist_ok=False)
     archive = stage / name
