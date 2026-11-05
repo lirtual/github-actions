@@ -8,6 +8,7 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[1] / ".github/scripts/start-tunnel.sh"
 
 
+@unittest.skipUnless(os.name == "posix", "Bash Tunnel shell tests require a POSIX Runner")
 class TunnelAllowedMailTests(unittest.TestCase):
     def invoke(self, email, service="chrome"):
         # A local curl stub proves whether validation reached the download step.
