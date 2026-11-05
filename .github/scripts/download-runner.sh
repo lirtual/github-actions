@@ -15,16 +15,20 @@ if [[ -z ${BATCH_JSON:-} ]]; then
 fi
 export BATCH_JSON
 [[ ${ATTEMPT_ID:-} =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || deny
-[[ -n ${BATCH_JSON:-} && -n ${DOWNLOAD_REMOTE_NAME:-} && -n ${DOWNLOAD_RCLONE_CONFIG_B64:-} ]] || deny
-[[ -n ${DOWNLOAD_REMOTE_BASE_DIR:-} ]] || deny
+[[ -n ${BATCH_JSON:-} && -n ${DOWNLOAD_REMOTE_PATH:-} && -n ${DOWNLOAD_RCLONE_CONFIG_CONTENT:-} ]] || deny
 [[ ${GITHUB_RUN_ID:-} =~ ^[1-9][0-9]{0,19}$ && ${GITHUB_RUN_ATTEMPT:-} =~ ^[1-9][0-9]{0,19}$ ]] || deny
 # Validate the Owner-configured remote base before any download or secret use.
 PYTHONPATH="$repo/.github/scripts" python3 - <<'PYBASE' || deny
 import os
-from download_destination import approved_base_dir
-approved_base_dir(os.environ.get("DOWNLOAD_REMOTE_BASE_DIR"))
+from download_destination import approved_remote_path
+approved_remote_path(os.environ.get("DOWNLOAD_REMOTE_PATH"))
 PYBASE
-for binary in docker python3 base64 sha256sum sudo timeout; do command -v "$binary" >/dev/null || deny; done
+# Parse only after validating the exact Owner-approved remote:base format.
+DOWNLOAD_REMOTE_NAME="${DOWNLOAD_REMOTE_PATH%%:*}"
+DOWNLOAD_REMOTE_BASE_DIR="${DOWNLOAD_REMOTE_PATH#*:}"
+export DOWNLOAD_REMOTE_NAME DOWNLOAD_REMOTE_BASE_DIR
+unset DOWNLOAD_REMOTE_PATH
+for binary in docker python3 sha256sum sudo timeout; do command -v "$binary" >/dev/null || deny; done
 
 python3 "$repo/.github/scripts/download_batch.py" >/dev/null || deny
 # No user-provided relative/absolute paths are interpolated into shell commands.
@@ -86,9 +90,9 @@ v=os.statvfs(os.environ['RUNNER_TEMP'])
 if v.f_bavail * v.f_frsize < 64*1024*1024 or v.f_favail < 1024:
     raise SystemExit(2)
 PYCODE
-printf '%s' "$DOWNLOAD_RCLONE_CONFIG_B64" | base64 --decode > "$config" || deny
+printf '%s' "$DOWNLOAD_RCLONE_CONFIG_CONTENT" > "$config" || deny
 chmod 600 "$config"
-unset DOWNLOAD_RCLONE_CONFIG_B64
+unset DOWNLOAD_RCLONE_CONFIG_CONTENT
 
 # Fixed base digest and locked Alpine package versions; verify actual
 # aria2/rclone binary hashes before starting either payload container.

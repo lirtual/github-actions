@@ -41,7 +41,7 @@ jobs:
           "$binary" --version | grep -Fq '2026.10.3'
           "$binary" tunnel --help 2>&1 | grep -F -- '--allowed-mail'
           # Fail closed when no explicit email recipient is configured.
-          if SESSION_SERVICE=chrome SESSION_TUNNEL_ALLOWED_EMAIL='' bash .github/scripts/start-tunnel.sh; then
+          if SESSION_SERVICE=chrome OWNER_EMAIL='' bash .github/scripts/start-tunnel.sh; then
             echo 'Tunnel started without an allowed recipient' >&2
             exit 1
           fi
@@ -179,7 +179,7 @@ jobs:
         shell: bash
         env:
           SESSION_SERVICE: code-server
-          SESSION_TUNNEL_ALLOWED_EMAIL: ${{ vars.SESSION_TUNNEL_ALLOWED_EMAIL }}
+          OWNER_EMAIL: ci@example.com
         run: bash .github/scripts/start-tunnel.sh
       - name: Assert unauthenticated HTTPS cannot reach synthetic origin
         shell: bash
@@ -214,7 +214,7 @@ jobs:
         shell: bash
         env:
           SESSION_SERVICE: openlist
-          SESSION_TUNNEL_ALLOWED_EMAIL: ''
+          OWNER_EMAIL: ''
         run: |
           set -euo pipefail
           kill "$(cat "$RUNNER_TEMP/session-tunnel.pid")" 2>/dev/null || true
@@ -468,12 +468,11 @@ jobs:
         env:
           FIXTURE_COMMIT: ${{ github.event.pull_request.base.sha || github.sha }}
           ATTEMPT_ID: 11111111-1111-4111-8111-111111111111
-          DOWNLOAD_REMOTE_NAME: ci-local
-          DOWNLOAD_REMOTE_BASE_DIR: downloads
+          DOWNLOAD_REMOTE_PATH: ci-local:downloads
         run: |
           set -euo pipefail
           [[ "$FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          export BATCH_JSON DOWNLOAD_RCLONE_CONFIG_B64
+          export BATCH_JSON DOWNLOAD_RCLONE_CONFIG_CONTENT
           BATCH_JSON="$(python3 - "$FIXTURE_COMMIT" <<'PYCODE'
           import json,os,sys
           commit=sys.argv[1]
@@ -485,7 +484,7 @@ jobs:
               'duration_minutes':6},separators=(',',':')))
           PYCODE
           )"
-          DOWNLOAD_RCLONE_CONFIG_B64="$(printf '[ci-local]\ntype = local\n' | base64 -w0)"
+          DOWNLOAD_RCLONE_CONFIG_CONTENT="$(printf '[ci-local]\ntype = local\n')"
           bash .github/scripts/download-runner.sh
 
   smoke-windows-prerequisites:

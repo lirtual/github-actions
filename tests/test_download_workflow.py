@@ -59,12 +59,10 @@ class DownloadWorkflowTests(unittest.TestCase):
     def test_cloud_credentials_referenced_only_in_final_step(self):
         beginning = "".join(self.sections[:-1])
         self.assertNotIn("${{ secrets.", beginning)
-        self.assertNotIn("DOWNLOAD_REMOTE_NAME:", beginning)
-        self.assertIn("DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}",
+        self.assertNotIn("DOWNLOAD_REMOTE_PATH:", beginning)
+        self.assertIn("DOWNLOAD_RCLONE_CONFIG_CONTENT: ${{ secrets.DOWNLOAD_RCLONE_CONFIG }}",
                       self.execute)
-        self.assertIn("DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}",
-                      self.execute)
-        self.assertIn("DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}",
+        self.assertIn("DOWNLOAD_REMOTE_PATH: ${{ vars.DOWNLOAD_REMOTE_PATH }}",
                       self.execute)
         self.assertNotIn("BATCH_JSON: ${{ inputs.batch_json }}", YAML)
         self.assertIn("python3 .github/scripts/download_batch.py", self.validate)

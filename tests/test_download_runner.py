@@ -48,8 +48,8 @@ class DownloadRunnerContractTests(unittest.TestCase):
         self.assertIn("download-network.sh\" cleanup", SCRIPT)
         self.assertIn("trap cleanup EXIT", SCRIPT)
         self.assertLess(SCRIPT.index("trap cleanup EXIT"),
-                        SCRIPT.index('base64 --decode > "$config"'))
-        self.assertIn("unset DOWNLOAD_RCLONE_CONFIG_B64", SCRIPT)
+                        SCRIPT.index('printf \'%s\' "$DOWNLOAD_RCLONE_CONFIG_CONTENT" > "$config"'))
+        self.assertIn("unset DOWNLOAD_RCLONE_CONFIG_CONTENT", SCRIPT)
         self.assertIn("rm -rf -- \"$task_dir\"", SCRIPT)
         self.assertRegex(SCRIPT, r"python:3\.12-alpine@sha256:[0-9a-f]{64}")
         self.assertIn('aria2=1.37.0-r2', SCRIPT)
@@ -61,7 +61,7 @@ class DownloadRunnerContractTests(unittest.TestCase):
         self.assertIn('os.statvfs', SCRIPT)
 
     def test_setup_and_payload_share_one_enforced_deadline(self):
-        self.assertIn("for binary in docker python3 base64 sha256sum sudo timeout;", SCRIPT)
+        self.assertIn("for binary in docker python3 sha256sum sudo timeout;", SCRIPT)
         for command in ("docker build", "docker run --rm --network none",
                         'bash "$repo/.github/scripts/download-network.sh" setup'):
             self.assertIn("run_before_deadline " + command, SCRIPT)
@@ -87,8 +87,8 @@ class DownloadRunnerContractTests(unittest.TestCase):
 
     def test_remote_root_and_input_are_not_shell_interpreted(self):
         self.assertNotIn("DOWNLOAD_TASK_ROOT", SCRIPT)
-        self.assertIn("DOWNLOAD_REMOTE_BASE_DIR", SCRIPT)
-        self.assertIn("approved_base_dir", SCRIPT)
+        self.assertIn("DOWNLOAD_REMOTE_PATH", SCRIPT)
+        self.assertIn("approved_remote_path", SCRIPT)
         self.assertIn("GITHUB_RUN_ID", SCRIPT)
         self.assertIn("GITHUB_RUN_ATTEMPT", SCRIPT)
         self.assertNotIn('eval ', SCRIPT)

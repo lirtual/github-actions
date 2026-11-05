@@ -65,9 +65,8 @@ jobs:
         shell: bash
         env:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
-          DOWNLOAD_REMOTE_NAME: ${{ vars.DOWNLOAD_REMOTE_NAME }}
-          DOWNLOAD_REMOTE_BASE_DIR: ${{ vars.DOWNLOAD_REMOTE_BASE_DIR }}
-          DOWNLOAD_RCLONE_CONFIG_B64: ${{ secrets.DOWNLOAD_RCLONE_CONFIG_B64 }}
+          DOWNLOAD_REMOTE_PATH: ${{ vars.DOWNLOAD_REMOTE_PATH }}
+          DOWNLOAD_RCLONE_CONFIG_CONTENT: ${{ secrets.DOWNLOAD_RCLONE_CONFIG }}
         run: |
           set -euo pipefail
           bash .github/scripts/download-runner.sh

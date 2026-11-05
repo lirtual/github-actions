@@ -13,13 +13,13 @@ esac
 # login and guest permissions, so its temporary Tunnel must allow public routes.
 allowed_mail=''
 if [[ "$service" != openlist ]]; then
-  allowed_mail="${SESSION_TUNNEL_ALLOWED_EMAIL:-}"
+  allowed_mail="${OWNER_EMAIL:-}"
   if [[ ! "$allowed_mail" =~ ^[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]]; then
-    echo 'SESSION_TUNNEL_ALLOWED_EMAIL must be one explicit email address' >&2
+    echo 'OWNER_EMAIL must be one explicit email address' >&2
     exit 1
   fi
 fi
-unset SESSION_TUNNEL_ALLOWED_EMAIL
+unset OWNER_EMAIL
 
 # Official immutable cloudflared 2026.10.3 linux-amd64 with protected Quick Tunnel support.
 binary="$RUNNER_TEMP/cloudflared"

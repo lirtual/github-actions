@@ -58,9 +58,7 @@ class Download:
 
 
 def settings(root, data):
-    return {'SESSION_RCA_RELEASE_TAG': TAG,
-        'SESSION_RCA_RELEASE_SHA256': hashlib.sha256(data).hexdigest(),
-        'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted',
+    return {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted',
         'GITHUB_WORKFLOW': 'ubuntu', 'GITHUB_REPOSITORY': 'lirtual/github-actions',
         'ATTEMPT_ID': '11111111-1111-4111-8111-111111111111',
         'WORKFLOW_ACTION_OIDC_AUDIENCE': 'workflow-github-abcde',
@@ -69,7 +67,7 @@ def settings(root, data):
 
 
 class SessionRcaBootstrapTests(unittest.TestCase):
-    def invoke(self, payload, env_override=None, windows=False):
+    def invoke(self, payload, env_override=None, windows=False, select_override=None):
         with tempfile.TemporaryDirectory() as root:
             env = settings(root, payload)
             if windows:
@@ -83,14 +81,21 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 with mock.patch.object(rca.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True):
                     outcome = None
                     try:
-                        outcome = rca.start(env, opener=lambda *_args, **_kwargs: Download(payload), launch=launch)
+                        outcome = rca.start(
+                            env, opener=lambda *_args, **_kwargs: Download(payload),
+                            launch=launch, select_release=select_override or
+                            (lambda target, extension, opener: (
+                                TAG, hashlib.sha256(payload).hexdigest(),
+                                f"https://github.com/{rca.REPOSITORY}/releases/download/"
+                                f"{TAG}/remote-control-agent-{TAG}-{target}.{extension}")))
                     except rca.BootstrapError:
                         outcome = 'denied'
             return outcome, calls
 
-    def test_default_disabled_never_downloads_or_launches(self):
+    def test_invalid_job_environment_never_downloads_or_launches(self):
         with mock.patch.object(rca.urllib.request, 'urlopen', side_effect=AssertionError('downloaded')):
-            self.assertFalse(rca.start({}))
+            with self.assertRaises(rca.BootstrapError):
+                rca.start({})
 
     def test_linux_matching_pin_launches_job_private_reviewed_entrypoint(self):
         result, calls = self.invoke(bundle())
@@ -253,8 +258,10 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             marker.symlink_to(outside)
             self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
 
-    def test_partial_pin_denied_before_download(self):
-        result, calls = self.invoke(bundle(), {'SESSION_RCA_RELEASE_TAG': ''})
+    def test_release_lookup_failure_denied_before_download(self):
+        def unavailable(*_args):
+            raise rca.BootstrapError("synthetic metadata unavailable")
+        result, calls = self.invoke(bundle(), select_override=unavailable)
         self.assertEqual(result, 'denied')
         self.assertFalse(calls)
 
@@ -268,7 +275,11 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 return Download(payload)
             with mock.patch.object(rca.sys, 'platform', 'linux'):
                 self.assertTrue(rca.start(env, opener=opener,
-                    launch=lambda *_a, **_kw: type('Child', (), {'pid': 1234})()))
+                    launch=lambda *_a, **_kw: type('Child', (), {'pid': 1234})(),
+                    select_release=lambda target, ext, _opener: (
+                        TAG, hashlib.sha256(payload).hexdigest(),
+                        f"https://github.com/{rca.REPOSITORY}/releases/download/"
+                        f"{TAG}/remote-control-agent-{TAG}-{target}.{ext}")))
             self.assertEqual(urls, [(
                 'https://github.com/lirtual/remote-control-agent/releases/download/v0.1.40/'
                 'remote-control-agent-v0.1.40-linux-x64-glibc.tar.gz', 20)])
@@ -291,7 +302,9 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertFalse(calls)
 
     def test_wrong_sha_cannot_launch(self):
-        result, calls = self.invoke(bundle(), {'SESSION_RCA_RELEASE_SHA256': '0' * 64})
+        result, calls = self.invoke(bundle(), select_override=lambda target, ext, _opener: (
+            TAG, '0' * 64, f"https://github.com/{rca.REPOSITORY}/releases/download/"
+            f"{TAG}/remote-control-agent-{TAG}-{target}.{ext}"))
         self.assertEqual(result, 'denied')
         self.assertFalse(calls)
 
@@ -315,6 +328,81 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertEqual(result, 'denied')
         self.assertFalse(calls)
 
+
+
+class LatestReleaseSelectionTests(unittest.TestCase):
+    def release(self, tag=TAG, *, immutable=True, draft=False, digest=None,
+                windows=False, uploaded=True):
+        target = 'windows-x64' if windows else 'linux-x64-glibc'
+        ext = 'zip' if windows else 'tar.gz'
+        name = f'remote-control-agent-{tag}-{target}.{ext}'
+        return {'tag_name': tag, 'draft': draft, 'prerelease': True,
+                'immutable': immutable, 'assets': [{
+                    'name': name, 'state': 'uploaded' if uploaded else 'new',
+                    'size': 1234,
+                    'digest': 'sha256:' + (digest or 'a' * 64),
+                    'browser_download_url':
+                        f'https://github.com/{rca.REPOSITORY}/releases/download/{tag}/{name}',
+                }]}
+
+    def lookup(self, releases, *, redirect=False, windows=False):
+        requested = []
+        def opener(req, timeout):
+            requested.append((req.full_url, timeout))
+            data = json.dumps(releases).encode()
+            response = Download(data)
+            response.geturl = lambda: (
+                'https://evil.invalid/' if redirect else req.full_url)
+            return response
+        target, ext = ('windows-x64', 'zip') if windows else ('linux-x64-glibc', 'tar.gz')
+        return rca.resolve_latest_release(target, ext, opener=opener), requested
+
+    def test_highest_complete_semver_not_latest_api_order(self):
+        result, urls = self.lookup([self.release('v0.1.49'),
+                                    self.release('v0.1.51'),
+                                    self.release('v0.1.50-rc.3'),
+                                    self.release('v0.1.52', draft=True)])
+        self.assertEqual('v0.1.51', result[0])
+        self.assertEqual('a' * 64, result[1])
+        self.assertTrue(result[2].endswith('v0.1.51-linux-x64-glibc.tar.gz'))
+        self.assertEqual(1, len(urls))
+        self.assertIn('per_page=100&page=1', urls[0][0])
+        self.assertLessEqual(urls[0][1], 8)
+
+    def test_windows_target_uses_matching_asset(self):
+        result, _ = self.lookup([self.release(windows=True)], windows=True)
+        self.assertTrue(result[2].endswith('v0.1.40-windows-x64.zip'))
+
+    def test_no_downgrade_if_highest_release_is_mutable_or_missing_asset(self):
+        for latest in (self.release('v0.1.52', immutable=False),
+                       self.release('v0.1.52', uploaded=False),
+                       self.release('v0.1.52', digest='bad'),
+                       {'tag_name': 'v0.1.52', 'draft': False,
+                        'immutable': True, 'assets': []}):
+            with self.subTest(latest=latest), self.assertRaises(rca.BootstrapError):
+                self.lookup([self.release('v0.1.51'), latest])
+
+    def test_draft_rc_and_empty_listing_are_denied(self):
+        with self.assertRaises(rca.BootstrapError):
+            self.lookup([self.release('v0.1.52-rc.1'),
+                         self.release('v0.1.53', draft=True)])
+        with self.assertRaises(rca.BootstrapError):
+            self.lookup([])
+
+    def test_api_redirect_is_rejected(self):
+        with self.assertRaises(rca.BootstrapError):
+            self.lookup([self.release()], redirect=True)
+
+    def test_pagination_limit_fails_closed(self):
+        releases = [self.release() for _ in range(rca.RELEASE_PAGE_SIZE)]
+        with self.assertRaisesRegex(rca.BootstrapError, 'pagination incomplete'):
+            self.lookup(releases)
+
+    def test_tampered_download_url_denied(self):
+        release = self.release()
+        release['assets'][0]['browser_download_url'] = 'https://evil.invalid/asset'
+        with self.assertRaises(rca.BootstrapError):
+            self.lookup([release])
 
 if __name__ == '__main__':
     unittest.main()
