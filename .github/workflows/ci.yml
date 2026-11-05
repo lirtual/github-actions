@@ -226,11 +226,17 @@ jobs:
             --output "$RUNNER_TEMP/tunnel-anonymous-body" --write-out '%{http_code}' "$url/")"
           test "$status" = 302
           grep -Eqi '^location: https://login\.trycloudflare\.com/authorize\?' "$RUNNER_TEMP/tunnel-anonymous-headers"
-          ! grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"
+          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
+            echo 'Multi-recipient OTP gate exposed the synthetic origin' >&2
+            exit 1
+          fi
           post_status="$(curl --silent --show-error --max-time 15 --request POST \
             --output "$RUNNER_TEMP/tunnel-anonymous-body" --write-out '%{http_code}' "$url/")"
           test "$post_status" = 401
-          ! grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"
+          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
+            echo 'Multi-recipient OTP gate exposed the synthetic origin' >&2
+            exit 1
+          fi
       - name: Verify public OpenList Quick Tunnel uses native auth only
         shell: bash
         env:
