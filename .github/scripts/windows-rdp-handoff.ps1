@@ -1,6 +1,6 @@
 # Runs only on a disposable GitHub-hosted Windows Runner.
 # A RemoteDisconnect task restores a single disconnected Runner user's RDP
-# session to the console so that UU Lite can continue using the same desktop.
+# session to the console for normal RDP reconnection on the same desktop.
 param(
     [switch]$Install,
     [string]$RunnerUser
@@ -29,7 +29,7 @@ if ($Install) {
     $Xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Return disconnected Runner RDP session to console for UU Lite</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Return disconnected Runner RDP session to console for RDP reconnect</Description></RegistrationInfo>
   <Triggers>
     <SessionStateChangeTrigger>
       <Enabled>true</Enabled>

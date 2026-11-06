@@ -564,10 +564,6 @@ jobs:
             [ref]$tokens, [ref]$errorsFound) | Out-Null
           if ($errorsFound.Count -ne 0) { throw 'Invalid Windows RDP configuration script' }
           $errorsFound = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path '.github/scripts/windows-uu.ps1').Path,
-            [ref]$tokens, [ref]$errorsFound) | Out-Null
-          if ($errorsFound.Count -ne 0) { throw 'Invalid Windows UU Lite readiness script' }
           if (-not (Get-Service TermService -ErrorAction SilentlyContinue)) {
             throw 'Windows Remote Desktop Services unavailable'
           }
@@ -619,100 +615,4 @@ jobs:
             Write-Output 'Native RemoteDisconnect task registration verified; no RDP session modified'
           } finally {
             Unregister-ScheduledTask -TaskName SessionActionsRdpConsoleHandoff -Confirm:$false -ErrorAction SilentlyContinue
-          }
-
-      - name: Verify real UU Lite startup and private credential extraction
-        shell: pwsh
-        env:
-          RUNNER_ENVIRONMENT: ${{ runner.environment }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $Dir = Join-Path $env:LOCALAPPDATA 'session-actions'
-          $File = Join-Path $Dir 'uu-remote.json'
-          try {
-            ./.github/scripts/windows-uu.ps1
-            if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
-              throw 'UU Lite private credential file missing'
-            }
-            $Access = Get-Acl -LiteralPath $Dir
-            if (-not $Access.AreAccessRulesProtected) {
-              throw 'UU Lite credential directory inherits unrelated access rules'
-            }
-            $Data = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
-            if ($Data.device_id -notmatch '^[0-9]{9}$' -or
-                $Data.verification_code -notmatch '^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]{8}$') {
-              throw 'UU Lite extracted credential shape invalid'
-            }
-            if ($Data.PSObject.Properties.Name -contains 'share_url') {
-              if ($Data.share_url -cnotmatch '^https://uuyc\.163\.com/invite/[0-9a-fA-F]{32}$') {
-                throw 'UU Lite optional share URL failed strict origin and shape validation'
-              }
-              Write-Output 'UU_LITE_SHARE_URL_VALID=true'
-            } else {
-              Write-Output 'UU_LITE_SHARE_URL_UNAVAILABLE=true'
-            }
-            $FileTime = (Get-Item -LiteralPath $File).LastWriteTimeUtc
-            pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh
-            if ($LASTEXITCODE -ne 0) { throw 'UU Lite refresh failed' }
-            $Refreshed = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
-            if ($Refreshed.device_id -cne $Data.device_id -or
-                $Refreshed.verification_code -cne $Data.verification_code -or
-                $Refreshed.share_url -cne $Data.share_url -or
-                (Get-Item -LiteralPath $File).LastWriteTimeUtc -ne $FileTime) {
-              throw 'UU Lite refresh should preserve unchanged current code'
-            }
-            # Tray-hiding sets Process.MainWindowHandle to zero. Verify the
-            # refresh path still finds the existing process-owned window.
-            Add-Type -TypeDefinition @'
-          using System;
-          using System.Runtime.InteropServices;
-          public static class UUCIShowWindow {
-              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);
-          }
-          '@
-            $WindowProcess = Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
-              Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
-            if (-not $WindowProcess) { throw 'UU Lite visible window not found for tray-hidden test' }
-            $Window = $WindowProcess.MainWindowHandle
-            try {
-              [void][UUCIShowWindow]::ShowWindow($Window, 0)
-              Start-Sleep -Seconds 1
-              # A previous failed refresh left a secret-free status file;
-              # the next UIA refresh must recover usable credentials.
-              [IO.File]::WriteAllText($File, '{"status":"unavailable","reason":"code_unavailable"}',
-                [Text.UTF8Encoding]::new($false))
-              pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh
-              if ($LASTEXITCODE -ne 0) { throw 'UU Lite tray-hidden refresh failed' }
-              $Hidden = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
-              if ($Hidden.status -ne 'ready' -or
-                  $Hidden.device_id -cne $Data.device_id -or
-                  $Hidden.verification_code -cne $Data.verification_code) {
-                throw 'UU Lite tray-hidden refresh captured incorrect credentials'
-              }
-            } finally {
-              [void][UUCIShowWindow]::ShowWindow($Window, 9)
-            }
-            Write-Output 'UU_LITE_HIDDEN_WINDOW_REFRESH=true'
-            # Missing upstream process is a safe failure: do not retain the
-            # now unverified code, but provide a private diagnostic status.
-            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-            pwsh -NoProfile -NonInteractive -File .github/scripts/windows-uu.ps1 -Refresh 2>$null
-            if ($LASTEXITCODE -eq 0) { throw 'UU Lite missing-process refresh unexpectedly succeeded' }
-            $Unavailable = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
-            if ($Unavailable.status -ne 'unavailable' -or
-                $Unavailable.reason -ne 'process_missing' -or
-                $Unavailable.PSObject.Properties.Name -contains 'verification_code') {
-              throw 'UU Lite unavailable status failed closed'
-            }
-            # The preceding nonzero native exit was expected and asserted.
-            $global:LASTEXITCODE = 0
-            Write-Output 'UU_LITE_MISSING_PROCESS_STATUS=true'
-            Write-Output 'UU_LITE_REFRESH_IDEMPOTENT=true'
-            Write-Output 'UU_LITE_PRIVATE_CREDENTIAL_CAPTURE=true'
-          } finally {
-            Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
-            Get-Process -Name GameViewerLite,GameViewerLiteInner,GameViewerLite-session -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'GameViewerLite-session.exe') -Force -ErrorAction SilentlyContinue
           }
