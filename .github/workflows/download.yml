@@ -25,6 +25,7 @@ on:
 # successful OIDC Claim and validated public-source batch.
 # Direct uploads fail on detected destination conflicts; no cloud-atomic guarantee.
 env:
+  WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: task
 
 permissions:

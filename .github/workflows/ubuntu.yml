@@ -38,6 +38,7 @@ on:
         required: false
 
 env:
+  WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: session
 
 permissions:
