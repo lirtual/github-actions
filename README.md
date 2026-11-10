@@ -18,10 +18,7 @@ Session data or download credential is included. This Artifact is fetched only
 as owner-authorized, provenance-checked metadata through Workflow MCP
 `workflow_result`, not stored in D1 or published as a download URL.
 
-Before an owner-approved live acceptance, the repository owner must configure these **non-secret Actions variables** with the already-approved Workflow MCP endpoint and audience:
-
-- `WORKFLOW_ACTION_CLAIM_URL` — the HTTPS Worker origin ending in `/github/action/claim`
-- `WORKFLOW_ACTION_OIDC_AUDIENCE` — exactly the server's `GITHUB_ACTION_OIDC_AUDIENCE`
+Before an owner-approved live acceptance, configure the non-secret Actions variable `WORKFLOW_ACTION_CLAIM_URL` with the approved HTTPS Workflow Worker endpoint ending in `/github/action/claim`. The Runner first calls `GET /github/action/config` on the same trusted origin to obtain the Worker's current Action OIDC Audience (bounded response, no redirects, no fallback), before requesting a GitHub OIDC token. The Repository variable `WORKFLOW_ACTION_OIDC_AUDIENCE` is no longer read. This requires the separately published Workflow Worker to support the discovery endpoint **before** activating this Runner revision.
 
 The action retries only temporary signed Claim HTTP 503 responses with fresh OIDC tokens, accepts a signed `already_claimed` replay after a lost HTTP receipt, and permanently rejects HTTP 403. It fails closed if either variable, a valid GitHub-issued OIDC token, or the D1 Attempt claim is unavailable. It never reads application secrets or joins Tailscale.
 
@@ -88,7 +85,7 @@ The three internal workflow_dispatch inputs `attempt_id`, `dispatch_id`, `capabi
 
 **Repository configuration before any separately approved live acceptance:**
 
-- Actions variables: `WORKFLOW_ACTION_CLAIM_URL` (HTTPS, exactly ending `/github/action/claim`) and `WORKFLOW_ACTION_OIDC_AUDIENCE` (exact server-owned Action OIDC audience).
+- Actions variable: `WORKFLOW_ACTION_CLAIM_URL` (HTTPS, exactly ending `/github/action/claim`); Audience is fetched at runtime via the same-origin `GET /github/action/config` and remains validated server-side.
 - Actions variable: `TS_OAUTH_CLIENT_ID` (Tailscale workload identity client ID). The new Windows/Ubuntu workflows derive the Audience as `api.tailscale.com/<client ID>`; this was compared against the full existing `TS_AUDIENCE` value on 2026-11-05 and found equal. Existing pinned Plans still read `TS_AUDIENCE` until republished. Tailnet trust policy, identity binding and tag authorization remain unchanged.
 - GitHub Actions **Repository Variable**: `OWNER_EMAIL` accepts a single explicit mailbox or comma-separated addresses (for example, `alice@example.com,bob@example.com`), with optional spaces around commas. New chrome/code-server workflows reject empty entries, malformed addresses, wildcards and line breaks; openlist does not use this variable. Some historical pinned Plans use `SESSION_TUNNEL_ALLOWED_EMAIL` or an older single-email validator. Before configuring multiple emails, audit all still-executable Published Plans and upgrade or safely retire incompatible versions. This is still the Cloudflare email OTP gate, not an additional application password.
 - Actions secrets: `SESSION_SYSTEM_PASSWORD` (windows and ubuntu SSH), `SESSION_SERVICE_PASSWORD` (openlist administrator login only), and `OPENLIST_DATABASE_URI` (Aiven-compatible MySQL connection URI), and `OPENLIST_DATABASE_CA` (Aiven project CA certificate PEM or rotation bundle; required for verified TLS). Values must be non-empty, single-line and accepted by their application or OS. Do not paste passwords into Workflow YAML or logs. Retire `SESSION_SSH_PUBLIC_KEY`, `SESSION_SSH_PASSWORD`, `SESSION_RDP_PASSWORD`, intermediate `WINDOWS_ADMIN_PASSWORD` and obsolete `OPENLIST_ADMIN_PASSWORD` only after approved rollout.

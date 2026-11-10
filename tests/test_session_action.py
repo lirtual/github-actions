@@ -16,6 +16,7 @@ SPEC.loader.exec_module(session)
 ATTEMPT = "11111111-1111-4111-8111-111111111111"
 DISPATCH = "22222222-2222-4222-8222-222222222222"
 AUDIENCE = "workflow-github-action:production"
+REAL_DISCOVER_AUDIENCE = session.discover_audience
 
 
 
@@ -32,13 +33,19 @@ class _MemoryReply:
         return self.stream.read(size)
 
 class SessionProtocolTests(unittest.TestCase):
+    def setUp(self):
+        # Existing protocol tests isolate signed Claim transport from the
+        # separate, independently tested public discovery request.
+        patcher = mock.patch.object(session, "discover_audience", return_value=AUDIENCE)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def settings(self):
         return {
             "ATTEMPT_ID": ATTEMPT,
             "DISPATCH_ID": DISPATCH,
             "CAPABILITY_ID": "github.action",
             "WORKFLOW_ACTION_CLAIM_URL": "https://example.test/github/action/claim",
-            "WORKFLOW_ACTION_OIDC_AUDIENCE": AUDIENCE,
             "RUNNER_TEMP": tempfile.gettempdir(),
         }
 
@@ -53,13 +60,40 @@ class SessionProtocolTests(unittest.TestCase):
             ("WORKFLOW_ACTION_CLAIM_URL", "https://user:pass@example.test/github/action/claim"),
             ("WORKFLOW_ACTION_CLAIM_URL", "https://example.test/github/action/ready"),
             ("WORKFLOW_ACTION_CLAIM_URL", "https://example.test/github/action/claim?a=1"),
-            ("WORKFLOW_ACTION_OIDC_AUDIENCE", "untrusted-audience"),
         ]:
             changed = self.settings()
             changed[name] = value
             with mock.patch.dict(os.environ, changed, clear=True):
                 with self.subTest(name=name, value=value), self.assertRaises(ValueError):
                     session.configuration()
+
+    def test_discovery_uses_claim_origin_and_rejects_invalid_responses(self):
+        claim="https://example.test/github/action/claim"
+        response=_MemoryReply({"audience":AUDIENCE})
+        with mock.patch.object(session.OPENER,"open",return_value=response) as opening:
+            self.assertEqual(REAL_DISCOVER_AUDIENCE(claim),AUDIENCE)
+            self.assertEqual(opening.call_args.args[0].full_url,
+                             "https://example.test/github/action/config")
+            self.assertEqual(opening.call_args.args[0].get_header("User-agent"),
+                             "lirtual-github-action-oidc-discovery/1.0")
+            self.assertEqual(opening.call_args.kwargs["timeout"],10)
+        for response in (_MemoryReply({"audience":"wrong"}),
+                         _MemoryReply({"audience":AUDIENCE,"extra":1}),
+                         _MemoryReply([AUDIENCE]),
+                         _MemoryReply({"audience":"workflow-github-x"+"a"*300})):
+            with mock.patch.object(session.OPENER,"open",return_value=response):
+                with self.assertRaises(session.SafeProtocolError):
+                    REAL_DISCOVER_AUDIENCE(claim)
+        for unsafe in ("http://example.test/github/action/claim",
+                       "https://evil@example.test/github/action/claim",
+                       "https://example.test/github/action/claim?token=x"):
+            with mock.patch.object(session.OPENER,"open") as opening:
+                with self.assertRaises(session.SafeProtocolError):
+                    REAL_DISCOVER_AUDIENCE(unsafe)
+                opening.assert_not_called()
+        with mock.patch.object(session.OPENER,"open",side_effect=ConnectionResetError("private")):
+            with self.assertRaisesRegex(session.SafeProtocolError,"audience_discovery_unavailable"):
+                REAL_DISCOVER_AUDIENCE(claim)
 
     def test_signed_claim_and_ready_are_separate_and_do_not_log_tokens(self):
         import io
@@ -438,7 +472,6 @@ class SessionRuntimeDataTests(unittest.TestCase):
             "DISPATCH_ID": DISPATCH,
             "CAPABILITY_ID": "github.action",
             "WORKFLOW_ACTION_CLAIM_URL": "https://example.test/github/action/claim",
-            "WORKFLOW_ACTION_OIDC_AUDIENCE": AUDIENCE,
             "RUNNER_TEMP": root,
             "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.example.test/token",
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "SECRET-JWT-ISSUE",

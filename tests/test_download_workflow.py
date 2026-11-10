@@ -71,8 +71,7 @@ class DownloadWorkflowTests(unittest.TestCase):
         self.assertIn("ATTEMPT_ID: ${{ inputs.attempt_id }}", self.execute)
         self.assertIn("WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}",
                       self.claim)
-        self.assertIn("WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}",
-                      self.claim)
+        self.assertNotIn("vars.WORKFLOW_ACTION_OIDC_AUDIENCE", YAML)
 
     def test_privileged_steps_cannot_skip_claim(self):
         for section in self.sections[2:]:

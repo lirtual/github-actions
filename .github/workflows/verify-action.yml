@@ -53,7 +53,6 @@ jobs:
           DISPATCH_ID: ${{ inputs.dispatch_id }}
           CAPABILITY_ID: ${{ inputs.capability_id }}
           CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
-          OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
         run: |
           python3 - <<'PY'
           import json
@@ -70,13 +69,11 @@ jobs:
           attempt = os.environ.get("ATTEMPT_ID", "")
           dispatch = os.environ.get("DISPATCH_ID", "")
           claim_url = os.environ.get("CLAIM_URL", "")
-          audience = os.environ.get("OIDC_AUDIENCE", "")
           parsed = urllib.parse.urlsplit(claim_url)
           if (
               not uuid.fullmatch(attempt)
               or not uuid.fullmatch(dispatch)
               or os.environ.get("CAPABILITY_ID") != "github.action"
-              or not re.fullmatch(r"workflow-github-[a-z0-9:-]{4,120}", audience)
               or parsed.scheme != "https"
               or not parsed.netloc
               or parsed.username is not None
@@ -93,13 +90,28 @@ jobs:
           if not endpoint.startswith("https://") or not authorization:
               sys.exit("GitHub OIDC identity unavailable")
           separator = "&" if "?" in endpoint else "?"
-          token_url = endpoint + separator + urllib.parse.urlencode({"audience": audience})
           # Do not forward Bearer credentials or accept a redirected fake 200.
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):
                   return None
 
           opener = urllib.request.build_opener(NoRedirect())
+          try:
+              request = urllib.request.Request(claim_url[:-len("/claim")] + "/config", method="GET",
+                                               headers={"User-Agent":"lirtual-github-action-oidc-discovery/1.0"})
+              with opener.open(request, timeout=10) as response:
+                  if response.status != 200:
+                      raise ValueError("discovery status")
+                  raw = response.read(257)
+              if len(raw) > 256:
+                  raise ValueError("discovery size")
+              data = json.loads(raw)
+              audience = data.get("audience") if type(data) is dict and set(data) == {"audience"} else None
+              if not isinstance(audience, str) or not re.fullmatch(r"workflow-github-[a-z0-9:-]{4,120}", audience):
+                  raise ValueError("discovery shape")
+          except Exception:
+              sys.exit("Action Audience discovery unavailable")
+          token_url = endpoint + separator + urllib.parse.urlencode({"audience": audience})
           phase = "oidc_request"
           try:
               # The GitHub Job may start before the dispatch ACK is stored in
@@ -201,25 +213,23 @@ jobs:
         env:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
           CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
-          OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
         run: |
           python3 - <<'PY'
           import json
           import os
+          import re
           import sys
           import urllib.error
           import urllib.parse
           import urllib.request
 
           claim = urllib.parse.urlsplit(os.getenv("CLAIM_URL", ""))
-          audience = os.getenv("OIDC_AUDIENCE", "")
           attempt = os.getenv("ATTEMPT_ID", "")
           endpoint = os.getenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
           secret = os.getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
           if (claim.scheme != "https" or not claim.hostname or claim.username or claim.password
               or claim.path != "/github/action/claim" or claim.query or claim.fragment
-              or not endpoint.startswith("https://") or not secret
-              or not audience.startswith("workflow-github-")):
+              or not endpoint.startswith("https://") or not secret)::
               sys.exit("Task result configuration invalid")
 
           class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -229,6 +239,18 @@ jobs:
           opener = urllib.request.build_opener(NoRedirect())
           separator = "&" if "?" in endpoint else "?"
           try:
+              request = urllib.request.Request(os.environ["CLAIM_URL"][:-len("/claim")] + "/config", method="GET",
+                                               headers={"User-Agent":"lirtual-github-action-oidc-discovery/1.0"})
+              with opener.open(request, timeout=10) as response:
+                  if response.status != 200:
+                      raise ValueError("discovery status")
+                  raw = response.read(257)
+              if len(raw) > 256:
+                  raise ValueError("discovery size")
+              data = json.loads(raw)
+              audience = data.get("audience") if type(data) is dict and set(data) == {"audience"} else None
+              if not isinstance(audience, str) or not re.fullmatch(r"workflow-github-[a-z0-9:-]{4,120}", audience):
+                  raise ValueError("discovery shape")
               request = urllib.request.Request(
                   endpoint + separator + urllib.parse.urlencode({"audience": audience}),
                   headers={"Authorization": "Bearer " + secret})
