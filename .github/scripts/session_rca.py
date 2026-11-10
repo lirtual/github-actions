@@ -257,7 +257,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     workflow = "windows" if windows else "ubuntu"
     if (env.get("GITHUB_ACTIONS") != "true" or env.get("RUNNER_ENVIRONMENT") != "github-hosted"
         or env.get("GITHUB_WORKFLOW") != workflow or env.get("GITHUB_REPOSITORY") != "lirtual/github-actions"
-        or not env.get("ATTEMPT_ID") or not env.get("WORKFLOW_ACTION_OIDC_AUDIENCE")
+        or not env.get("ATTEMPT_ID")
         or not env.get("ACTIONS_ID_TOKEN_REQUEST_URL") or not env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")):
         raise BootstrapError("Unreviewed physical Session environment")
     temp = env.get("RUNNER_TEMP", "")

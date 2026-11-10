@@ -51,7 +51,6 @@ jobs:
           DISPATCH_ID: ${{ inputs.dispatch_id }}
           CAPABILITY_ID: ${{ inputs.capability_id }}
           WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
-          WORKFLOW_ACTION_OIDC_AUDIENCE: ${{ vars.WORKFLOW_ACTION_OIDC_AUDIENCE }}
         run: |
           set -euo pipefail
           python3 .github/scripts/session_action.py claim

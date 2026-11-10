@@ -35,20 +35,48 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(_NoRedirect())
 
 
+def discover_audience(claim):
+    # Use the exact trusted Claim origin; discovery cannot redirect to another host.
+    target = urllib.parse.urlsplit(claim)
+    if not (target.scheme == "https" and target.hostname and target.username is None
+            and target.password is None and target.path == "/github/action/claim"
+            and not target.query and not target.fragment):
+        raise SafeProtocolError("configuration_invalid")
+    request = urllib.request.Request(claim[:-len("/claim")] + "/config", method="GET")
+    try:
+        with OPENER.open(request, timeout=10) as response:
+            if response.status != 200:
+                raise ValueError("unexpected status")
+            raw = response.read(257)
+        if len(raw) > 256:
+            raise ValueError("unexpected length")
+        data = json.loads(raw)
+        audience = data.get("audience") if type(data) is dict and set(data) == {"audience"} else None
+        if not isinstance(audience, str) or not AUDIENCE.fullmatch(audience):
+            raise ValueError("invalid audience")
+        return audience
+    except urllib.error.HTTPError as failure:
+        failure.close()
+        raise SafeProtocolError("audience_discovery_unavailable") from None
+    except Exception:
+        # Avoid reflecting HTTP bodies, endpoint addresses or response exceptions.
+        raise SafeProtocolError("audience_discovery_unavailable") from None
+
+
 def configuration():
     attempt = os.getenv("ATTEMPT_ID", "")
     dispatch = os.getenv("DISPATCH_ID", "")
     capability = os.getenv("CAPABILITY_ID", "")
-    audience = os.getenv("WORKFLOW_ACTION_OIDC_AUDIENCE", "")
     claim = os.getenv("WORKFLOW_ACTION_CLAIM_URL", "")
-    url = urllib.parse.urlsplit(claim)
+    target = urllib.parse.urlsplit(claim)
     if not (UUID.fullmatch(attempt) and UUID.fullmatch(dispatch)
-            and capability == "github.action" and AUDIENCE.fullmatch(audience)
-            and url.scheme == "https" and url.hostname and url.username is None
-            and url.password is None and url.path == "/github/action/claim"
-            and not url.query and not url.fragment):
+            and capability == "github.action"
+            and target.scheme == "https" and target.hostname
+            and target.username is None and target.password is None
+            and target.path == "/github/action/claim" and not target.query
+            and not target.fragment):
         raise SafeProtocolError("configuration_invalid")
-    return attempt, audience, claim
+    return attempt, discover_audience(claim), claim
 
 
 def github_token(audience):
