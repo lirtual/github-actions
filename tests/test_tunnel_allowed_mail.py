@@ -37,21 +37,29 @@ class TunnelAllowedMailTests(unittest.TestCase):
             )
             return result.returncode, (directory / "curl-called").exists(), result.stderr
 
-    def test_single_and_multiple_explicit_addresses_are_accepted(self):
+    def test_single_explicit_mailbox_reaches_download_for_both_services(self):
         for service in ("chrome", "code-server"):
-            for addresses in (
-                "alice@example.com",
-                "alice@example.com,bob@example.org",
-                " alice@example.com , bob@example.org ",
-            ):
-                with self.subTest(service=service, addresses=addresses):
-                    status, reached_download, _ = self.invoke(addresses, service)
+            for address in ("alice@example.com", "alice.smith+tag_2%box@sub-domain.example.co.uk"):
+                with self.subTest(service=service, address=address):
+                    status, reached_download, _ = self.invoke(address, service)
                     self.assertEqual(status, 23)
                     self.assertTrue(reached_download)
 
+    def test_multiple_mailboxes_are_rejected_before_download(self):
+        for service in ("chrome", "code-server"):
+            for addresses in ("alice@example.com,bob@example.org",
+                              " alice@example.com , bob@example.org "):
+                with self.subTest(service=service, addresses=addresses):
+                    status, reached_download, stderr = self.invoke(addresses, service)
+                    self.assertEqual(status, 1)
+                    self.assertFalse(reached_download)
+                    self.assertIn("OWNER_EMAIL", stderr)
+                    self.assertNotIn(addresses, stderr)
+
     def test_empty_malformed_and_wildcard_addresses_fail_before_download(self):
         invalid = (
-            None, "", " ", ",alice@example.com", "alice@example.com,",
+            None, "", " ", " alice@example.com", "alice@example.com ",
+            ",alice@example.com", "alice@example.com,",
             "alice@example.com,,bob@example.org",
             "alice@example.com, ,bob@example.org",
             "alice@example.com,not-an-email", "*@example.com",
@@ -60,6 +68,11 @@ class TunnelAllowedMailTests(unittest.TestCase):
             "alice@example.com\rbob@example.org",
             "alice@example.com\tbob@example.org",
             "alice@example.com;echo unsafe",
+            ".alice@example.com", "alice.@example.com",
+            "alice..smith@example.com", "alice@a..example.com",
+            "alice@-example.com", "alice@example-.com",
+            "alice@a-.example.com", "alice@.example.com",
+            "alice@a.-example.com",
         )
         for service in ("chrome", "code-server"):
             for addresses in invalid:
@@ -68,6 +81,8 @@ class TunnelAllowedMailTests(unittest.TestCase):
                     self.assertEqual(status, 1)
                     self.assertFalse(reached_download)
                     self.assertIn("OWNER_EMAIL", stderr)
+                    if addresses and addresses.strip():
+                        self.assertNotIn(addresses, stderr)
 
     def test_openlist_keeps_public_tunnel_without_email_gate(self):
         for email in (None, "", "*@example.com"):
