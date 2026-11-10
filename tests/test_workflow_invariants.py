@@ -1,5 +1,7 @@
 """Regression checks for immutable Session execution. Actionlint validates YAML separately."""
+import ast
 from pathlib import Path
+import textwrap
 import re
 import unittest
 
@@ -7,6 +9,15 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ("ubuntu", "windows", "chrome", "code-server", "openlist")
 
 class SessionWorkflowInvariants(unittest.TestCase):
+    def test_verify_action_inline_python_is_syntactically_valid(self):
+        # Actionlint checks YAML, but not Python embedded in bash heredocs.
+        source = (ROOT / ".github/workflows/verify-action.yml").read_text()
+        blocks = re.findall(r"(?ms)^          python3 - <<'PY'\n(.*?)^          PY$", source)
+        self.assertEqual(len(blocks), 2)
+        for index, body in enumerate(blocks, start=1):
+            with self.subTest(inline_python=index):
+                ast.parse(textwrap.dedent(body), filename=f"verify-action-step-{index}")
+
     def test_public_session_action_names_are_lowercase_and_match_paths(self):
         self.assertFalse((ROOT / ".github/workflows/linux.yml").exists())
         self.assertFalse((ROOT / ".github/scripts/linux-ssh.sh").exists())
