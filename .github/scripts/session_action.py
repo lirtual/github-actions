@@ -42,7 +42,8 @@ def discover_audience(claim):
             and target.password is None and target.path == "/github/action/claim"
             and not target.query and not target.fragment):
         raise SafeProtocolError("configuration_invalid")
-    request = urllib.request.Request(claim[:-len("/claim")] + "/config", method="GET")
+    request = urllib.request.Request(claim[:-len("/claim")] + "/config", method="GET",
+                                     headers={"User-Agent":"lirtual-github-action-oidc-discovery/1.0"})
     try:
         with OPENER.open(request, timeout=10) as response:
             if response.status != 200:

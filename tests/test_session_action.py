@@ -74,6 +74,8 @@ class SessionProtocolTests(unittest.TestCase):
             self.assertEqual(REAL_DISCOVER_AUDIENCE(claim),AUDIENCE)
             self.assertEqual(opening.call_args.args[0].full_url,
                              "https://example.test/github/action/config")
+            self.assertEqual(opening.call_args.args[0].get_header("User-agent"),
+                             "lirtual-github-action-oidc-discovery/1.0")
             self.assertEqual(opening.call_args.kwargs["timeout"],10)
         for response in (_MemoryReply({"audience":"wrong"}),
                          _MemoryReply({"audience":AUDIENCE,"extra":1}),
