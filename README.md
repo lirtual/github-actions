@@ -33,7 +33,7 @@ The bounded `.github/workflows/download.yml` Task uses aria2 and one Owner-appro
 
 The current published Plan uses the approved `refs/heads/main` exception, **not** the historic immutable `v0.1.42-rc.9` Tag. Each admitted Run must independently verify its resolved GitHub commit and successful CI; discovery and CI alone do not authorize dispatch. The Task must pass its Workflow MCP OIDC Claim before validating the batch or accessing download credentials. Before any future Draft publication, recheck its declared SHA/ref against the current main and validate the exact revision.
 
-The current `main` workflow requires these settings in the existing GitHub **Environment `download`**:
+The current `main` workflow reads these settings from GitHub Actions **repository-level** Variables and Secrets. The `download` Environment remains attached to the job for its existing OIDC identity context but has **no** Environment Variables or Secrets:
 
 - **Variable `DOWNLOAD_REMOTE_PATH`** (currently `koofr:Downloads`): fixed Owner-approved rclone Remote plus an existing, case-sensitive relative destination root. Missing, unsafe, differently cased or nonexistent roots fail closed.
 - **Secret `DOWNLOAD_RCLONE_CONFIG`**: original multiline `rclone.conf`, **not Base64**. Only the post-Claim execution step references the Secret. The Runner writes it to a private, temporary `0600` file for the isolated uploader and removes it on exit; never print, commit or expose its value.
@@ -56,7 +56,7 @@ The bootstrap also checks GitHub-hosted Runner/Session identity, HTTPS transfer,
 
 [PR #81](https://github.com/lirtual/github-actions/pull/81) simplified the code-side configuration naming without itself deploying production. The **Download** migration has subsequently been exercised by the current `main` production E2E above; that does not establish migration status for every separate Windows/Ubuntu/Chrome/code-server Published Plan. Review and approve each remaining Plan's effective configuration and execution version independently.
 
-Legacy download settings `DOWNLOAD_REMOTE_NAME`, `DOWNLOAD_REMOTE_BASE_DIR` and `DOWNLOAD_RCLONE_CONFIG_B64` may still be needed by older executable, immutable-Tag Plans. Do not delete them merely because current `main` uses `DOWNLOAD_REMOTE_PATH` and `DOWNLOAD_RCLONE_CONFIG`. Retire any legacy Variables or Secrets only after independently auditing all still-executable Published Plans, including paused candidates. Changing production configuration or publishing a new Plan requires a separate scoped authorization; merging a documentation PR does neither.
+On 2026-11-10, the Owner-authorized migration placed `DOWNLOAD_REMOTE_PATH` (Variable) and `DOWNLOAD_RCLONE_CONFIG` (Secret) at repository scope and emptied the `download` Environment's Variables and Secrets. The three legacy Download Environment settings (`DOWNLOAD_REMOTE_NAME`, `DOWNLOAD_REMOTE_BASE_DIR`, `DOWNLOAD_RCLONE_CONFIG_B64`) were already retired. Compatibility with older immutable-Tag Plans is intentionally not retained; those Plans may fail if executed. No Task dispatch or Published Plan change was required for this configuration move. Other production configuration changes or publishing a new Plan require separate scoped authorization; merging this documentation PR does neither.
 
 ## Five native Session Actions
 
