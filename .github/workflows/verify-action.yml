@@ -229,7 +229,7 @@ jobs:
           secret = os.getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
           if (claim.scheme != "https" or not claim.hostname or claim.username or claim.password
               or claim.path != "/github/action/claim" or claim.query or claim.fragment
-              or not endpoint.startswith("https://") or not secret)::
+              or not endpoint.startswith("https://") or not secret):
               sys.exit("Task result configuration invalid")
 
           class NoRedirect(urllib.request.HTTPRedirectHandler):
