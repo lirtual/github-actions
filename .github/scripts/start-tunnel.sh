@@ -13,24 +13,14 @@ esac
 # login and guest permissions, so its temporary Tunnel must allow public routes.
 allowed_mail=''
 if [[ "$service" != openlist ]]; then
-  raw_allowed_mail="${OWNER_EMAIL:-}"
-  # read -a discards a trailing empty element, so explicitly reject trailing commas.
-  if [[ -z "$raw_allowed_mail" || "$raw_allowed_mail" == *, ||
-        "$raw_allowed_mail" == *$'\n'* || "$raw_allowed_mail" == *$'\r'* ]]; then
-    echo 'OWNER_EMAIL must contain comma-separated explicit email addresses' >&2
+  allowed_mail="${OWNER_EMAIL:-}"
+  # Match the whole mailbox: no whitespace, lists, wildcard, malformed dot
+  # placement or malformed domain labels. Never normalize or choose a recipient.
+  email_pattern='^[A-Za-z0-9_%+-]+(\.[A-Za-z0-9_%+-]+)*@([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$'
+  if [[ ! "$allowed_mail" =~ $email_pattern ]]; then
+    echo 'OWNER_EMAIL must contain exactly one explicit email address' >&2
     exit 1
   fi
-  IFS=',' read -r -a recipients <<< "$raw_allowed_mail"
-  for recipient in "${recipients[@]}"; do
-    # Permit ordinary spaces around separators, never inside email addresses.
-    recipient="${recipient#"${recipient%%[! ]*}"}"
-    recipient="${recipient%"${recipient##*[! ]}"}"
-    if [[ ! "$recipient" =~ ^[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]]; then
-      echo 'OWNER_EMAIL must contain comma-separated explicit email addresses' >&2
-      exit 1
-    fi
-    allowed_mail+="${allowed_mail:+,}$recipient"
-  done
 fi
 unset OWNER_EMAIL
 

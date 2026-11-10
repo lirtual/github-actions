@@ -210,33 +210,6 @@ jobs:
             exit 1
           fi
           echo 'Anonymous GET redirected to OTP and POST denied'
-      - name: Verify comma-separated recipients keep the OTP gate
-        shell: bash
-        env:
-          SESSION_SERVICE: code-server
-          OWNER_EMAIL: 'ci@example.com, ci-second@example.com'
-        run: |
-          set -euo pipefail
-          kill "$(cat "$RUNNER_TEMP/session-tunnel.pid")" 2>/dev/null || true
-          bash .github/scripts/start-tunnel.sh
-          url="$(cat "$RUNNER_TEMP/session-tunnel-url")"
-          marker="$(cat "$RUNNER_TEMP/tunnel-expected")"
-          status="$(curl --silent --show-error --max-time 15 \
-            --dump-header "$RUNNER_TEMP/tunnel-anonymous-headers" \
-            --output "$RUNNER_TEMP/tunnel-anonymous-body" --write-out '%{http_code}' "$url/")"
-          test "$status" = 302
-          grep -Eqi '^location: https://login\.trycloudflare\.com/authorize\?' "$RUNNER_TEMP/tunnel-anonymous-headers"
-          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
-            echo 'Multi-recipient OTP gate exposed the synthetic origin' >&2
-            exit 1
-          fi
-          post_status="$(curl --silent --show-error --max-time 15 --request POST \
-            --output "$RUNNER_TEMP/tunnel-anonymous-body" --write-out '%{http_code}' "$url/")"
-          test "$post_status" = 401
-          if grep -Fq "$marker" "$RUNNER_TEMP/tunnel-anonymous-body"; then
-            echo 'Multi-recipient OTP gate exposed the synthetic origin' >&2
-            exit 1
-          fi
       - name: Verify public OpenList Quick Tunnel uses native auth only
         shell: bash
         env:
