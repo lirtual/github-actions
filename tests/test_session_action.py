@@ -15,7 +15,7 @@ SPEC.loader.exec_module(session)
 
 ATTEMPT = "11111111-1111-4111-8111-111111111111"
 DISPATCH = "22222222-2222-4222-8222-222222222222"
-AUDIENCE = "workflow-github-action:production"
+AUDIENCE = "workflow-github-action"
 REAL_DISCOVER_AUDIENCE = session.discover_audience
 
 
@@ -118,7 +118,7 @@ class SessionProtocolTests(unittest.TestCase):
             visited.append(req)
             if len(visited) % 2:
                 self.assertEqual(req.get_header("Authorization"), "Bearer ONLY-GITHUB-SECRET")
-                self.assertIn("audience=workflow-github-action%3Aproduction", req.full_url)
+                self.assertIn("audience=workflow-github-action", req.full_url)
                 return Reply(issued)
             self.assertEqual(req.get_header("Authorization"), "Bearer " + issued["value"])
             self.assertEqual(json.loads(req.data)["attemptId"], ATTEMPT)
