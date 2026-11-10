@@ -692,7 +692,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
 
                 def respond(request, timeout=0):
                     if request.full_url == "https://claim.example/github/action/config":
-                        return Reply({"audience":"workflow-github-action:production"})
+                        return Reply({"audience":"workflow-github-action"})
                     if request.full_url.startswith("https://oidc.example/"):
                         token = "jwt-" + str(len(observed_tokens) + 1)
                         observed_tokens.append(token)
@@ -737,7 +737,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         claim_calls = []
         def oidc_denied(request, timeout=0):
             if request.full_url == "https://claim.example/github/action/config":
-                return Reply({"audience":"workflow-github-action:production"})
+                return Reply({"audience":"workflow-github-action"})
             if "oidc.example" not in request.full_url:
                 claim_calls.append(request.full_url)
             raise urllib.error.HTTPError(request.full_url, 401,
