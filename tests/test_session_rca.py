@@ -121,13 +121,16 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                     'https://workflow.lirtual.dpdns.org/github/action/claim')
 
     def test_missing_claim_audience_discovery_denies_before_release_download(self):
-        with tempfile.TemporaryDirectory() as root:
-            env = settings(root, bundle())
-            env.pop('WORKFLOW_ACTION_CLAIM_URL')
-            with mock.patch.object(rca.urllib.request, 'urlopen',
-                                   side_effect=AssertionError('unexpected download')):
-                with self.assertRaises(ValueError):
-                    rca.start(env)
+        for windows in (False, True):
+            with self.subTest(windows=windows), tempfile.TemporaryDirectory() as root:
+                env = settings(root, bundle(windows=windows))
+                env['GITHUB_WORKFLOW'] = 'windows' if windows else 'ubuntu'
+                env.pop('WORKFLOW_ACTION_CLAIM_URL')
+                with mock.patch.object(rca.sys, 'platform', 'win32' if windows else 'linux'):
+                    with mock.patch.object(rca.urllib.request, 'urlopen',
+                                           side_effect=AssertionError('unexpected download')):
+                        with self.assertRaises(ValueError):
+                            rca.start(env)
 
     def test_stale_ambient_oidc_audience_is_not_trusted(self):
         result, calls = self.invoke(bundle(),
