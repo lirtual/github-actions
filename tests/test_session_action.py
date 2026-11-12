@@ -418,7 +418,7 @@ class SessionProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as path:
             for workflow in ("ubuntu", "windows"):
                 env = self.settings()
-                env.update({"RUNNER_TEMP": path, "GITHUB_REPOSITORY": "lirtual/github-actions",
+                env.update({"RUNNER_TEMP": path, "GITHUB_REPOSITORY": "autoactions/github-actions",
                             "GITHUB_WORKFLOW": workflow, "DURATION_MINUTES": "7"})
                 with mock.patch.dict(os.environ, env, clear=True):
                     self.assertEqual(session.signed_status_payload(ATTEMPT, "ready"),
@@ -428,6 +428,12 @@ class SessionProtocolTests(unittest.TestCase):
                     os.environ["DURATION_MINUTES"] = "301"
                     with self.assertRaises(ValueError):
                         session.signed_status_payload(ATTEMPT, "ready")
+            old = self.settings()
+            old.update({"RUNNER_TEMP": path, "GITHUB_REPOSITORY": "lirtual/github-actions",
+                        "GITHUB_WORKFLOW": "ubuntu", "DURATION_MINUTES": "7"})
+            with mock.patch.dict(os.environ, old, clear=True):
+                self.assertEqual(session.signed_status_payload(ATTEMPT, "ready"),
+                                 {"attemptId": ATTEMPT})
             env = self.settings()
             env.update({"RUNNER_TEMP": path, "GITHUB_REPOSITORY": "lirtual/github-actions",
                         "GITHUB_WORKFLOW": "chrome", "DURATION_MINUTES": "8"})

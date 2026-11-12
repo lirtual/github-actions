@@ -113,7 +113,7 @@ def signed_status_payload(attempt, stage):
         return payload
     # This is the exact job-snapshotted effective duration, not a caller
     # override. The signed physical Ready is the first/only D1 freeze.
-    if (os.getenv("GITHUB_REPOSITORY") == "lirtual/github-actions" and
+    if (os.getenv("GITHUB_REPOSITORY") == "autoactions/github-actions" and
             os.getenv("GITHUB_WORKFLOW") in ("ubuntu", "windows")):
         payload["durationMinutes"] = session_duration_minutes()
     # The tunnel script is the sole source; never take a caller input or
