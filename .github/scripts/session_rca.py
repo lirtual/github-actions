@@ -13,6 +13,8 @@ import tarfile
 import urllib.request
 import zipfile
 
+from session_action import discover_audience
+
 REPOSITORY = "lirtual/mcp-workers"
 LIMIT = 180 * 1024 * 1024
 UNPACKED_LIMIT = 250 * 1024 * 1024
@@ -263,6 +265,11 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     temp = env.get("RUNNER_TEMP", "")
     if not temp or not Path(temp).is_absolute():
         raise BootstrapError("Missing job-scoped runtime directory")
+    # Use the already-reviewed Claim discovery contract, not a new repository variable.
+    # Override any ambient audience; only the short-lived registration parent receives it.
+    registration_env = dict(env)
+    registration_env["WORKFLOW_ACTION_OIDC_AUDIENCE"] = discover_audience(
+        env.get("WORKFLOW_ACTION_CLAIM_URL", ""))
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
     tag, sha, url = select_release(target, extension, opener)
@@ -286,7 +293,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     if not node.is_file() or node.is_symlink() or not entry.is_file() or entry.is_symlink():
         raise BootstrapError("Release lacks Session-only foreground executable")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
-    process = launch([str(node), str(entry)], cwd=str(stage), env=dict(env),
+    process = launch([str(node), str(entry)], cwd=str(stage), env=registration_env,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      creationflags=flags, start_new_session=not windows)
     print(f"Session RCA job-scoped foreground Agent launched (pid {process.pid}); online admission remains authoritative.")

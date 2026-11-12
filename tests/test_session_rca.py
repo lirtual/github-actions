@@ -13,6 +13,8 @@ from unittest import mock
 import zipfile
 
 SCRIPT = Path(__file__).resolve().parents[1] / '.github/scripts/session_rca.py'
+if str(SCRIPT.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location('session_rca', SCRIPT)
 assert spec and spec.loader
 rca = importlib.util.module_from_spec(spec)
@@ -61,7 +63,7 @@ def settings(root, data):
     return {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted',
         'GITHUB_WORKFLOW': 'ubuntu', 'GITHUB_REPOSITORY': 'autoactions/github-actions',
         'ATTEMPT_ID': '11111111-1111-4111-8111-111111111111',
-        'WORKFLOW_ACTION_OIDC_AUDIENCE': 'workflow-github-abcde',
+        'WORKFLOW_ACTION_CLAIM_URL': 'https://workflow.lirtual.dpdns.org/github/action/claim',
         'ACTIONS_ID_TOKEN_REQUEST_URL': 'https://oidc.example.net/',
         'ACTIONS_ID_TOKEN_REQUEST_TOKEN': 'synthetic-only', 'RUNNER_TEMP': root}
 
@@ -77,7 +79,9 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             def launch(argv, **kwargs):
                 calls.append((argv, kwargs))
                 return type('Child', (), {'pid': 1234, 'wait': lambda self, timeout: 0})()
-            with mock.patch.object(rca.sys, 'platform', 'win32' if windows else 'linux'):
+            with mock.patch.object(rca, 'discover_audience', return_value='workflow-github-abcde') as discover, \
+                    mock.patch.object(rca.sys, 'platform', 'win32' if windows else 'linux'):
+                self.audience_discovery = discover
                 with mock.patch.object(rca.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True):
                     outcome = None
                     try:
@@ -104,6 +108,36 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         result, calls = self.invoke(bundle(), {'GITHUB_REPOSITORY': 'lirtual/github-actions'})
         self.assertEqual(result, 'denied')
         self.assertEqual(calls, [])
+
+    def test_missing_ambient_oidc_audience_is_discovered_for_both_runners(self):
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                result, calls = self.invoke(bundle(windows=windows), windows=windows)
+                self.assertTrue(result)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][1]['env']['WORKFLOW_ACTION_OIDC_AUDIENCE'],
+                                 'workflow-github-abcde')
+                self.audience_discovery.assert_called_once_with(
+                    'https://workflow.lirtual.dpdns.org/github/action/claim')
+
+    def test_missing_claim_audience_discovery_denies_before_release_download(self):
+        for windows in (False, True):
+            with self.subTest(windows=windows), tempfile.TemporaryDirectory() as root:
+                env = settings(root, bundle(windows=windows))
+                env['GITHUB_WORKFLOW'] = 'windows' if windows else 'ubuntu'
+                env.pop('WORKFLOW_ACTION_CLAIM_URL')
+                with mock.patch.object(rca.sys, 'platform', 'win32' if windows else 'linux'):
+                    with mock.patch.object(rca.urllib.request, 'urlopen',
+                                           side_effect=AssertionError('unexpected download')):
+                        with self.assertRaises(ValueError):
+                            rca.start(env)
+
+    def test_stale_ambient_oidc_audience_is_not_trusted(self):
+        result, calls = self.invoke(bundle(),
+            {'WORKFLOW_ACTION_OIDC_AUDIENCE': 'workflow-github-wrong'})
+        self.assertTrue(result)
+        self.assertEqual(calls[0][1]['env']['WORKFLOW_ACTION_OIDC_AUDIENCE'],
+                         'workflow-github-abcde')
 
     def test_linux_matching_pin_launches_job_private_reviewed_entrypoint(self):
         result, calls = self.invoke(bundle())
@@ -281,7 +315,8 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             def opener(req, timeout):
                 urls.append((req.full_url, timeout))
                 return Download(payload)
-            with mock.patch.object(rca.sys, 'platform', 'linux'):
+            with mock.patch.object(rca.sys, 'platform', 'linux'), \
+                    mock.patch.object(rca, 'discover_audience', return_value='workflow-github-abcde'):
                 self.assertTrue(rca.start(env, opener=opener,
                     launch=lambda *_a, **_kw: type('Child', (), {'pid': 1234})(),
                     select_release=lambda target, ext, _opener: (
