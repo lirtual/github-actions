@@ -221,6 +221,8 @@ def observe_windows_transport(parent_pid, executable, *, run=subprocess.run,
 
 # Read only a fixed checkpoint from the Agent's existing Windows job-private
 # store. Unknown/untrusted content is never reproduced in Actions logs.
+BOOTSTRAP_SPAWNED = False
+
 TRANSPORT_STAGES = frozenset({
     "pending", "entered", "store_ready", "pem_ready", "identity_ready", "signed_recovered", "receipts_ready",
     "challenge_start", "challenge_ok", "challenge_rejected",
@@ -293,9 +295,11 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     if not node.is_file() or node.is_symlink() or not entry.is_file() or entry.is_symlink():
         raise BootstrapError("Release lacks Session-only foreground executable")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
+    global BOOTSTRAP_SPAWNED
     process = launch([str(node), str(entry)], cwd=str(stage), env=registration_env,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      creationflags=flags, start_new_session=not windows)
+    BOOTSTRAP_SPAWNED = True
     print(f"Session RCA job-scoped foreground Agent launched (pid {process.pid}); online admission remains authoritative.")
     if windows:
         confirm_windows_registration(process)
@@ -312,6 +316,22 @@ def main():
     try:
         start()
     except (BootstrapError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError):
+        # Known pre-spawn failure, not the ambiguous case where a child may live.
+        if not BOOTSTRAP_SPAWNED and sys.platform != "win32" and \
+           os.environ.get("GITHUB_ACTIONS") == "true" and \
+           os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted" and \
+           os.environ.get("GITHUB_WORKFLOW") == "ubuntu" and \
+           os.environ.get("GITHUB_REPOSITORY") == "autoactions/github-actions":
+            try:
+                marker = Path(os.environ["RUNNER_TEMP"]) / "session-rca-known-failed"
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(marker, flags, 0o600)
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(b"failed\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError:
+                pass  # Missing marker conservatively disables SSH-only early stop.
         # Mark this optional Step as failed, while continue-on-error preserves Hold.
         # Never print external HTTP errors, OIDC tokens, private keys or OS paths.
         print("Session RCA unavailable (optional bootstrap rejected); SSH/RDP remains available.")

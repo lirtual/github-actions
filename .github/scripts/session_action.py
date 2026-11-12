@@ -11,6 +11,7 @@ import urllib.error
 import os
 import pathlib
 import re
+import stat
 import sys
 import time
 import urllib.parse
@@ -215,11 +216,46 @@ def start():
     session_duration_minutes()
 
 
+def mark_ready():
+    # Only Ubuntu's signed Ready establishes the idle clock. Windows is unchanged.
+    if os.getenv("GITHUB_WORKFLOW") != "ubuntu":
+        return
+    marker = start_file().with_name("session-action-ready")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(marker, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii") as handle:
+        handle.write(str(int(time.time())) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def ready_timestamp():
+    marker = start_file().with_name("session-action-ready")
+    try:
+        st = marker.lstat()
+        if not (stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and
+                st.st_uid == os.getuid() and stat.S_IMODE(st.st_mode) == 0o600):
+            return None
+        text = marker.read_text(encoding="ascii").strip()
+        stamp = int(text) if text.isdecimal() and len(text) <= 11 else 0
+        return stamp if recorded_start() <= stamp <= int(time.time()) + 3 else None
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
 def hold():
     minutes = session_duration_minutes()
     start_time = recorded_start()
     end = start_time + 60 * minutes
     print("Session bounded hold started; GitHub Job timeout remains authoritative")
+    if os.getenv("GITHUB_WORKFLOW") == "ubuntu":
+        from session_idle import hold_until, reviewed_runner
+        ready = ready_timestamp()
+        if reviewed_runner() and ready is not None:
+            outcome = hold_until(end, ready * 1000)
+            if outcome == "idle":
+                print("Ubuntu Session confirmed idle; normal cleanup follows")
+                return
     while time.time() < end:
         time.sleep(min(10, max(0, end - time.time())))
     print("Session lifetime reached; shutting down")
@@ -232,8 +268,11 @@ def main():
         mode = sys.argv[1]
         if mode == "start":
             start()
-        elif mode in ("claim", "ready"):
+        elif mode == "claim":
             assert_status(mode)
+        elif mode == "ready":
+            assert_status(mode)
+            mark_ready()
         elif mode == "hold":
             hold()
         else:
