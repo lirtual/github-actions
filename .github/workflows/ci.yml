@@ -505,7 +505,7 @@ jobs:
         run: |
           $Source = Get-Content '.github/workflows/windows.yml' -Raw
           $Begin = $Source.IndexOf('      - name: Hide pre-existing Windows Terminal window')
-          $End = $Source.IndexOf('      - name: Signed Ready', $Begin)
+          $End = $Source.IndexOf('      - name: ', $Begin + '      - name: '.Length)
           if ($Begin -lt 0 -or $End -lt 0) { throw 'Windows desktop step not found' }
           $Section = $Source.Substring($Begin, $End - $Begin)
           $RunStart = $Section.IndexOf('        run: |')
