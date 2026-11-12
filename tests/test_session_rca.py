@@ -59,7 +59,7 @@ class Download:
 
 def settings(root, data):
     return {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted',
-        'GITHUB_WORKFLOW': 'ubuntu', 'GITHUB_REPOSITORY': 'lirtual/github-actions',
+        'GITHUB_WORKFLOW': 'ubuntu', 'GITHUB_REPOSITORY': 'autoactions/github-actions',
         'ATTEMPT_ID': '11111111-1111-4111-8111-111111111111',
         'WORKFLOW_ACTION_OIDC_AUDIENCE': 'workflow-github-abcde',
         'ACTIONS_ID_TOKEN_REQUEST_URL': 'https://oidc.example.net/',
@@ -97,6 +97,14 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             with self.assertRaises(rca.BootstrapError):
                 rca.start({})
 
+    def test_release_comes_from_current_mcp_workers_repo(self):
+        self.assertEqual(rca.REPOSITORY, 'lirtual/mcp-workers')
+
+    def test_untrusted_source_repository_cannot_register_session_agent(self):
+        result, calls = self.invoke(bundle(), {'GITHUB_REPOSITORY': 'lirtual/github-actions'})
+        self.assertEqual(result, 'denied')
+        self.assertEqual(calls, [])
+
     def test_linux_matching_pin_launches_job_private_reviewed_entrypoint(self):
         result, calls = self.invoke(bundle())
         self.assertTrue(result)
@@ -105,7 +113,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertTrue(argv[0].replace('\\', '/').endswith('/bin/node'))
         self.assertTrue(argv[1].replace('\\', '/').endswith('/apps/remote-control-agent/src/session-rca-main.js'))
         self.assertTrue(opts['start_new_session'])
-        self.assertEqual(opts['env']['GITHUB_REPOSITORY'], 'lirtual/github-actions')
+        self.assertEqual(opts['env']['GITHUB_REPOSITORY'], 'autoactions/github-actions')
 
     def test_windows_matching_pin_launches_approved_windows_entrypoint(self):
         result, calls = self.invoke(bundle(windows=True), windows=True)
@@ -281,7 +289,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                         f"https://github.com/{rca.REPOSITORY}/releases/download/"
                         f"{TAG}/remote-control-agent-{TAG}-{target}.{ext}")))
             self.assertEqual(urls, [(
-                'https://github.com/lirtual/remote-control-agent/releases/download/v0.1.40/'
+                'https://github.com/lirtual/mcp-workers/releases/download/v0.1.40/'
                 'remote-control-agent-v0.1.40-linux-x64-glibc.tar.gz', 20)])
 
     def test_symlink_member_refused(self):

@@ -13,7 +13,7 @@ import tarfile
 import urllib.request
 import zipfile
 
-REPOSITORY = "lirtual/remote-control-agent"
+REPOSITORY = "lirtual/mcp-workers"
 LIMIT = 180 * 1024 * 1024
 UNPACKED_LIMIT = 250 * 1024 * 1024
 COUNT_LIMIT = 200
@@ -256,7 +256,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     windows = sys.platform == "win32"
     workflow = "windows" if windows else "ubuntu"
     if (env.get("GITHUB_ACTIONS") != "true" or env.get("RUNNER_ENVIRONMENT") != "github-hosted"
-        or env.get("GITHUB_WORKFLOW") != workflow or env.get("GITHUB_REPOSITORY") != "lirtual/github-actions"
+        or env.get("GITHUB_WORKFLOW") != workflow or env.get("GITHUB_REPOSITORY") != "autoactions/github-actions"
         or not env.get("ATTEMPT_ID")
         or not env.get("ACTIONS_ID_TOKEN_REQUEST_URL") or not env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")):
         raise BootstrapError("Unreviewed physical Session environment")
