@@ -90,6 +90,18 @@ jobs:
       - name: Verify allocated Tailnet name before privileged access
         shell: pwsh
         run: python .github/scripts/verify-tailnet-name.py
+      - name: Activate optional interactive Session CLI authentication
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
+        run: ./.github/scripts/session-cli-windows.ps1 -Mode Activate
       - name: Configure Tailnet-only password SSH for the Windows Runner
         shell: pwsh
         env:
@@ -126,18 +138,6 @@ jobs:
             }
             Write-Output 'Pre-existing Windows Terminal window hidden without stopping its process'
           }
-      - name: Activate optional interactive Session CLI authentication
-        continue-on-error: true
-        timeout-minutes: 2
-        shell: pwsh
-        env:
-          RUNNER_ENVIRONMENT: ${{ runner.environment }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
-          GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
-        run: ./.github/scripts/session-cli-windows.ps1 -Mode Activate
       - name: Signed Ready after private SSH and RDP are listening
         shell: pwsh
         run: python .github/scripts/session_action.py ready

@@ -89,11 +89,6 @@ jobs:
         timeout-minutes: 2
         shell: bash
         run: bash .github/scripts/session-cli-ubuntu.sh install
-      - name: Configure Ubuntu Runner password SSH on Tailnet
-        shell: bash
-        env:
-          SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
-        run: bash .github/scripts/ubuntu-ssh.sh
       - name: Activate optional interactive Session CLI authentication
         continue-on-error: true
         timeout-minutes: 2
@@ -105,6 +100,11 @@ jobs:
           GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
           GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
         run: bash .github/scripts/session-cli-ubuntu.sh activate
+      - name: Configure Ubuntu Runner password SSH on Tailnet
+        shell: bash
+        env:
+          SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
+        run: bash .github/scripts/ubuntu-ssh.sh
       - name: Signed Ready after private SSH is configured
         run: python3 .github/scripts/session_action.py ready
       - name: Start optional latest verified Session RCA after signed Ready
