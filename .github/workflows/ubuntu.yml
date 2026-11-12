@@ -84,11 +84,27 @@ jobs:
       - name: Verify allocated Tailnet name before privileged access
         shell: bash
         run: python3 .github/scripts/verify-tailnet-name.py
+      - name: Install optional pinned cf CLI without Secrets
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        run: bash .github/scripts/session-cli-ubuntu.sh install
       - name: Configure Ubuntu Runner password SSH on Tailnet
         shell: bash
         env:
           SESSION_SYSTEM_PASSWORD: ${{ secrets.SESSION_SYSTEM_PASSWORD }}
         run: bash .github/scripts/ubuntu-ssh.sh
+      - name: Activate optional interactive Session CLI authentication
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
+        run: bash .github/scripts/session-cli-ubuntu.sh activate
       - name: Signed Ready after private SSH is configured
         run: python3 .github/scripts/session_action.py ready
       - name: Start optional latest verified Session RCA after signed Ready
@@ -99,6 +115,11 @@ jobs:
         run: python3 .github/scripts/session_rca.py
       - name: Hold until selected lifetime or GitHub cancellation
         run: python3 .github/scripts/session_action.py hold
+      - name: Remove optional Ubuntu CLI credentials
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: bash .github/scripts/session-cli-ubuntu.sh cleanup
       - name: Stop Ubuntu SSH and remove session settings
         if: always()
         shell: bash

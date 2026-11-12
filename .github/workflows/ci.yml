@@ -561,6 +561,43 @@ jobs:
           }
           Write-Output "Windows prerequisites passed; SSH was NOT enabled"
 
+      - name: Verify fresh Windows PowerShell CLI credentials using synthetic values
+        shell: pwsh
+        env:
+          GH_TOKEN: synthetic-gh-token
+          CLOUDFLARE_API_TOKEN: synthetic-cf-token
+          CLOUDFLARE_ACCOUNT_ID: synthetic-account
+          GIT_USER_NAME: Spec CI
+          GIT_USER_EMAIL: spec-ci@example.invalid
+        run: |
+          $Script = './.github/scripts/session-cli-windows.ps1'
+          try {
+            & $Script -Mode Activate
+            if (-not (Test-Path (Join-Path $HOME '.session-actions/auth/github.token'))) {
+              throw 'Windows Session credential material missing'
+            }
+            $Acl = Get-Acl (Join-Path $HOME '.session-actions/auth')
+            if ($Acl.AreAccessRulesProtected -ne $true) { throw 'Credential ACL inheritance must be disabled' }
+            $ProfileSource = Get-Content $PROFILE.CurrentUserAllHosts -Raw
+            if ($ProfileSource.Contains('synthetic-gh-token') -or $ProfileSource.Contains('synthetic-cf-token')) {
+              throw 'Secret must not be persisted in the profile hook'
+            }
+            $GitConfig = (& git config --global --list) -join [Environment]::NewLine
+            if ($GitConfig.Contains('synthetic-gh-token') -or $GitConfig.Contains('synthetic-cf-token')) {
+              throw 'Secret must not be persisted in Git configuration'
+            }
+            $env:GH_TOKEN = $null
+            $env:CLOUDFLARE_API_TOKEN = $null
+            $env:CLOUDFLARE_ACCOUNT_ID = $null
+            $env:GITHUB_ACTIONS = $null
+            & pwsh -Command 'if ($env:GH_TOKEN -ne "synthetic-gh-token" -or $env:CLOUDFLARE_API_TOKEN -ne "synthetic-cf-token" -or $env:CLOUDFLARE_ACCOUNT_ID -ne "synthetic-account") { throw "PowerShell profile did not load synthetic credentials" }; if ((git config --global user.name) -ne "Spec CI" -or (git config --global user.email) -ne "spec-ci@example.invalid" -or (git config --global user.useConfigOnly) -ne "true") { throw "Git author identity not configured" }'
+            if ($LASTEXITCODE -ne 0) { throw 'Fresh PowerShell verification failed' }
+          } finally {
+            & $Script -Mode Cleanup
+          }
+          if (Test-Path (Join-Path $HOME '.session-actions/auth/github.token')) {
+            throw 'Windows Session credentials survived cleanup'
+          }
       - name: Verify native RDP disconnect handoff task registration
         shell: pwsh
         env:
