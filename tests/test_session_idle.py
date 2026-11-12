@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import sys
 from unittest import mock
 
 PATH=Path(__file__).resolve().parents[1]/'.github/scripts/session_idle.py'
@@ -15,6 +16,7 @@ class Clock:
     def time(self): return self.now
     def sleep(self, seconds): self.now+=seconds
 
+@unittest.skipUnless(sys.platform == "linux", "Ubuntu Runner idle policy only")
 class SessionIdleTests(unittest.TestCase):
     def test_idle_exit_after_thirty_minutes_not_before(self):
         clock=Clock(1000)
