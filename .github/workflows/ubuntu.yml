@@ -108,12 +108,16 @@ jobs:
       - name: Signed Ready after private SSH is configured
         run: python3 .github/scripts/session_action.py ready
       - name: Start optional latest verified Session RCA after signed Ready
+        id: rca_bootstrap
         continue-on-error: true
         timeout-minutes: 2
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: python3 .github/scripts/session_rca.py
       - name: Hold until selected lifetime or GitHub cancellation
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          SESSION_RCA_OUTCOME: ${{ steps.rca_bootstrap.outcome }}
         run: python3 .github/scripts/session_action.py hold
       - name: Remove optional Ubuntu CLI credentials
         if: always()
