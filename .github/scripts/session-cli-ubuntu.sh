@@ -6,26 +6,44 @@ umask 077
 state="$HOME/.config/session-actions"
 profile="$HOME/.bashrc"
 npm_prefix="$HOME/.local/session-actions/npm"
+rca_env="$state/rca-env.bash"
 begin='# session-actions login begin'
 end='# session-actions login end'
 
 case "${1:-}" in
   install)
-    if command -v cf >/dev/null 2>&1; then
-      echo 'cf command already exists; installation skipped to avoid a collision'
-      exit 0
+    # All tools are optional: a package registry outage must not block the Session.
+    if ! command -v cf >/dev/null 2>&1; then
+      if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
+         node -e 'const a=process.versions.node.split(".").map(Number);process.exit((a[0]===22&&a[1]>=18)||(a[0]>=23)?0:1)'; then
+        mkdir -p "$npm_prefix"
+        if timeout 60s npm install --global --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund cf@1.0.0-beta.14 >/dev/null 2>&1 &&
+           "$npm_prefix/bin/cf" --version >/dev/null 2>&1; then
+          echo 'Pinned cf CLI installed'
+        else
+          echo 'Optional cf CLI installation unavailable'
+        fi
+      else
+        echo 'Pinned cf CLI requires newer Node.js; optional installation skipped'
+      fi
     fi
-    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
-       ! node -e 'const a=process.versions.node.split(".").map(Number);process.exit((a[0]===22&&a[1]>=18)||(a[0]>=23)?0:1)'; then
-      echo 'Pinned cf CLI requires newer Node.js; optional installation skipped'
-      exit 0
+    if ! command -v uv >/dev/null 2>&1; then
+      if command -v pipx >/dev/null 2>&1 &&
+         timeout 60s env PIPX_HOME="$HOME/.local/session-actions/pipx" PIPX_BIN_DIR="$HOME/.local/bin" pipx install 'uv==0.13.7' >/dev/null 2>&1 &&
+         "$HOME/.local/bin/uv" --version >/dev/null 2>&1; then
+        echo 'Pinned uv installed'
+      else
+        echo 'Optional uv installation unavailable'
+      fi
     fi
-    mkdir -p "$npm_prefix"
-    if timeout 75s npm install --global --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund cf@1.0.0-beta.14 >/dev/null 2>&1 &&
-       "$npm_prefix/bin/cf" --version >/dev/null 2>&1; then
-      echo 'Pinned cf CLI installed'
-    else
-      echo 'Optional cf CLI installation unavailable'
+    if ! command -v rg >/dev/null 2>&1; then
+      if command -v sudo >/dev/null 2>&1 &&
+         timeout 35s sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ripgrep >/dev/null 2>&1 &&
+         command -v rg >/dev/null 2>&1; then
+        echo 'ripgrep installed'
+      else
+        echo 'Optional ripgrep installation unavailable'
+      fi
     fi
     ;;
   activate)
@@ -64,11 +82,19 @@ case "${1:-}" in
       } > "$state/credentials.bash"
       chmod 600 "$state/credentials.bash"
     fi
+    # Only the reviewed Session RCA child receives BASH_ENV; ordinary Actions
+    # steps never auto-import Session credentials.
+    cat > "$rca_env" <<'PROFILE'
+if [[ "${SESSION_ACTION_RCA:-}" == "1" && -f "$HOME/.config/session-actions/credentials.bash" ]]; then
+  . "$HOME/.config/session-actions/credentials.bash"
+fi
+PROFILE
+    chmod 600 "$rca_env"
     touch "$profile"
     if ! grep -Fxq "$begin" "$profile"; then
       cat >> "$profile" <<'PROFILE'
 # session-actions login begin
-if [[ "${GITHUB_ACTIONS:-}" != true && -f "$HOME/.config/session-actions/credentials.bash" ]]; then
+if [[ ( "${GITHUB_ACTIONS:-}" != true || "${SESSION_ACTION_RCA:-}" == "1" ) && -f "$HOME/.config/session-actions/credentials.bash" ]]; then
   . "$HOME/.config/session-actions/credentials.bash"
 fi
 if [[ -x "$HOME/.local/session-actions/npm/bin/cf" ]]; then
@@ -83,7 +109,7 @@ PROFILE
     if [[ -f "$profile" ]]; then
       sed -i '/^# session-actions login begin$/,/^# session-actions login end$/d' "$profile"
     fi
-    rm -f "$state/credentials.bash"
+    rm -f "$state/credentials.bash" "$rca_env"
     rmdir "$state" 2>/dev/null || true
     echo 'Ubuntu Session CLI credential material removed'
     ;;
