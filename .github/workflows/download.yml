@@ -27,6 +27,7 @@ on:
 env:
   WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: task
+  WORKFLOW_ACTION_OUTPUT_KIND: none
 
 permissions:
   contents: read
