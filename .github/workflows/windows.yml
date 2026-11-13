@@ -39,6 +39,7 @@ on:
 env:
   WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: session
+  WORKFLOW_ACTION_OUTPUT_KIND: tailnet
 permissions:
   contents: read
   id-token: write
