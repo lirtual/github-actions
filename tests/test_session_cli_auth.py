@@ -46,6 +46,15 @@ class WorkflowContract(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "Bash login boundary runs on Ubuntu")
 class UbuntuLoginShell(unittest.TestCase):
+    def clean_env(self):
+        env = dict(os.environ)
+        # The test runner may itself be a live RCA child. Never let its
+        # actual credentials or Bash loader enter synthetic fixture shells.
+        for key in ("SESSION_ACTION_RCA", "BASH_ENV", "GH_TOKEN", "GITHUB_TOKEN",
+                    "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
+            env.pop(key, None)
+        return env
+
     def setup_home(self, home):
         (home / ".bashrc").write_text("# existing user profile\n")
         fakebin = home / "bin"
@@ -68,12 +77,12 @@ class UbuntuLoginShell(unittest.TestCase):
             home = Path(temp)
             fakebin, real_gh = self.setup_home(home)
             path = str(fakebin) + ":" + os.environ["PATH"]
-            env = dict(os.environ, HOME=temp, PATH=path, GH_TOKEN="synthetic-gh-token",
+            env = dict(self.clean_env(), HOME=temp, PATH=path, GH_TOKEN="synthetic-gh-token",
                        CLOUDFLARE_API_TOKEN="synthetic-cf-token",
                        CLOUDFLARE_ACCOUNT_ID="synthetic-account", GIT_USER_NAME="Spec User",
                        GIT_USER_EMAIL="spec@example.invalid")
             subprocess.run(["bash", str(SCRIPT), "activate"], check=True, env=env, capture_output=True)
-            fresh = dict(os.environ, HOME=temp, PATH=path, GITHUB_ACTIONS="false")
+            fresh = dict(self.clean_env(), HOME=temp, PATH=path, GITHUB_ACTIONS="false")
             for key in ("GH_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
                 fresh.pop(key, None)
             result = self.run_shell(
@@ -159,7 +168,7 @@ class UbuntuLoginShell(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
             fakebin, _ = self.setup_home(home)
-            env = dict(os.environ, HOME=temp, PATH=str(fakebin) + ":" + os.environ["PATH"])
+            env = dict(self.clean_env(), HOME=temp, PATH=str(fakebin) + ":" + os.environ["PATH"])
             for key in ("GH_TOKEN", "GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN",
                         "CLOUDFLARE_ACCOUNT_ID", "GIT_USER_NAME", "GIT_USER_EMAIL",
                         "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
