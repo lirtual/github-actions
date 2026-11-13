@@ -46,6 +46,15 @@ class WorkflowContract(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "Bash login boundary runs on Ubuntu")
 class UbuntuLoginShell(unittest.TestCase):
+    def clean_env(self):
+        env = dict(os.environ)
+        # The test runner may itself be a live RCA child. Never let its
+        # actual credentials or Bash loader enter synthetic fixture shells.
+        for key in ("SESSION_ACTION_RCA", "BASH_ENV", "GH_TOKEN", "GITHUB_TOKEN",
+                    "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
+            env.pop(key, None)
+        return env
+
     def setup_home(self, home):
         (home / ".bashrc").write_text("# existing user profile\n")
         fakebin = home / "bin"
@@ -68,12 +77,12 @@ class UbuntuLoginShell(unittest.TestCase):
             home = Path(temp)
             fakebin, real_gh = self.setup_home(home)
             path = str(fakebin) + ":" + os.environ["PATH"]
-            env = dict(os.environ, HOME=temp, PATH=path, GH_TOKEN="synthetic-gh-token",
+            env = dict(self.clean_env(), HOME=temp, PATH=path, GH_TOKEN="synthetic-gh-token",
                        CLOUDFLARE_API_TOKEN="synthetic-cf-token",
                        CLOUDFLARE_ACCOUNT_ID="synthetic-account", GIT_USER_NAME="Spec User",
                        GIT_USER_EMAIL="spec@example.invalid")
             subprocess.run(["bash", str(SCRIPT), "activate"], check=True, env=env, capture_output=True)
-            fresh = dict(os.environ, HOME=temp, PATH=path, GITHUB_ACTIONS="false")
+            fresh = dict(self.clean_env(), HOME=temp, PATH=path, GITHUB_ACTIONS="false")
             for key in ("GH_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
                 fresh.pop(key, None)
             result = self.run_shell(
@@ -96,6 +105,28 @@ class UbuntuLoginShell(unittest.TestCase):
             self.assertEqual(interactive.returncode, 0, interactive.stderr)
             loader = home / ".config/session-actions/rca-env.bash"
             self.assertEqual(loader.stat().st_mode & 0o777, 0o600)
+            shell = home / ".config/session-actions/rca-shell"
+            self.assertEqual(shell.stat().st_mode & 0o777, 0o700)
+            # Real first-level commands source the controlled loader
+            # explicitly, not merely a nested Bash startup hook.
+            first_env = dict(fresh, GITHUB_ACTIONS="true",
+                             GITHUB_REPOSITORY="autoactions/github-actions",
+                             SESSION_ACTION_RCA="1", BASH_ENV=str(loader))
+            first = subprocess.run(
+                [str(shell), "-c",
+                 'test "$GH_TOKEN" = synthetic-gh-token && '
+                 'test "$CLOUDFLARE_API_TOKEN" = synthetic-cf-token'],
+                env=first_env, text=True, capture_output=True)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            unreviewed = subprocess.run(
+                [str(shell), "-c",
+                 'test -z "$GH_TOKEN" && test -z "$CLOUDFLARE_API_TOKEN"'],
+                env=dict(first_env, GITHUB_REPOSITORY="unreviewed/repo"),
+                text=True, capture_output=True)
+            self.assertEqual(unreviewed.returncode, 0, unreviewed.stderr)
+            malformed = subprocess.run([str(shell), "--unreviewed"],
+                                       env=first_env, text=True, capture_output=True)
+            self.assertEqual(malformed.returncode, 125)
             noninteractive = subprocess.run(
                 ["bash", "--noprofile", "--norc", "-c",
                  'test "$GH_TOKEN" = synthetic-gh-token && '
@@ -130,13 +161,14 @@ class UbuntuLoginShell(unittest.TestCase):
             subprocess.run(["bash", str(SCRIPT), "cleanup"], check=True, env=env, capture_output=True)
             self.assertFalse(stored.exists())
             self.assertFalse(loader.exists())
+            self.assertFalse(shell.exists())
             self.assertNotIn("session-actions", (home / ".bashrc").read_text())
 
     def test_missing_credentials_never_fall_back_to_inferred_git_identity(self):
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
             fakebin, _ = self.setup_home(home)
-            env = dict(os.environ, HOME=temp, PATH=str(fakebin) + ":" + os.environ["PATH"])
+            env = dict(self.clean_env(), HOME=temp, PATH=str(fakebin) + ":" + os.environ["PATH"])
             for key in ("GH_TOKEN", "GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN",
                         "CLOUDFLARE_ACCOUNT_ID", "GIT_USER_NAME", "GIT_USER_EMAIL",
                         "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
