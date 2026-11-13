@@ -149,9 +149,9 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertTrue(opts['start_new_session'])
         self.assertEqual(opts['env']['GITHUB_REPOSITORY'], 'autoactions/github-actions')
         self.assertEqual(opts['env']['SESSION_ACTION_RCA'], '1')
-        self.assertTrue(opts['env']['BASH_ENV'].endswith('/.config/session-actions/rca-env.bash'))
-        self.assertTrue(opts['env']['PATH'].split(os.pathsep)[0].endswith('/.local/bin'))
-        self.assertTrue(opts['env']['PATH'].split(os.pathsep)[1].endswith('/.local/session-actions/npm/bin'))
+        self.assertTrue(opts['env']['BASH_ENV'].replace('\\', '/').endswith('/.config/session-actions/rca-env.bash'))
+        self.assertTrue(opts['env']['PATH'].split(os.pathsep)[0].replace('\\', '/').endswith('/.local/bin'))
+        self.assertTrue(opts['env']['PATH'].split(os.pathsep)[1].replace('\\', '/').endswith('/.local/session-actions/npm/bin'))
 
     def test_windows_matching_pin_launches_approved_windows_entrypoint(self):
         result, calls = self.invoke(bundle(windows=True), windows=True)
