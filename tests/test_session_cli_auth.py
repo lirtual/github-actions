@@ -96,6 +96,28 @@ class UbuntuLoginShell(unittest.TestCase):
             self.assertEqual(interactive.returncode, 0, interactive.stderr)
             loader = home / ".config/session-actions/rca-env.bash"
             self.assertEqual(loader.stat().st_mode & 0o777, 0o600)
+            shell = home / ".config/session-actions/rca-shell"
+            self.assertEqual(shell.stat().st_mode & 0o777, 0o700)
+            # Real first-level commands source the controlled loader
+            # explicitly, not merely a nested Bash startup hook.
+            first_env = dict(fresh, GITHUB_ACTIONS="true",
+                             GITHUB_REPOSITORY="autoactions/github-actions",
+                             SESSION_ACTION_RCA="1", BASH_ENV=str(loader))
+            first = subprocess.run(
+                [str(shell), "-c",
+                 'test "$GH_TOKEN" = synthetic-gh-token && '
+                 'test "$CLOUDFLARE_API_TOKEN" = synthetic-cf-token'],
+                env=first_env, text=True, capture_output=True)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            unreviewed = subprocess.run(
+                [str(shell), "-c",
+                 'test -z "$GH_TOKEN" && test -z "$CLOUDFLARE_API_TOKEN"'],
+                env=dict(first_env, GITHUB_REPOSITORY="unreviewed/repo"),
+                text=True, capture_output=True)
+            self.assertEqual(unreviewed.returncode, 0, unreviewed.stderr)
+            malformed = subprocess.run([str(shell), "--unreviewed"],
+                                       env=first_env, text=True, capture_output=True)
+            self.assertEqual(malformed.returncode, 125)
             noninteractive = subprocess.run(
                 ["bash", "--noprofile", "--norc", "-c",
                  'test "$GH_TOKEN" = synthetic-gh-token && '
@@ -130,6 +152,7 @@ class UbuntuLoginShell(unittest.TestCase):
             subprocess.run(["bash", str(SCRIPT), "cleanup"], check=True, env=env, capture_output=True)
             self.assertFalse(stored.exists())
             self.assertFalse(loader.exists())
+            self.assertFalse(shell.exists())
             self.assertNotIn("session-actions", (home / ".bashrc").read_text())
 
     def test_missing_credentials_never_fall_back_to_inferred_git_identity(self):
