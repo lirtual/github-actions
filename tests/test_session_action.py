@@ -361,6 +361,23 @@ class SessionProtocolTests(unittest.TestCase):
                 self.assertNotIn("https://", output.getvalue())
                 self.assertEqual(len(requested), 2 if kind == "claim_403" else 1)
 
+    def test_ubuntu_start_validates_idle_setting_before_claim(self):
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "session-action-start").write_text("1000", encoding="ascii")
+            with mock.patch.object(session.time, "time", return_value=1000), \
+                 mock.patch.object(session.sys, "path", [str(PATH.parent), *session.sys.path]):
+                for value in ("0", "301", "", "invalid"):
+                    with self.subTest(value=value), mock.patch.dict(os.environ, {
+                        "RUNNER_TEMP": root, "DURATION_MINUTES": "300",
+                        "GITHUB_WORKFLOW": "ubuntu", "SESSION_IDLE_MINUTES": value
+                    }, clear=True), self.assertRaises(ValueError):
+                        session.start()
+                with mock.patch.dict(os.environ, {
+                    "RUNNER_TEMP": root, "DURATION_MINUTES": "300",
+                    "GITHUB_WORKFLOW": "windows", "SESSION_IDLE_MINUTES": "invalid"
+                }, clear=True):
+                    session.start()  # Windows does not enable the Ubuntu idle policy.
+
     def test_start_rejects_invalid_repo_duration_before_claim_or_service(self):
         import time
         with tempfile.TemporaryDirectory() as root:

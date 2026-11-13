@@ -214,6 +214,9 @@ def start():
     # Validate the first-step marker and the effective duration before Claim.
     recorded_start()
     session_duration_minutes()
+    if os.getenv("GITHUB_WORKFLOW") == "ubuntu":
+        from session_idle import idle_timeout_ms
+        idle_timeout_ms()  # Reject invalid repository settings before Claim.
 
 
 def mark_ready():

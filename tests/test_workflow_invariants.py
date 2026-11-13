@@ -72,6 +72,14 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("inputs.duration_mode == 'repository'", yml)
                 self.assertIn("timeout-minutes: 360", yml)
 
+    def test_only_ubuntu_reads_repository_idle_minutes(self):
+        ubuntu = (ROOT / ".github/workflows/ubuntu.yml").read_text()
+        self.assertIn("SESSION_IDLE_MINUTES: ${{ vars.SESSION_IDLE_MINUTES || '30' }}", ubuntu)
+        for name in ("windows", "chrome", "code-server", "openlist"):
+            with self.subTest(name=name):
+                workflow = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
+                self.assertNotIn("SESSION_IDLE_MINUTES", workflow)
+
     def test_session_claim_precedes_tailnet_and_protected_resources(self):
         """A manual GitHub dispatch can run without a D1 Attempt; it must not
         reach Tailnet enrollment, SSH, service credentials or Ready."""
