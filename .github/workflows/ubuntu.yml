@@ -85,9 +85,9 @@ jobs:
       - name: Verify allocated Tailnet name before privileged access
         shell: bash
         run: python3 .github/scripts/verify-tailnet-name.py
-      - name: Install optional pinned cf CLI without Secrets
+      - name: Install optional Ubuntu CLI tools without Secrets
         continue-on-error: true
-        timeout-minutes: 2
+        timeout-minutes: 3
         shell: bash
         run: bash .github/scripts/session-cli-ubuntu.sh install
       - name: Activate optional interactive Session CLI authentication
