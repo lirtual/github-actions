@@ -283,6 +283,18 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
             str(home / ".local/session-actions/npm/bin"),
             env.get("PATH") or os.defpath,
         ))
+        # Only an activated private RCA shell is selected. Without it, retain
+        # the original Runner shell so optional CLI setup cannot block RCA.
+        shell = home / ".config/session-actions/rca-shell"
+        if os.name == "posix":
+            try:
+                info = shell.lstat()
+                if (stat.S_ISREG(info.st_mode) and
+                    stat.S_IMODE(info.st_mode) == 0o700 and
+                    info.st_uid == os.getuid()):
+                    registration_env["SHELL"] = str(shell)
+            except OSError:
+                pass
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
     tag, sha, url = select_release(target, extension, opener)
