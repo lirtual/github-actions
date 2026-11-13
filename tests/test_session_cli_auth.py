@@ -87,6 +87,27 @@ class UbuntuLoginShell(unittest.TestCase):
             actions = self.run_shell(dict(fresh, GITHUB_ACTIONS="true"),
                                      'test -z "$GH_TOKEN" && test -z "$CLOUDFLARE_API_TOKEN"')
             self.assertEqual(actions.returncode, 0, actions.stderr)
+            # The RCA child inherits GITHUB_ACTIONS=true but is explicitly
+            # admitted after signed Claim; both Bash invocation forms work.
+            rca = dict(fresh, GITHUB_ACTIONS="true", SESSION_ACTION_RCA="1")
+            interactive = self.run_shell(
+                rca, 'test "$GH_TOKEN" = synthetic-gh-token && '
+                     'test "$CLOUDFLARE_API_TOKEN" = synthetic-cf-token')
+            self.assertEqual(interactive.returncode, 0, interactive.stderr)
+            loader = home / ".config/session-actions/rca-env.bash"
+            self.assertEqual(loader.stat().st_mode & 0o777, 0o600)
+            noninteractive = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-c",
+                 'test "$GH_TOKEN" = synthetic-gh-token && '
+                 'test "$CLOUDFLARE_API_TOKEN" = synthetic-cf-token'],
+                env=dict(rca, BASH_ENV=str(loader)), capture_output=True, text=True)
+            self.assertEqual(noninteractive.returncode, 0, noninteractive.stderr)
+            inactive = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-c",
+                 'test -z "$GH_TOKEN" && test -z "$CLOUDFLARE_API_TOKEN"'],
+                env=dict(fresh, GITHUB_ACTIONS="true", BASH_ENV=str(loader)),
+                capture_output=True, text=True)
+            self.assertEqual(inactive.returncode, 0, inactive.stderr)
             stored = home / ".config/session-actions/credentials.bash"
             self.assertEqual(stored.stat().st_mode & 0o777, 0o600)
             self.assertEqual(stored.parent.stat().st_mode & 0o777, 0o700)
@@ -108,6 +129,7 @@ class UbuntuLoginShell(unittest.TestCase):
             self.assertEqual(author, "Local Author|local@example.invalid|Local Author|local@example.invalid")
             subprocess.run(["bash", str(SCRIPT), "cleanup"], check=True, env=env, capture_output=True)
             self.assertFalse(stored.exists())
+            self.assertFalse(loader.exists())
             self.assertNotIn("session-actions", (home / ".bashrc").read_text())
 
     def test_missing_credentials_never_fall_back_to_inferred_git_identity(self):
