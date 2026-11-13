@@ -272,6 +272,17 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     registration_env = dict(env)
     registration_env["WORKFLOW_ACTION_OIDC_AUDIENCE"] = discover_audience(
         env.get("WORKFLOW_ACTION_CLAIM_URL", ""))
+    if not windows:
+        # GitHub Runner's GITHUB_ACTIONS=true is inherited by RCA commands;
+        # distinguish the reviewed RCA child without changing the Runner.
+        home = Path(env.get("HOME") or Path.home())
+        registration_env["SESSION_ACTION_RCA"] = "1"
+        registration_env["BASH_ENV"] = str(home / ".config/session-actions/rca-env.bash")
+        registration_env["PATH"] = os.pathsep.join((
+            str(home / ".local/bin"),
+            str(home / ".local/session-actions/npm/bin"),
+            env.get("PATH") or os.defpath,
+        ))
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
     tag, sha, url = select_release(target, extension, opener)
