@@ -103,7 +103,7 @@ if [[ "${GITHUB_ACTIONS:-}" == true &&
       -f "$HOME/.config/session-actions/rca-env.bash" ]]; then
   . "$HOME/.config/session-actions/rca-env.bash"
 else
-  unset BASH_ENV SESSION_ACTION_RCA
+  unset GH_TOKEN CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BASH_ENV SESSION_ACTION_RCA
 fi
 exec /bin/bash -c "$2"
 SHELL
