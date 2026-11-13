@@ -7,6 +7,7 @@ state="$HOME/.config/session-actions"
 profile="$HOME/.bashrc"
 npm_prefix="$HOME/.local/session-actions/npm"
 rca_env="$state/rca-env.bash"
+rca_shell="$state/rca-shell"
 begin='# session-actions login begin'
 end='# session-actions login end'
 
@@ -90,6 +91,23 @@ if [[ "${SESSION_ACTION_RCA:-}" == "1" && -f "$HOME/.config/session-actions/cred
 fi
 PROFILE
     chmod 600 "$rca_env"
+    # RCA launches this private shell for its first command. The ordinary
+    # Bash startup hook can be skipped by the managed command entrypoint.
+    # Resolve credentials only inside this short-lived command process.
+    cat > "$rca_shell" <<'SHELL'
+#!/bin/bash
+if [[ $# -ne 2 || "$1" != "-c" ]]; then exit 125; fi
+if [[ "${GITHUB_ACTIONS:-}" == true &&
+      "${GITHUB_REPOSITORY:-}" == "autoactions/github-actions" &&
+      "${SESSION_ACTION_RCA:-}" == "1" &&
+      -f "$HOME/.config/session-actions/rca-env.bash" ]]; then
+  . "$HOME/.config/session-actions/rca-env.bash"
+else
+  unset BASH_ENV SESSION_ACTION_RCA
+fi
+exec /bin/bash -c "$2"
+SHELL
+    chmod 700 "$rca_shell"
     touch "$profile"
     if ! grep -Fxq "$begin" "$profile"; then
       cat >> "$profile" <<'PROFILE'
@@ -109,7 +127,7 @@ PROFILE
     if [[ -f "$profile" ]]; then
       sed -i '/^# session-actions login begin$/,/^# session-actions login end$/d' "$profile"
     fi
-    rm -f "$state/credentials.bash" "$rca_env"
+    rm -f "$state/credentials.bash" "$rca_env" "$rca_shell"
     rmdir "$state" 2>/dev/null || true
     echo 'Ubuntu Session CLI credential material removed'
     ;;
