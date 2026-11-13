@@ -153,6 +153,27 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertTrue(opts['env']['PATH'].split(os.pathsep)[0].replace('\\', '/').endswith('/.local/bin'))
         self.assertTrue(opts['env']['PATH'].split(os.pathsep)[1].replace('\\', '/').endswith('/.local/session-actions/npm/bin'))
 
+
+    @unittest.skipUnless(os.name == "posix", "Private Ubuntu shell requires POSIX")
+    def test_linux_private_shell_selected_only_after_activation(self):
+        with tempfile.TemporaryDirectory() as root:
+            shell = Path(root) / ".config/session-actions/rca-shell"
+            shell.parent.mkdir(parents=True, mode=0o700)
+            shell.write_text("#!/bin/bash\\n")
+            shell.chmod(0o700)
+            result, calls = self.invoke(bundle(), {"HOME": root})
+            self.assertTrue(result)
+            self.assertEqual(calls[0][1]["env"]["SHELL"], str(shell))
+            shell.chmod(0o755)
+            result, calls = self.invoke(bundle(), {"HOME": root})
+            self.assertTrue(result)
+            self.assertNotEqual(calls[0][1]["env"].get("SHELL"), str(shell))
+            shell.unlink()
+            shell.symlink_to("/bin/bash")
+            result, calls = self.invoke(bundle(), {"HOME": root})
+            self.assertTrue(result)
+            self.assertNotEqual(calls[0][1]["env"].get("SHELL"), str(shell))
+
     def test_windows_matching_pin_launches_approved_windows_entrypoint(self):
         result, calls = self.invoke(bundle(windows=True), windows=True)
         self.assertTrue(result)
