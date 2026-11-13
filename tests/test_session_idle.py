@@ -1,5 +1,6 @@
 """Contract tests for bounded Ubuntu Session idle return, without real SSH or RCA."""
 import importlib.util
+import os
 from pathlib import Path
 import unittest
 import sys
@@ -18,6 +19,37 @@ class Clock:
 
 @unittest.skipUnless(sys.platform == "linux", "Ubuntu Runner idle policy only")
 class SessionIdleTests(unittest.TestCase):
+    def test_idle_setting_defaults_to_30_and_rejects_invalid_values(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(idle.idle_timeout_ms(), 30 * 60 * 1000)
+        for value, minutes in (("1", 1), ("5", 5), ("30", 30), ("300", 300)):
+            with self.subTest(value=value), mock.patch.dict(os.environ, {"SESSION_IDLE_MINUTES": value}):
+                self.assertEqual(idle.idle_timeout_ms(), minutes * 60 * 1000)
+        for value in ("", "0", "301", "-5", "5.5", "none", " 30", "9999"):
+            with self.subTest(value=value), mock.patch.dict(os.environ, {"SESSION_IDLE_MINUTES": value}):
+                with self.assertRaises(ValueError):
+                    idle.idle_timeout_ms()
+
+    def test_custom_idle_window_and_absolute_deadline(self):
+        clock = Clock(1000)
+        with mock.patch.dict(os.environ, {"SESSION_IDLE_MINUTES": "5"}), \
+             mock.patch.object(idle.time, 'time', clock.time), mock.patch.object(idle.time, 'sleep', clock.sleep), \
+             mock.patch.object(idle, 'read_agent', return_value={'state': 'idle', 'last_activity_ms': None}), \
+             mock.patch.object(idle, 'ssh_state', return_value='clear'), \
+             mock.patch.object(idle, 'prepare_idle_stop', return_value=True) as stopping:
+            self.assertEqual(idle.hold_until(1000 + 1200, 1000 * 1000), 'idle')
+            self.assertGreaterEqual(clock.now, 1300)
+            self.assertLess(clock.now, 1310)
+            stopping.assert_called_once()
+        clock = Clock(1000)
+        with mock.patch.dict(os.environ, {"SESSION_IDLE_MINUTES": "60"}), \
+             mock.patch.object(idle.time, 'time', clock.time), mock.patch.object(idle.time, 'sleep', clock.sleep), \
+             mock.patch.object(idle, 'read_agent', return_value={'state': 'idle', 'last_activity_ms': None}), \
+             mock.patch.object(idle, 'ssh_state', return_value='clear'), \
+             mock.patch.object(idle, 'prepare_idle_stop') as stopping:
+            self.assertEqual(idle.hold_until(1000 + 1200, 1000 * 1000), 'deadline')
+            stopping.assert_not_called()
+
     def test_idle_exit_after_thirty_minutes_not_before(self):
         clock=Clock(1000)
         with mock.patch.object(idle.time,'time',clock.time), mock.patch.object(idle.time,'sleep',clock.sleep), \

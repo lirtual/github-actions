@@ -10,7 +10,15 @@ import struct
 import subprocess
 import time
 
-IDLE_MS = 30 * 60 * 1000
+def idle_timeout_ms():
+    """Validate the Ubuntu Session idle threshold (1-300 minutes)."""
+    raw = os.getenv("SESSION_IDLE_MINUTES", "30")
+    if not raw.isascii() or not raw.isdecimal() or len(raw) > 3:
+        raise ValueError("invalid session idle minutes")
+    minutes = int(raw)
+    if not 1 <= minutes <= 300:
+        raise ValueError("invalid session idle minutes")
+    return minutes * 60 * 1000
 
 
 def reviewed_runner():
@@ -161,6 +169,7 @@ def restore_ssh_ingress():
 
 def prepare_idle_stop(ready_ms, now_ms, known_failure):
     """Freeze RCA admissions, stop SSH ingress, then validate both again."""
+    idle_ms = idle_timeout_ms()
     frozen = False
     ssh_touched = False
     success = False
@@ -171,7 +180,7 @@ def prepare_idle_stop(ready_ms, now_ms, known_failure):
             frozen = True
             fresh = read_agent()
             if (not fresh or fresh["state"] != "idle"
-                    or now_ms - max(ready_ms, fresh["last_activity_ms"] or ready_ms) < IDLE_MS):
+                    or now_ms - max(ready_ms, fresh["last_activity_ms"] or ready_ms) < idle_ms):
                 return False
         ssh_touched = True  # Restore even after a partially successful stop.
         if not stop_ssh_ingress() or ssh_state(final=True) != "clear":
@@ -180,7 +189,7 @@ def prepare_idle_stop(ready_ms, now_ms, known_failure):
             fresh = read_agent()
             if (not fresh or fresh["state"] != "idle"
                     or int(time.time() * 1000) -
-                    max(ready_ms, fresh["last_activity_ms"] or ready_ms) < IDLE_MS):
+                    max(ready_ms, fresh["last_activity_ms"] or ready_ms) < idle_ms):
                 return False
         success = True
         return True
@@ -194,6 +203,7 @@ def prepare_idle_stop(ready_ms, now_ms, known_failure):
 
 def hold_until(end_sec, ready_ms):
     """Never extends the absolute deadline captured by the Job's first step."""
+    idle_ms = idle_timeout_ms()
     failed = known_bootstrap_failure()
     last_busy_ms = ready_ms
     while time.time() < end_sec:
@@ -202,7 +212,7 @@ def hold_until(end_sec, ready_ms):
         ssh = ssh_state()
         if agent is None or agent["state"] != "idle" or ssh != "clear":
             last_busy_ms = now_ms
-        elif now_ms - max(ready_ms, last_busy_ms, agent["last_activity_ms"] or ready_ms) >= IDLE_MS:
+        elif now_ms - max(ready_ms, last_busy_ms, agent["last_activity_ms"] or ready_ms) >= idle_ms:
             try:
                 if prepare_idle_stop(max(ready_ms, last_busy_ms), now_ms, failed):
                     return "idle"

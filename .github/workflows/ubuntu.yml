@@ -55,6 +55,7 @@ jobs:
       CAPABILITY_ID: ${{ inputs.capability_id }}
       WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
       DURATION_MINUTES: ${{ inputs.duration_mode == 'repository' && (vars.SESSION_DURATION_MINUTES || '300') || inputs.duration_minutes }}
+      SESSION_IDLE_MINUTES: ${{ vars.SESSION_IDLE_MINUTES || '30' }}
       SESSION_TAILSCALE_HOSTNAME: ${{ inputs.session_mode == 'fixed' && 'session-ubuntu' || format('sa-{0}-a{1}', github.run_id, github.run_attempt) }}
     steps:
       - name: Capture job lifetime before checkout
