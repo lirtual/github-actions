@@ -59,6 +59,44 @@ export function submitSealedDropResult(sealed, env, { post = spawnSync } = {}) {
   return { status: 'drop_receipt_acknowledged' };
 }
 
+/** G4-only Wrangler output capture. The caller must check the CLI exit status;
+ * this function never invokes Wrangler or creates a temporary account.
+ * Treat parsing/transport failures as Unknown (never redeploy or retry).
+ */
+export function captureTemporaryDeployment(output, env, {
+  startedAt, finishedAt = Date.now(), post = spawnSync,
+} = {}) {
+  const unknown = () => { throw new DropRunnerError('drop_deploy_result_unknown'); };
+  if (typeof output !== 'string' || output.length > 65536 ||
+      !Number.isSafeInteger(startedAt) || !Number.isSafeInteger(finishedAt) ||
+      finishedAt < startedAt || finishedAt - startedAt > 15 * 60000 ||
+      !/^[ \t]*Temporary account ready:[ \t]*$/m.test(output)) unknown();
+
+  // Reject extra labelled lines even when the extra value is malformed.
+  for (const label of ['Account:', 'Claim within:', 'Claim URL:']) {
+    const prefix = new RegExp('^[ \\t]*' + label, 'gm');
+    if ([...output.matchAll(prefix)].length !== 1) unknown();
+  }
+  const exactlyOne = pattern => {
+    const matches = [...output.matchAll(pattern)];
+    if (matches.length !== 1) unknown();
+    return matches[0][1];
+  };
+  // Source: Cloudflare's documented unauthenticated Wrangler --temporary output.
+  // Fail closed on reused accounts, changed output formats, or ambiguous URLs.
+  exactlyOne(/^[ \t]*Account:[ \t]*[a-zA-Z0-9_-]{1,100}[ \t]+\((created)\)[ \t]*$/gm);
+  exactlyOne(/^[ \t]*Claim within:[ \t]*(60)[ \t]+minutes[ \t]*$/gm);
+  const claimUrl = exactlyOne(/^[ \t]*Claim URL:[ \t]*(https:\/\/dash\.cloudflare\.com\/claim-preview\?claimToken=[A-Za-z0-9_-]{16,1024})[ \t]*$/gm);
+  const previewUrl = exactlyOne(/^[ \t]*(https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+workers\.dev\/?)[ \t]*$/gm);
+  // Wrangler gives a relative 60-minute window, not an absolute expiry.
+  // Bound the delivered receipt from *before* account creation with a margin.
+  const expiresAt = startedAt + 55 * 60000;
+  if (expiresAt - finishedAt < 120000) unknown();
+  return deliverDropClaim({
+    attemptId: env.ATTEMPT_ID, previewUrl, claimUrl, expiresAt,
+  }, env, { post });
+}
+
 export function prepareDropStage(env, { stage = spawnSync, temporaryDirectory = tmpdir } = {}) {
   const { ATTEMPT_ID: attemptId, DROP_PRIVATE_KEY_PEM: privateKey } = env;
   if (!privateKey || typeof privateKey !== 'string')

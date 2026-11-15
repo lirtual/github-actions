@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCipheriv, generateKeyPairSync, publicEncrypt, randomBytes, constants } from 'node:crypto';
-import { prepareDropStage } from '../.github/scripts/drop_runner.mjs';
+import { prepareDropStage, captureTemporaryDeployment } from '../.github/scripts/drop_runner.mjs';
 import { dropAAD } from '../.github/scripts/drop_envelope.mjs';
 
 const attemptId = 'e47ec2a1-6c11-4ce7-90ea-f34c01984413';
@@ -87,4 +87,70 @@ test('workflow performs OIDC Claim before accessing encrypted input and private 
   assert.ok(!yaml.includes('environment: drop'));
   assert.ok(!yaml.includes('wrangler deploy'));
   assert.ok(!yaml.includes('autoactions'));
+});
+
+function wranglerFixture() {
+  return [
+    'Continuing means you accept Cloudflare Terms and Privacy Policy.',
+    'Temporary account ready:',
+    '  Account: example-name (created)',
+    '  Claim within:   60 minutes',
+    '  Claim URL:      https://dash.cloudflare.com/claim-preview?claimToken=' + 'a'.repeat(48),
+    'Uploaded drop-preview',
+    'Deployed drop-preview triggers',
+    '  https://drop-preview.example-name.workers.dev',
+  ].join('\n');
+}
+
+test('G4 captures documented Wrangler result and seals the bearer before callback', () => {
+  const startedAt = Date.now();
+  const raw = wranglerFixture();
+  let callbacks = 0;
+  const receipt = captureTemporaryDeployment(raw, {
+    ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+  }, {
+    startedAt, finishedAt: startedAt + 1000,
+    post: (_bin, args, options) => {
+      callbacks++;
+      assert.equal(args.length, 1);
+      assert.ok(!JSON.stringify(args).includes('claimToken'));
+      assert.ok(!JSON.stringify(options.env).includes('claimToken'));
+      assert.ok(!JSON.stringify(options).includes('claim-preview'));
+      const sealed = JSON.parse(options.input);
+      assert.equal(sealed.preview_url, 'https://drop-preview.example-name.workers.dev');
+      assert.equal(sealed.expires_at, startedAt + 55 * 60000);
+      assert.ok(!JSON.stringify(sealed).includes('claimToken'));
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(receipt, { status: 'drop_receipt_acknowledged' });
+  assert.equal(callbacks, 1);
+});
+
+test('G4 refuses ambiguous, reused, unverified or expired Wrangler output', () => {
+  const startedAt = Date.now();
+  const raw = wranglerFixture();
+  const failures = [
+    raw.replace('(created)', '(reused)'),
+    raw.replace('60 minutes', '59 minutes'),
+    raw.replace('Claim URL:', 'Claim URL: invalid\n  Claim URL:'),
+    raw.replace('https://drop-preview.example-name.workers.dev', 'http://evil.invalid'),
+    raw + '\n  https://second-account.workers.dev',
+    raw.slice(0, 16),
+    'X'.repeat(65537),
+  ];
+  for (const output of failures) {
+    assert.throws(() => captureTemporaryDeployment(output, {
+      ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+    }, {
+      startedAt, finishedAt: startedAt + 1000,
+      post: () => { throw Error('no callback on failed parse'); },
+    }), /drop_deploy_result_unknown/);
+  }
+  assert.throws(() => captureTemporaryDeployment(raw, {
+    ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+  }, {
+    startedAt: startedAt - 60 * 60000, finishedAt: startedAt,
+    post: () => { throw Error('no callback on expired receipt'); },
+  }), /drop_deploy_result_unknown/);
 });
