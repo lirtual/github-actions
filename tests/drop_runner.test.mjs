@@ -112,6 +112,7 @@ test('G4 captures documented Wrangler result and seals the bearer before callbac
     ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
   }, {
     startedAt, finishedAt: startedAt + 1000,
+    probe: () => ({ status: 0, stdout: '200' }),
     post: (_bin, args, options) => {
       callbacks++;
       assert.equal(args.length, 1);
@@ -127,6 +128,55 @@ test('G4 captures documented Wrangler result and seals the bearer before callbac
   });
   assert.deepEqual(receipt, { status: 'drop_receipt_acknowledged' });
   assert.equal(callbacks, 1);
+});
+
+test('G4 verifies public HTTP 200 after transient 404 without exposing claim', () => {
+  const at = Date.now();
+  const seen = [], waits = [];
+  let callbacks = 0;
+  const result = captureTemporaryDeployment(wranglerFixture(), {
+    ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+  }, {
+    startedAt: at, finishedAt: at + 1000,
+    probe: (command, args, options) => {
+      assert.equal(command, 'curl');
+      assert.equal(args[0], '-q');
+      assert.ok(args.includes('--max-redirs'));
+      assert.equal(args.at(-1), 'https://drop-preview.example-name.workers.dev');
+      assert.deepEqual(Object.keys(options.env), ['PATH']);
+      assert.ok(!JSON.stringify({args, options}).includes('claimToken'));
+      const response = ['404', '503', '200'][seen.length];
+      seen.push(response);
+      return { status: 0, stdout: response };
+    },
+    wait: (command, args) => {
+      assert.equal(command, 'sleep');
+      assert.deepEqual(args, ['8']);
+      waits.push(1);
+      return { status: 0 };
+    },
+    post: () => { callbacks++; return { status: 0 }; },
+  });
+  assert.deepEqual(result, { status: 'drop_receipt_acknowledged' });
+  assert.deepEqual(seen, ['404', '503', '200']);
+  assert.equal(waits.length, 2);
+  assert.equal(callbacks, 1);
+});
+
+test('G4 inaccessible preview becomes Unknown without callback or redeploy', () => {
+  const at = Date.now();
+  let probes = 0, waits = 0, callbacks = 0;
+  assert.throws(() => captureTemporaryDeployment(wranglerFixture(), {
+    ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+  }, {
+    startedAt: at, finishedAt: at + 1000,
+    probe: () => { probes++; return { status: 0, stdout: '404' }; },
+    wait: () => { waits++; return { status: 0 }; },
+    post: () => { callbacks++; return { status: 0 }; },
+  }), /drop_deploy_result_unknown/);
+  assert.equal(probes, 12);
+  assert.equal(waits, 11);
+  assert.equal(callbacks, 0);
 });
 
 test('G4 refuses ambiguous, reused, unverified or expired Wrangler output', () => {
@@ -191,6 +241,7 @@ test('G4 full staged→mock Wrangler→sealed callback chain does not expose cre
       assert.equal(options.encoding, 'utf8');
       return { status: 0, stdout: wranglerFixture(), stderr: '' };
     },
+    probe: () => ({ status: 0, stdout: '200' }),
     post: (_command, _argv, options) => {
       posted++;
       assert.ok(!JSON.stringify(options).includes('claimToken'));

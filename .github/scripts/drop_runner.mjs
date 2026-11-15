@@ -59,12 +59,37 @@ export function submitSealedDropResult(sealed, env, { post = spawnSync } = {}) {
   return { status: 'drop_receipt_acknowledged' };
 }
 
+/** Cloudflare may return 404 immediately after Wrangler completes. Check the
+ * actual public URL with up to 12 credential-free GETs.
+ * Never follow redirects or redeploy an Unknown result.
+ */
+function verifyTemporaryPreview(url, { probe = spawnSync, wait = spawnSync } = {}) {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const checked = probe('curl', [
+      '-q', '--silent', '--max-time', '8', '--max-redirs', '0',
+      '--output', '/dev/null', '--write-out', '%{http_code}', url,
+    ], {
+      env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8',
+      timeout: 10000, maxBuffer: 256,
+    });
+    if (!checked.error && checked.status === 0 && checked.stdout === '200') return;
+    if (attempt < 11) {
+      const slept = wait('sleep', ['8'], {
+        env: { PATH: '/usr/bin:/bin' }, timeout: 9000,
+      });
+      if (slept.error || slept.status !== 0) break;
+    }
+  }
+  throw new DropRunnerError('drop_deploy_result_unknown');
+}
+
 /** G4-only Wrangler output capture. The caller must check the CLI exit status;
  * this function never invokes Wrangler or creates a temporary account.
  * Treat parsing/transport failures as Unknown (never redeploy or retry).
  */
 export function captureTemporaryDeployment(output, env, {
   startedAt, finishedAt = Date.now(), post = spawnSync,
+  probe = spawnSync, wait = spawnSync,
 } = {}) {
   const unknown = () => { throw new DropRunnerError('drop_deploy_result_unknown'); };
   if (typeof output !== 'string' || output.length > 65536 ||
@@ -88,6 +113,9 @@ export function captureTemporaryDeployment(output, env, {
   exactlyOne(/^[ \t]*Claim within:[ \t]*(60)[ \t]+minutes[ \t]*$/gm);
   const claimUrl = exactlyOne(/^[ \t]*Claim URL:[ \t]*(https:\/\/dash\.cloudflare\.com\/claim-preview\?claimToken=[A-Za-z0-9_-]{16,1024})[ \t]*$/gm);
   const previewUrl = exactlyOne(/^[ \t]*(https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+workers\.dev\/?)[ \t]*$/gm);
+  // CLI success does not establish public accessibility (actual 404 observed).
+  // Read-only probes cannot create a second account or expose Claim bearer.
+  verifyTemporaryPreview(previewUrl, { probe, wait });
   // Wrangler gives a relative 60-minute window, not an absolute expiry.
   // Bound the delivered receipt from *before* account creation with a margin.
   const expiresAt = startedAt + 55 * 60000;
@@ -99,6 +127,7 @@ export function captureTemporaryDeployment(output, env, {
 
 export function prepareDropStage(env, {
   stage = spawnSync, deploy = spawnSync, post = spawnSync,
+  probe = spawnSync, wait = spawnSync,
   deploymentAuthorized = false, temporaryDirectory = tmpdir,
 } = {}) {
   const { ATTEMPT_ID: attemptId, DROP_PRIVATE_KEY_PEM: privateKey } = env;
@@ -166,7 +195,7 @@ export function prepareDropStage(env, {
       throw new DropRunnerError('drop_deploy_unknown');
     return captureTemporaryDeployment(
       deployed.stdout + '\n' + deployed.stderr, env,
-      { startedAt, finishedAt, post },
+      { startedAt, finishedAt, post, probe, wait },
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
