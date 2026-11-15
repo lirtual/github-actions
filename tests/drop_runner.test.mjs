@@ -62,8 +62,10 @@ test('real Runner path cleans staged files, does not deploy, and hides locator',
     assert.ok(!JSON.stringify(opts.env).includes(file.download_url));
     return { status: 0 };
   };
-  assert.throws(() => prepareDropStage(fixture(), { stage }),
-    error => error.message === 'drop_owner_receipt_not_ready');
+  assert.throws(() => prepareDropStage(fixture(), { stage,
+    deploy: () => { throw Error('disabled workflow must not create account'); },
+  }),
+    error => error.message === 'drop_deploy_not_authorized');
   assert.equal(executions, 1);
   const after = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
   assert.deepEqual(after, before);
@@ -153,4 +155,82 @@ test('G4 refuses ambiguous, reused, unverified or expired Wrangler output', () =
     startedAt: startedAt - 60 * 60000, finishedAt: startedAt,
     post: () => { throw Error('no callback on expired receipt'); },
   }), /drop_deploy_result_unknown/);
+});
+
+test('G4 full staged→mock Wrangler→sealed callback chain does not expose credentials', () => {
+  const before = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
+  const env = { ...fixture(), DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+    DISPATCH_ID: attemptId, CAPABILITY_ID: 'github.action',
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'opaque-fixture' };
+  let staged = 0, deployed = 0, posted = 0;
+  const result = prepareDropStage(env, {
+    deploymentAuthorized: true,
+    stage: (_command, _argv, options) => {
+      staged++;
+      assert.equal(JSON.parse(options.input).download_url, file.download_url);
+      assert.ok(!JSON.stringify(options.env).includes(file.download_url));
+      return { status: 0 };
+    },
+    deploy: (command, argv, options) => {
+      deployed++;
+      assert.equal(command, 'wrangler');
+      assert.equal(argv[0], 'deploy');
+      assert.equal(argv[1], '--temporary');
+      assert.equal(argv[2], '--assets');
+      assert.ok(argv[3].endsWith('/site'));
+      assert.deepEqual(argv.slice(4), ['--name', 'drop-preview']);
+      assert.ok(!JSON.stringify({ argv, options }).includes(privateKey));
+      assert.ok(!JSON.stringify({ argv, options }).includes(file.download_url));
+      assert.ok(!JSON.stringify({ argv, options }).includes('opaque-fixture'));
+      assert.ok(options.env.HOME.startsWith(options.cwd + '/'));
+      assert.ok(options.env.XDG_CONFIG_HOME.startsWith(options.cwd + '/'));
+      assert.deepEqual(Object.keys(options.env).sort(), [
+        'CI', 'FORCE_COLOR', 'HOME', 'NO_COLOR', 'PATH', 'XDG_CONFIG_HOME',
+      ]);
+      assert.equal(options.encoding, 'utf8');
+      return { status: 0, stdout: wranglerFixture(), stderr: '' };
+    },
+    post: (_command, _argv, options) => {
+      posted++;
+      assert.ok(!JSON.stringify(options).includes('claimToken'));
+      assert.ok(!JSON.stringify(options).includes('claim-preview'));
+      assert.equal(JSON.parse(options.input).drop_claim_v, 1);
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(result, { status: 'drop_receipt_acknowledged' });
+  assert.equal(staged, 1);
+  assert.equal(deployed, 1);
+  assert.equal(posted, 1);
+  const after = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
+  assert.deepEqual(after, before);
+});
+
+test('failed static staging blocks even an explicitly mocked deployer', () => {
+  let deployed = 0;
+  assert.throws(() => prepareDropStage(fixture(), {
+    deploymentAuthorized: true,
+    stage: () => ({ status: 1 }),
+    deploy: () => { deployed++; throw Error('must not create account'); },
+  }), /drop_stage_failed/);
+  assert.equal(deployed, 0);
+});
+
+test('G4 uncertain CLI exits never retry or emit a callback', () => {
+  for (const outcome of [
+    { status: 1, stdout: wranglerFixture(), stderr: 'opaque failure' },
+    { status: null, error: new Error('timeout'), stdout: '', stderr: '' },
+    { status: 0, stdout: 'incomplete output', stderr: '' },
+  ]) {
+    let deployed = 0;
+    assert.throws(() => prepareDropStage({
+      ...fixture(), DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+    }, {
+      deploymentAuthorized: true,
+      stage: () => ({ status: 0 }),
+      deploy: () => { deployed++; return outcome; },
+      post: () => { throw Error('must not callback an uncertain result'); },
+    }), /drop_deploy_unknown|drop_deploy_result_unknown/);
+    assert.equal(deployed, 1);
+  }
 });

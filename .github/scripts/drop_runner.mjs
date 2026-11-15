@@ -1,6 +1,6 @@
-/** G3 only: after successful signed Claim, stage one selected file and stop.
- * G4 Owner-only encrypted claim receipt and G5 temporary deployment are NOT
- * connected. No real Cloudflare account creation, Terms acceptance, or upload.
+/** Spec #87: Claim-gated file stage and synthetic deploy→sealed-result integration.
+ * Production CLI remains deployment-disabled until a separate reviewed
+ * Cloudflare Terms/account-creation authorization is wired into the Action.
  */
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -97,7 +97,10 @@ export function captureTemporaryDeployment(output, env, {
   }, env, { post });
 }
 
-export function prepareDropStage(env, { stage = spawnSync, temporaryDirectory = tmpdir } = {}) {
+export function prepareDropStage(env, {
+  stage = spawnSync, deploy = spawnSync, post = spawnSync,
+  deploymentAuthorized = false, temporaryDirectory = tmpdir,
+} = {}) {
   const { ATTEMPT_ID: attemptId, DROP_PRIVATE_KEY_PEM: privateKey } = env;
   if (!privateKey || typeof privateKey !== 'string')
     throw new DropRunnerError('drop_private_key_unavailable');
@@ -126,9 +129,45 @@ export function prepareDropStage(env, { stage = spawnSync, temporaryDirectory = 
     });
     if (result.error || result.status !== 0)
       throw new DropRunnerError('drop_stage_failed');
-    // Deliberately fail closed here. Adding real temporary deployment before
-    // the G4 encrypted claim receipt would expose a bearer claim link.
-    throw new DropRunnerError('drop_owner_receipt_not_ready');
+    // The live workflow has no authorization switch. A test may supply a
+    // mock deployer here; the normal CLI path cannot create an account.
+    if (!deploymentAuthorized)
+      throw new DropRunnerError('drop_deploy_not_authorized');
+
+    // Isolate Wrangler's temporary credentials from every other Job and user.
+    const isolatedHome = join(root, 'wrangler-home');
+    const isolatedConfig = join(root, 'wrangler-config');
+    mkdirSync(isolatedHome, { mode: 0o700 });
+    mkdirSync(isolatedConfig, { mode: 0o700 });
+    const startedAt = Date.now();
+    // No shell, no inherited Cloudflare/GitHub tokens, and no terminal output.
+    const deployed = deploy('wrangler', [
+      'deploy', '--temporary', '--assets', destination,
+      '--name', 'drop-preview',
+    ], {
+      cwd: root,
+      env: {
+        PATH: env.PATH || '/usr/bin:/bin',
+        HOME: isolatedHome,
+        XDG_CONFIG_HOME: isolatedConfig,
+        CI: 'true',
+        NO_COLOR: '1',
+        FORCE_COLOR: '0',
+      },
+      encoding: 'utf8',
+      timeout: 10 * 60000,
+      maxBuffer: 65536,
+    });
+    const finishedAt = Date.now();
+    // Nonzero/timeout can still mean that an account was created: Unknown,
+    // never retry the same Attempt, and never forward raw stdout/stderr.
+    if (deployed.error || deployed.status !== 0 ||
+        typeof deployed.stdout !== 'string' || typeof deployed.stderr !== 'string')
+      throw new DropRunnerError('drop_deploy_unknown');
+    return captureTemporaryDeployment(
+      deployed.stdout + '\n' + deployed.stderr, env,
+      { startedAt, finishedAt, post },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

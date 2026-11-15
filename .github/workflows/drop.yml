@@ -29,8 +29,8 @@ on:
         required: false
         default: ''
 
-# Review-only G3 staging. Do not dispatch a real file until G4 Owner receipt
-# and separate Cloudflare Terms/deployment authorization have been completed.
+# Review-only G3 staging with simulated G4 deployment/receipt tests.
+# The live CLI intentionally leaves temporary account creation disabled.
 env:
   WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: task
@@ -62,10 +62,14 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/session_action.py claim
 
-      - name: Open Attempt-bound envelope and stage bounded static site
+      - name: Stage Attempt-bound static site (external deployment disabled)
         shell: bash
         env:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          CAPABILITY_ID: ${{ inputs.capability_id }}
+          WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
+          DROP_RECEIPT_PUBLIC_KEY_PEM: ${{ vars.DROP_RECEIPT_PUBLIC_KEY_PEM }}
           DROP_PART_0: ${{ inputs.drop_part_0 }}
           DROP_PART_1: ${{ inputs.drop_part_1 }}
           DROP_PART_2: ${{ inputs.drop_part_2 }}
