@@ -143,7 +143,7 @@ export function prepareDropStage(env, {
     // No shell, no inherited Cloudflare/GitHub tokens, and no terminal output.
     const deployed = deploy('wrangler', [
       'deploy', '--temporary', '--assets', destination,
-      '--name', 'drop-preview',
+      '--name', 'drop-preview', '--compatibility-date', '2026-11-13',
     ], {
       cwd: root,
       env: {

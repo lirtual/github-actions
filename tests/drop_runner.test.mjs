@@ -178,7 +178,8 @@ test('G4 full staged→mock Wrangler→sealed callback chain does not expose cre
       assert.equal(argv[1], '--temporary');
       assert.equal(argv[2], '--assets');
       assert.ok(argv[3].endsWith('/site'));
-      assert.deepEqual(argv.slice(4), ['--name', 'drop-preview']);
+      assert.deepEqual(argv.slice(4), ['--name', 'drop-preview',
+        '--compatibility-date', '2026-11-13']);
       assert.ok(!JSON.stringify({ argv, options }).includes(privateKey));
       assert.ok(!JSON.stringify({ argv, options }).includes(file.download_url));
       assert.ok(!JSON.stringify({ argv, options }).includes('opaque-fixture'));
