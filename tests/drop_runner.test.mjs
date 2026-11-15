@@ -88,6 +88,8 @@ test('workflow performs OIDC Claim before accessing encrypted input and private 
   assert.ok(yaml.indexOf('session_action.py claim') < yaml.indexOf('DROP_PRIVATE_KEY_PEM:'));
   assert.ok(!yaml.includes('environment: drop'));
   assert.ok(yaml.includes('wrangler@4.162.0'));
+  assert.ok(yaml.includes('--ignore-scripts'));
+  assert.ok(yaml.includes('$RUNNER_TEMP/drop-cli'));
   assert.ok(yaml.includes("vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED == 'true'"));
   assert.ok(yaml.includes('DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED: ${{ vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED }}'));
   assert.ok(!yaml.includes('wrangler deploy'));

@@ -65,7 +65,10 @@ jobs:
       - name: Install reviewed Wrangler CLI for an authorized deployment
         if: ${{ vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED == 'true' }}
         shell: bash
-        run: npm install --global --no-audit --no-fund wrangler@4.162.0
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/drop-cli" --ignore-scripts --no-audit --no-fund wrangler@4.162.0
+          printf '%s\n' "$RUNNER_TEMP/drop-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Stage and optionally deploy Attempt-bound static site
         shell: bash
