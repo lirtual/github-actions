@@ -37,6 +37,7 @@ function seal({
   }, key);
   const envelope = {
     v: 1,
+    contract_digest: contract,
     wrapped_key: wrapped.toString('base64url'),
     nonce: nonce.toString('base64url'),
     ciphertext: sealed.toString('base64url'),
@@ -62,6 +63,20 @@ test('maximum selected-file URL fits 3 GitHub inputs and round trips', () => {
   assert.equal(segments.length, 3);
   assert.ok(segments.every(s => s.length <= 3500));
   assert.deepEqual(open(segments), baseFile);
+});
+
+test('Runner derives and authenticates the reviewed digest without an extra input', () => {
+  assert.deepEqual(openDropEnvelope(seal(), {
+    privateKey, attemptId, now: issuedAt + 1000,
+  }), baseFile);
+});
+
+test('tampered plaintext contract digest fails AES-GCM verification', () => {
+  const sealed = seal();
+  const outer = JSON.parse(Buffer.from(sealed.join(''), 'base64url').toString());
+  outer.contract_digest = 'b'.repeat(64);
+  const encoded = Buffer.from(JSON.stringify(outer)).toString('base64url');
+  reject(() => open([encoded.slice(0, 3500), encoded.slice(3500, 7000), encoded.slice(7000)]));
 });
 
 test('an altered encrypted segment fails closed', () => {
@@ -136,6 +151,7 @@ test('Worker-style WebCrypto RSA-OAEP and AES-GCM bytes open in Runner Node', as
   const wrappedKey = Buffer.from(await subtle.encrypt({ name: 'RSA-OAEP' }, workerKey, contentKey));
   const encoded = Buffer.from(JSON.stringify({
     v: 1,
+    contract_digest: contractDigest,
     nonce: iv.toString('base64url'),
     ciphertext: ciphertext.toString('base64url'),
     wrapped_key: wrappedKey.toString('base64url'),

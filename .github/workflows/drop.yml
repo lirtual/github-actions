@@ -1,0 +1,75 @@
+name: drop
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_id:
+        description: Server-owned physical Attempt ID
+        type: string
+        required: true
+      dispatch_id:
+        description: Server-owned dispatch correlation ID
+        type: string
+        required: true
+      capability_id:
+        description: Server-owned execution capability
+        type: string
+        required: true
+      drop_part_0:
+        description: Encrypted selected-file envelope (part 0)
+        type: string
+        required: true
+      drop_part_1:
+        description: Encrypted selected-file envelope (part 1)
+        type: string
+        required: false
+        default: ''
+      drop_part_2:
+        description: Encrypted selected-file envelope (part 2)
+        type: string
+        required: false
+        default: ''
+
+# Review-only G3 staging. Do not dispatch a real file until G4 Owner receipt
+# and separate Cloudflare Terms/deployment authorization have been completed.
+env:
+  WORKFLOW_ACTION_PUBLIC: "true"
+  WORKFLOW_ACTION_TYPE: task
+  WORKFLOW_ACTION_OUTPUT_KIND: none
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  drop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout dispatched revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Claim exact approved physical Task before reading file or Secrets
+        shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          CAPABILITY_ID: ${{ inputs.capability_id }}
+          WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/session_action.py claim
+
+      - name: Open Attempt-bound envelope and stage bounded static site
+        shell: bash
+        env:
+          ATTEMPT_ID: ${{ inputs.attempt_id }}
+          DROP_PART_0: ${{ inputs.drop_part_0 }}
+          DROP_PART_1: ${{ inputs.drop_part_1 }}
+          DROP_PART_2: ${{ inputs.drop_part_2 }}
+          DROP_PRIVATE_KEY_PEM: ${{ secrets.DROP_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/drop_runner.mjs

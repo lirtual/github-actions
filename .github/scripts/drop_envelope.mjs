@@ -43,7 +43,6 @@ export function dropAAD(attemptId, contractDigest) {
 /** Never includes the original URL in returned errors, even on crypto failures. */
 export function openDropEnvelope(parts, { privateKey, attemptId, contractDigest, now = Date.now() }) {
   try {
-    const aad = dropAAD(attemptId, contractDigest);
     if (!Array.isArray(parts) || parts.length !== 3 ||
         parts.some(part => typeof part !== 'string' || part.length > MAX_PART_BYTES) ||
         !Number.isSafeInteger(now)) throw new DropEnvelopeError();
@@ -54,8 +53,11 @@ export function openDropEnvelope(parts, { privateKey, attemptId, contractDigest,
       throw new DropEnvelopeError();
     const encoded = parts.join('');
     const envelope = JSON.parse(b64url(encoded, 32, MAX_ENVELOPE_BYTES).toString('utf8'));
-    if (!keysAre(envelope, ['v', 'wrapped_key', 'nonce', 'ciphertext']) ||
-        envelope.v !== 1) throw new DropEnvelopeError();
+    if (!keysAre(envelope, ['v', 'contract_digest', 'wrapped_key', 'nonce', 'ciphertext']) ||
+        envelope.v !== 1 || !DIGEST.test(envelope.contract_digest) ||
+        (contractDigest !== undefined && contractDigest.toLowerCase() !== envelope.contract_digest))
+      throw new DropEnvelopeError();
+    const aad = dropAAD(attemptId, envelope.contract_digest);
     const nonce = b64url(envelope.nonce, 16, 16);
     const cipher = b64url(envelope.ciphertext, 24, 10000);
     const wrapped = b64url(envelope.wrapped_key, 340, 800);
@@ -76,7 +78,7 @@ export function openDropEnvelope(parts, { privateKey, attemptId, contractDigest,
     const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext));
     if (!keysAre(payload, ['attemptId', 'contractDigest', 'issuedAt', 'expiresAt', 'file']) ||
         payload.attemptId !== attemptId.toLowerCase() ||
-        payload.contractDigest !== contractDigest.toLowerCase() ||
+        payload.contractDigest !== envelope.contract_digest ||
         !Number.isSafeInteger(payload.issuedAt) ||
         !Number.isSafeInteger(payload.expiresAt) ||
         payload.issuedAt > now + 60000 ||

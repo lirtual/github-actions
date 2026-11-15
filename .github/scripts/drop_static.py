@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 import pathlib
+import sys
 import re
 import stat
 import urllib.parse
@@ -194,3 +196,20 @@ def stage_static_site(descriptor, destination, opener=OPENER, now=None):
     else:
         _stage_zip(data, root)
     return {"file_count": sum(p.is_file() for p in root.rglob("*"))}
+
+
+if __name__ == "__main__":
+    # Runner passes the short-lived signed descriptor on stdin, never in argv,
+    # files, subprocess environments, step outputs, or a diagnostic message.
+    try:
+        if len(sys.argv) != 2:
+            raise DropInputError("stage_arguments_invalid")
+        descriptor = json.load(sys.stdin)
+        count = stage_static_site(descriptor, sys.argv[1])["file_count"]
+        print(f"drop_staged_file_count={count}")
+    except DropInputError as error:
+        print(f"drop_stage_error={error}", file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        print("drop_stage_error=internal", file=sys.stderr)
+        sys.exit(1)
