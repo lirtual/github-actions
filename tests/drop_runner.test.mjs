@@ -51,7 +51,7 @@ test('offline preflight can verify signed envelope without file read', () => {
   } finally { process.argv = previous; }
 });
 
-test('real Runner path cleans staged files, does not deploy, and hides locator', () => {
+test('disabled real Runner never stages or deploys a selected file', () => {
   const before = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
   let executions = 0;
   const stage = (_bin, argv, opts) => {
@@ -66,7 +66,7 @@ test('real Runner path cleans staged files, does not deploy, and hides locator',
     deploy: () => { throw Error('disabled workflow must not create account'); },
   }),
     error => error.message === 'drop_deploy_not_authorized');
-  assert.equal(executions, 1);
+  assert.equal(executions, 0);
   const after = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
   assert.deepEqual(after, before);
 });
@@ -87,6 +87,9 @@ test('workflow performs OIDC Claim before accessing encrypted input and private 
   assert.ok(yaml.includes('WORKFLOW_ACTION_OUTPUT_KIND: none'));
   assert.ok(yaml.indexOf('session_action.py claim') < yaml.indexOf('DROP_PRIVATE_KEY_PEM:'));
   assert.ok(!yaml.includes('environment: drop'));
+  assert.ok(yaml.includes('wrangler@4.162.0'));
+  assert.ok(yaml.includes("vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED == 'true'"));
+  assert.ok(yaml.includes('DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED: ${{ vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED }}'));
   assert.ok(!yaml.includes('wrangler deploy'));
   assert.ok(!yaml.includes('autoactions'));
 });
@@ -211,10 +214,10 @@ test('G4 full staged→mock Wrangler→sealed callback chain does not expose cre
   const before = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
   const env = { ...fixture(), DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
     DISPATCH_ID: attemptId, CAPABILITY_ID: 'github.action',
-    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'opaque-fixture' };
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'opaque-fixture',
+    DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED: 'true' };
   let staged = 0, deployed = 0, posted = 0;
   const result = prepareDropStage(env, {
-    deploymentAuthorized: true,
     stage: (_command, _argv, options) => {
       staged++;
       assert.equal(JSON.parse(options.input).download_url, file.download_url);

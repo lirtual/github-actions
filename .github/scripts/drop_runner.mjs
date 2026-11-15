@@ -1,6 +1,6 @@
 /** Spec #87: Claim-gated file stage and synthetic deploy→sealed-result integration.
- * Production CLI remains deployment-disabled until a separate reviewed
- * Cloudflare Terms/account-creation authorization is wired into the Action.
+ * Production CLI defaults to deployment-disabled. The reviewed repository
+ * variable opt-in is separate from each request's Cloudflare Terms consent.
  */
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -128,7 +128,8 @@ export function captureTemporaryDeployment(output, env, {
 export function prepareDropStage(env, {
   stage = spawnSync, deploy = spawnSync, post = spawnSync,
   probe = spawnSync, wait = spawnSync,
-  deploymentAuthorized = false, temporaryDirectory = tmpdir,
+  deploymentAuthorized = env.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED === 'true',
+  temporaryDirectory = tmpdir,
 } = {}) {
   const { ATTEMPT_ID: attemptId, DROP_PRIVATE_KEY_PEM: privateKey } = env;
   if (!privateKey || typeof privateKey !== 'string')
@@ -143,6 +144,9 @@ export function prepareDropStage(env, {
     // No file read and no external network call in CI/offline preflight.
     return { status: 'drop_envelope_verified' };
   }
+  // No source download, staging or new Cloudflare account without opt-in.
+  if (!deploymentAuthorized)
+    throw new DropRunnerError('drop_deploy_not_authorized');
   const root = mkdtempSync(join(temporaryDirectory(), 'drop-stage-'));
   try {
     const destination = join(root, 'site');
@@ -158,11 +162,6 @@ export function prepareDropStage(env, {
     });
     if (result.error || result.status !== 0)
       throw new DropRunnerError('drop_stage_failed');
-    // The live workflow has no authorization switch. A test may supply a
-    // mock deployer here; the normal CLI path cannot create an account.
-    if (!deploymentAuthorized)
-      throw new DropRunnerError('drop_deploy_not_authorized');
-
     // Isolate Wrangler's temporary credentials from every other Job and user.
     const isolatedHome = join(root, 'wrangler-home');
     const isolatedConfig = join(root, 'wrangler-config');
