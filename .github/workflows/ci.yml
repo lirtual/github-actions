@@ -29,7 +29,7 @@ jobs:
           python3 -m py_compile .github/scripts/session_action.py
           python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Verify Drop encrypted handoff contract (no external writes)
-        run: node --test tests/drop_envelope.test.mjs tests/drop_runner.test.mjs
+        run: node --test tests/drop_envelope.test.mjs tests/drop_runner.test.mjs tests/drop_receipt.test.mjs
       - name: Verify pinned cloudflared supports protected Quick Tunnels
         shell: bash
         run: |
