@@ -6,6 +6,7 @@ import pathlib
 import stat
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / ".github/scripts/drop_static.py"
@@ -110,26 +111,78 @@ class DropStaticTests(unittest.TestCase):
                     drop.stage_static_site(file, temp, opener=FakeOpener(data), now=NOW)
                 self.assertEqual(str(caught.exception), "file_type_unverified")
 
-    def test_source_allowlist(self):
+    def test_public_https_hosts_are_not_enumerated(self):
         self.assertEqual(drop.approved_chatgpt_attachment(descriptor(), NOW), SOURCE)
-        for url in ("https://evil.example/secret",
-                    "http://files.oaiusercontent.com/fixture",
-                    "https://files.oaiusercontent.com.evil.example/fixture",
+        for url in ("https://files.oaiusercontent.com.evil.example/fixture",
+                    "https://cdn.example.com/fixture?token=opaque",
+                    "https://bucket.s3.amazonaws.com/file.html",
+                    "https://oaisdmntpr1.blob.core.windows.net/c/blob"):
+            with self.subTest(url=url):
+                self.assertEqual(drop.approved_chatgpt_attachment(descriptor(url=url), NOW), url)
+        for url in ("http://files.oaiusercontent.com/fixture",
+                    "https://localhost/fixture", "https://127.0.0.1/fixture",
                     "https://files.oaiusercontent.com:8443/fixture",
+                    "https://user:secret@public.example/fixture",
                     "https://files.oaiusercontent.com/fixture#fragment"):
             with self.subTest(url=url), self.assertRaises(drop.DropInputError):
                 drop.approved_chatgpt_attachment(descriptor(url=url), NOW)
 
-    def test_azure_blob_sas_requires_read_and_valid_expiration(self):
+    def test_optional_azure_expiry_is_checked_without_requiring_sas(self):
         base = "https://oaisdmntpr1.blob.core.windows.net/c/blob"
         valid = base + "?sig=opaque&sv=2026-01-01&se=2030-01-01T00%3A00%3A00Z&sp=r&sr=b"
         self.assertEqual(drop.approved_chatgpt_attachment(descriptor(url=valid), NOW), valid)
-        for bad in (valid.replace("sp=r", "sp=w"),
-                    valid.replace("2030", "2020"),
-                    valid.replace("sig=opaque", "sig="),
-                    valid + "&sig=duplicate"):
+        self.assertEqual(drop.approved_chatgpt_attachment(descriptor(url=base), NOW), base)
+        for bad in (valid.replace("2030", "2020"), base + "?se=invalid",
+                    base + "?se=2030-01-01T00%3A00%3A00Z&se=2030-01-01"):
             with self.subTest(bad=bad), self.assertRaises(drop.DropInputError):
                 drop.approved_chatgpt_attachment(descriptor(url=bad), NOW)
+
+    def test_non_public_dns_never_creates_a_socket(self):
+        public = (drop.socket.AF_INET, drop.socket.SOCK_STREAM, 6, "",
+                  ("93.184.215.14", 443))
+        for address in ("127.0.0.1", "10.1.1.1", "169.254.169.254",
+                        "172.16.1.1", "192.168.0.2", "100.64.0.1",
+                        "0.0.0.0", "192.0.2.1"):
+            private = (drop.socket.AF_INET, drop.socket.SOCK_STREAM, 6, "",
+                       (address, 443))
+            for answers in ([private], [public, private]):
+                with self.subTest(address=address, mixed=len(answers) == 2), \
+                     mock.patch.object(drop.socket, "getaddrinfo", return_value=answers), \
+                     mock.patch.object(drop.socket, "socket") as socket_ctor:
+                    with self.assertRaises(OSError):
+                        drop._public_create_connection(("download.example", 443), 15)
+                    socket_ctor.assert_not_called()
+
+    def test_public_ip_connect_is_pinned_without_second_dns_resolution(self):
+        endpoint = (drop.socket.AF_INET, drop.socket.SOCK_STREAM, 6, "",
+                    ("93.184.215.14", 443))
+        with mock.patch.object(drop.socket, "getaddrinfo", return_value=[endpoint]) as dns, \
+             mock.patch.object(drop.socket, "socket") as socket_ctor:
+            sock = socket_ctor.return_value
+            result = drop._public_create_connection(("download.example", 443), 15)
+            self.assertIs(result, sock)
+            dns.assert_called_once_with("download.example", 443,
+                                        type=drop.socket.SOCK_STREAM)
+            socket_ctor.assert_called_once_with(drop.socket.AF_INET,
+                                                drop.socket.SOCK_STREAM, 6)
+            sock.connect.assert_called_once_with(("93.184.215.14", 443))
+            sock.settimeout.assert_called_once_with(15)
+
+    def test_tls_uses_original_hostname_and_no_proxy(self):
+        context = mock.MagicMock()
+        connection = drop._PublicHTTPSConnection("download.example", 443,
+                                                  context=context)
+        with mock.patch.object(connection, "_create_connection",
+                               return_value=mock.MagicMock()) as dial:
+            connection.connect()
+        dial.assert_called_once_with(("download.example", 443),
+                                     mock.ANY, mock.ANY)
+        context.wrap_socket.assert_called_once_with(
+            dial.return_value, server_hostname="download.example")
+        self.assertTrue(any(isinstance(h, drop._PublicHTTPSHandler)
+                            for h in drop.OPENER.handlers))
+        self.assertFalse(any(isinstance(h, drop.urllib.request.ProxyHandler)
+                             and h.proxies for h in drop.OPENER.handlers))
 
     def test_rejects_untrusted_filename_and_extra_fields(self):
         for name in ("../../site.zip", "example.txt", "folder/index.html", ""):

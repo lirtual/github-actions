@@ -7,11 +7,14 @@ envelope. This module performs no deployment, claim, or logging of URLs.
 from __future__ import annotations
 
 import datetime as dt
+import http.client
 import io
+import ipaddress
 import json
 import pathlib
 import sys
 import re
+import socket
 import stat
 import urllib.parse
 import urllib.request
@@ -22,7 +25,6 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_UNPACKED_BYTES = 50 * 1024 * 1024
 MAX_FILES = 1000
 _CHUNK = 64 * 1024
-_BLOB_HOST = re.compile(r"^[a-z0-9]{3,24}\.blob\.core\.windows\.net$")
 _FILE_ID = re.compile(r"^[^\x00-\x1f\x7f]{1,512}$")
 
 
@@ -35,12 +37,56 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-OPENER = urllib.request.build_opener(_NoRedirect())
+def _public_create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+                              source_address=None):
+    """Resolve once and connect to a validated, fixed public address.
+
+    DNS validation followed by a normal hostname connect would allow rebinding.
+    Reject a whole DNS answer if any record points to a non-public address.
+    """
+    hostname, port = address
+    answers = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    if not answers:
+        raise OSError("unresolved destination")
+    endpoints = []
+    for family, socktype, proto, _, sockaddr in answers:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if not ip.is_global:
+            raise OSError("non-public destination")
+        endpoints.append((family, socktype, proto, sockaddr))
+    last_error = None
+    for family, socktype, proto, sockaddr in endpoints:
+        conn = socket.socket(family, socktype, proto)
+        try:
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                conn.settimeout(timeout)
+            if source_address:
+                conn.bind(source_address)
+            conn.connect(sockaddr)
+            return conn
+        except OSError as error:
+            last_error = error
+            conn.close()
+    raise OSError("public destination unavailable") from last_error
 
 
-def _exact_query_value(query, key):
-    values = query.get(key, [])
-    return values[0] if len(values) == 1 and values[0] else None
+class _PublicHTTPSConnection(http.client.HTTPSConnection):
+    # HTTPConnection.__init__ sets the socket factory, so override the instance.
+    # TLS still receives the original hostname for SNI and cert verification.
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _public_create_connection
+
+
+class _PublicHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(_PublicHTTPSConnection, request, context=self._context)
+
+
+# Never use runner HTTP(S) proxy environment variables; redirects stay disabled.
+OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _NoRedirect(), _PublicHTTPSHandler()
+)
 
 
 def approved_chatgpt_attachment(descriptor, now=None):
@@ -68,23 +114,24 @@ def approved_chatgpt_attachment(descriptor, now=None):
                 or url.port is not None or url.fragment or not url.path
                 or url.path == "/" or not host or raw_url != url.geturl()):
             raise ValueError("invalid url shape")
-        if host == "files.oaiusercontent.com":
-            return raw_url
-        if (not _BLOB_HOST.fullmatch(host) or len(url.path.split("/")) < 3
-                or not url.path.split("/")[1] or not url.path.split("/")[2]):
-            raise ValueError("invalid host")
-        query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
-        if not all(_exact_query_value(query, key) for key in ("sig", "se", "sv")):
-            raise ValueError("invalid SAS")
-        if "sp" in query and _exact_query_value(query, "sp") != "r":
-            raise ValueError("invalid SAS permission")
-        if "sr" in query and _exact_query_value(query, "sr") not in ("b", "bv", "bs"):
-            raise ValueError("invalid SAS resource")
-        expiry = _exact_query_value(query, "se")
-        expires = dt.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-        current = now or dt.datetime.now(dt.timezone.utc)
-        if expires.tzinfo is None or expires <= current:
-            raise ValueError("expired SAS")
+        # Do not enumerate file-host providers. Require a canonical DNS name,
+        # then enforce public IP addresses at the actual TCP connection.
+        dns_label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+        if len(host) > 253 or all(part.isdigit() for part in host.split('.')) or not re.fullmatch(
+                rf"(?:{dns_label}\.)+{dns_label}", host):
+            raise ValueError("invalid DNS host")
+        # Existing Azure expiry hints remain useful, but a SAS is not mandatory
+        # for unrelated public HTTPS hosts.
+        if host.endswith(".blob.core.windows.net"):
+            query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
+            if "se" in query:
+                expiry = query["se"]
+                if len(expiry) != 1 or not expiry[0]:
+                    raise ValueError("invalid expiry")
+                expires = dt.datetime.fromisoformat(expiry[0].replace("Z", "+00:00"))
+                current = now or dt.datetime.now(dt.timezone.utc)
+                if expires.tzinfo is None or expires <= current:
+                    raise ValueError("expired URL")
         return raw_url
     except (ValueError, TypeError):
         raise DropInputError("file_source_unverified") from None
