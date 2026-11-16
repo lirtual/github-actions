@@ -1,6 +1,6 @@
 /** Spec #87: Claim-gated file stage and synthetic deploy→sealed-result integration.
- * Production CLI defaults to deployment-disabled. The reviewed repository
- * variable opt-in is separate from each request's Cloudflare Terms consent.
+ * Fresh request consent is checked before Workflow Run admission. This Runner
+ * accepts only the authenticated, Attempt-bound envelope after GitHub Claim.
  */
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -128,7 +128,6 @@ export function captureTemporaryDeployment(output, env, {
 export function prepareDropStage(env, {
   stage = spawnSync, deploy = spawnSync, post = spawnSync,
   probe = spawnSync, wait = spawnSync,
-  deploymentAuthorized = env.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED === 'true',
   temporaryDirectory = tmpdir,
 } = {}) {
   const { ATTEMPT_ID: attemptId, DROP_PRIVATE_KEY_PEM: privateKey } = env;
@@ -144,9 +143,6 @@ export function prepareDropStage(env, {
     // No file read and no external network call in CI/offline preflight.
     return { status: 'drop_envelope_verified' };
   }
-  // No source download, staging or new Cloudflare account without opt-in.
-  if (!deploymentAuthorized)
-    throw new DropRunnerError('drop_deploy_not_authorized');
   const root = mkdtempSync(join(temporaryDirectory(), 'drop-stage-'));
   try {
     const destination = join(root, 'site');

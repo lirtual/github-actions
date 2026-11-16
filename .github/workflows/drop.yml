@@ -29,8 +29,8 @@ on:
         required: false
         default: ''
 
-# Default is off. Enabling real temporary account creation requires separately
-# approved production configuration and fresh per-request Cloudflare Terms consent.
+# Per-request Cloudflare Terms acceptance is enforced by Workflow before
+# sealing the file and reserving the exact authorized physical Attempt.
 env:
   WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: task
@@ -63,14 +63,13 @@ jobs:
           python3 .github/scripts/session_action.py claim
 
       - name: Install reviewed Wrangler CLI for an authorized deployment
-        if: ${{ vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/drop-cli" --ignore-scripts --no-audit --no-fund wrangler@4.162.0
           printf '%s\n' "$RUNNER_TEMP/drop-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
-      - name: Stage and optionally deploy Attempt-bound static site
+      - name: Stage and deploy Attempt-bound static site
         shell: bash
         env:
           ATTEMPT_ID: ${{ inputs.attempt_id }}
@@ -82,7 +81,6 @@ jobs:
           DROP_PART_1: ${{ inputs.drop_part_1 }}
           DROP_PART_2: ${{ inputs.drop_part_2 }}
           DROP_PRIVATE_KEY_PEM: ${{ secrets.DROP_PRIVATE_KEY_PEM }}
-          DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED: ${{ vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED }}
         run: |
           set -euo pipefail
           node .github/scripts/drop_runner.mjs

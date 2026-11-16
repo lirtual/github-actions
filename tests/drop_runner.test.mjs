@@ -51,9 +51,9 @@ test('offline preflight can verify signed envelope without file read', () => {
   } finally { process.argv = previous; }
 });
 
-test('disabled real Runner never stages or deploys a selected file', () => {
+test('an exact sealed Attempt stages without a repository-wide opt-in flag', () => {
   const before = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
-  let executions = 0;
+  let executions = 0, deploys = 0;
   const stage = (_bin, argv, opts) => {
     executions++;
     assert.equal(argv.length, 2);
@@ -63,10 +63,10 @@ test('disabled real Runner never stages or deploys a selected file', () => {
     return { status: 0 };
   };
   assert.throws(() => prepareDropStage(fixture(), { stage,
-    deploy: () => { throw Error('disabled workflow must not create account'); },
-  }),
-    error => error.message === 'drop_deploy_not_authorized');
-  assert.equal(executions, 0);
+    deploy: () => { deploys++; return { status: 1, stdout: '', stderr: '' }; },
+  }), /drop_deploy_unknown/);
+  assert.equal(executions, 1);
+  assert.equal(deploys, 1);
   const after = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
   assert.deepEqual(after, before);
 });
@@ -90,8 +90,7 @@ test('workflow performs OIDC Claim before accessing encrypted input and private 
   assert.ok(yaml.includes('wrangler@4.162.0'));
   assert.ok(yaml.includes('--ignore-scripts'));
   assert.ok(yaml.includes('$RUNNER_TEMP/drop-cli'));
-  assert.ok(yaml.includes("vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED == 'true'"));
-  assert.ok(yaml.includes('DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED: ${{ vars.DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED }}'));
+  assert.ok(!yaml.includes('DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED'));
   assert.ok(!yaml.includes('wrangler deploy'));
   assert.ok(!yaml.includes('autoactions'));
 });
@@ -217,7 +216,7 @@ test('G4 full staged→mock Wrangler→sealed callback chain does not expose cre
   const env = { ...fixture(), DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
     DISPATCH_ID: attemptId, CAPABILITY_ID: 'github.action',
     ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'opaque-fixture',
-    DROP_TEMPORARY_DEPLOYMENT_AUTHORIZED: 'true' };
+  };
   let staged = 0, deployed = 0, posted = 0;
   const result = prepareDropStage(env, {
     stage: (_command, _argv, options) => {
@@ -266,7 +265,6 @@ test('G4 full staged→mock Wrangler→sealed callback chain does not expose cre
 test('failed static staging blocks even an explicitly mocked deployer', () => {
   let deployed = 0;
   assert.throws(() => prepareDropStage(fixture(), {
-    deploymentAuthorized: true,
     stage: () => ({ status: 1 }),
     deploy: () => { deployed++; throw Error('must not create account'); },
   }), /drop_stage_failed/);
@@ -283,7 +281,6 @@ test('G4 uncertain CLI exits never retry or emit a callback', () => {
     assert.throws(() => prepareDropStage({
       ...fixture(), DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
     }, {
-      deploymentAuthorized: true,
       stage: () => ({ status: 0 }),
       deploy: () => { deployed++; return outcome; },
       post: () => { throw Error('must not callback an uncertain result'); },
