@@ -29,8 +29,8 @@ on:
         required: false
         default: ''
 
-# Per-request Cloudflare Terms acceptance is enforced by Workflow before
-# sealing the file and reserving the exact authorized physical Attempt.
+# Cloudflare Terms are accepted once before the first temporary deployment.
+# The owner-started file Run authorizes its exact physical Attempt.
 env:
   WORKFLOW_ACTION_PUBLIC: "true"
   WORKFLOW_ACTION_TYPE: task

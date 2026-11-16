@@ -54,9 +54,10 @@ def approved_chatgpt_attachment(descriptor, now=None):
     if (not isinstance(file_id, str) or not _FILE_ID.fullmatch(file_id)
             or not file_id.strip() or not isinstance(raw_url, str)
             or not 1 <= len(raw_url) <= 4096
-            or not isinstance(file_name, str) or not 1 <= len(file_name) <= 255
-            or file_name != pathlib.PurePosixPath(file_name).name
-            or file_name.lower().endswith((".html", ".zip")) is False):
+            or ("file_name" in descriptor and (
+                not isinstance(file_name, str) or not 1 <= len(file_name) <= 255
+                or file_name != pathlib.PurePosixPath(file_name).name
+                or not file_name.lower().endswith((".html", ".zip"))))):
         raise DropInputError("file_descriptor_invalid")
     if "mime_type" in descriptor and not isinstance(descriptor["mime_type"], str):
         raise DropInputError("file_descriptor_invalid")
@@ -189,7 +190,24 @@ def stage_static_site(descriptor, destination, opener=OPENER, now=None):
         raise DropInputError("destination_invalid")
     url = approved_chatgpt_attachment(descriptor, now=now)
     data = download_bounded_attachment(url, opener)
-    if descriptor["file_name"].lower().endswith(".html"):
+    file_name = descriptor.get("file_name")
+    if file_name is None:
+        # ChatGPT fileParams guarantees file_id and download_url, not a filename.
+        # Inspect bounded bytes only; never use the signed URL path or MIME alone.
+        if data.startswith(b"PK\x03\x04"):
+            file_name = "site.zip"
+        else:
+            try:
+                preview = data.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                raise DropInputError("file_type_unverified") from None
+            if ("\x00" in preview or not re.match(
+                r"^\s*<(?:!doctype\s+html\b|!--|[a-z][\w:-]*(?:\s|/?>))",
+                preview, re.IGNORECASE,
+            )):
+                raise DropInputError("file_type_unverified")
+            file_name = "index.html"
+    if file_name.lower().endswith(".html"):
         if len(data) > MAX_FILE_BYTES:
             raise DropInputError("file_size_limit")
         (root / "index.html").write_bytes(data)

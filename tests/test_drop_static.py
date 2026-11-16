@@ -82,6 +82,34 @@ class DropStaticTests(unittest.TestCase):
         self.assertEqual(set(self.stage("site.zip", archive)),
                          {"index.html", "assets/style.css"})
 
+    def test_without_filename_stages_html_or_zip_from_verified_content(self):
+        cases = (
+            (b"<!doctype html><html><body>Safe</body></html>",
+             {"index.html": b"<!doctype html><html><body>Safe</body></html>"}),
+            (make_zip([("index.html", b"Root"), ("assets/app.js", b"safe")]),
+             {"index.html": b"Root", "assets/app.js": b"safe"}),
+        )
+        for data, expected in cases:
+            with self.subTest(data=data[:16]), tempfile.TemporaryDirectory() as temp:
+                file = descriptor()
+                file.pop("file_name")
+                self.assertEqual(drop.approved_chatgpt_attachment(file, NOW), SOURCE)
+                receipt = drop.stage_static_site(
+                    file, temp, opener=FakeOpener(data), now=NOW)
+                files = {p.relative_to(temp).as_posix(): p.read_bytes()
+                         for p in pathlib.Path(temp).rglob("*") if p.is_file()}
+                self.assertEqual(files, expected)
+                self.assertEqual(receipt["file_count"], len(expected))
+
+    def test_without_filename_rejects_unrecognized_content(self):
+        for data in (b"plain text", b"\x00\x01binary", b"<html invalid\x00"):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as temp:
+                file = descriptor()
+                file.pop("file_name")
+                with self.assertRaises(drop.DropInputError) as caught:
+                    drop.stage_static_site(file, temp, opener=FakeOpener(data), now=NOW)
+                self.assertEqual(str(caught.exception), "file_type_unverified")
+
     def test_source_allowlist(self):
         self.assertEqual(drop.approved_chatgpt_attachment(descriptor(), NOW), SOURCE)
         for url in ("https://evil.example/secret",
@@ -110,6 +138,8 @@ class DropStaticTests(unittest.TestCase):
         extra = dict(descriptor(), callback_url="https://evil.example/")
         with self.assertRaises(drop.DropInputError):
             drop.approved_chatgpt_attachment(extra, NOW)
+        with self.assertRaises(drop.DropInputError):
+            drop.approved_chatgpt_attachment(dict(descriptor(), file_name=None), NOW)
 
     def test_rejects_oversize_html(self):
         with tempfile.TemporaryDirectory() as temp:

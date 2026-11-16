@@ -17,13 +17,13 @@ const { publicKey, privateKey } = generateKeyPairSync('rsa', {
 const file = { file_id: 'fixture', file_name: 'index.html',
   download_url: 'https://files.oaiusercontent.com/fixture.html' };
 
-function fixture() {
+function fixture(selectedFile = file) {
   const issuedAt = Date.now();
   const key = randomBytes(32), nonce = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(dropAAD(attemptId, contractDigest));
   const value = JSON.stringify({ attemptId, contractDigest, issuedAt,
-    expiresAt: issuedAt + 60000, file });
+    expiresAt: issuedAt + 60000, file: selectedFile });
   const ciphertext = Buffer.concat([
     cipher.update(value, 'utf8'), cipher.final(), cipher.getAuthTag(),
   ]);
@@ -69,6 +69,20 @@ test('an exact sealed Attempt stages without a repository-wide opt-in flag', () 
   assert.equal(deploys, 1);
   const after = new Set(readdirSync(tmpdir()).filter(p => p.startsWith('drop-stage-')));
   assert.deepEqual(after, before);
+});
+
+test('missing optional ChatGPT metadata still reaches the bounded stage', () => {
+  const required = { file_id: file.file_id, download_url: file.download_url };
+  let staged = 0;
+  assert.throws(() => prepareDropStage(fixture(required), {
+    stage: (_bin, _argv, opts) => {
+      staged++;
+      assert.deepEqual(JSON.parse(opts.input), required);
+      return { status: 0 };
+    },
+    deploy: () => ({ status: 1, stdout: '', stderr: '' }),
+  }), /drop_deploy_unknown/);
+  assert.equal(staged, 1);
 });
 
 test('missing key and wrong Attempt stop before staging', () => {

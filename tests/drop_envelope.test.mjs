@@ -71,6 +71,11 @@ test('Runner derives and authenticates the reviewed digest without an extra inpu
   }), baseFile);
 });
 
+test('OpenAI-selected file may omit file_name and mime_type', () => {
+  const { file_name, ...withoutName } = baseFile;
+  assert.deepEqual(open(seal({ file: withoutName })), withoutName);
+});
+
 test('tampered plaintext contract digest fails AES-GCM verification', () => {
   const sealed = seal();
   const outer = JSON.parse(Buffer.from(sealed.join(''), 'base64url').toString());

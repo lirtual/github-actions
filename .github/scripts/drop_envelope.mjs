@@ -91,9 +91,10 @@ export function openDropEnvelope(parts, { privateKey, attemptId, contractDigest,
         typeof file.file_id !== 'string' || file.file_id.length < 1 || file.file_id.length > 512 ||
         typeof file.download_url !== 'string' || file.download_url.length < 1 ||
         file.download_url.length > 4096 ||
-        typeof file.file_name !== 'string' || file.file_name.length < 1 ||
-        file.file_name.length > 255 ||
-        !/\.(html|zip)$/i.test(file.file_name) ||
+        (file.file_name !== undefined &&
+          (typeof file.file_name !== 'string' || file.file_name.length < 1 ||
+           file.file_name.length > 255 ||
+           !/\.(html|zip)$/i.test(file.file_name))) ||
         (file.mime_type !== undefined && typeof file.mime_type !== 'string'))
       throw new DropEnvelopeError();
     if (now >= payload.expiresAt) throw new DropEnvelopeError('drop_envelope_expired');

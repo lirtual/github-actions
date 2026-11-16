@@ -1,5 +1,5 @@
 /** Spec #87: Claim-gated file stage and synthetic deploy→sealed-result integration.
- * Fresh request consent is checked before Workflow Run admission. This Runner
+ * Owner-started Workflow admission authorizes the file Run. This Runner
  * accepts only the authenticated, Attempt-bound envelope after GitHub Claim.
  */
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
