@@ -122,6 +122,21 @@ function wranglerFixture() {
   ].join('\n');
 }
 
+test('G4 rejected output has a bounded, non-sensitive diagnostic reason', () => {
+  const startedAt = Date.now();
+  const canary = 'claimToken=' + 'z'.repeat(48);
+  assert.throws(() => captureTemporaryDeployment('unexpected output ' + canary, {
+    ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+  }, {
+    startedAt, finishedAt: startedAt + 1000,
+    post: () => { throw Error('callback must not occur'); },
+  }), error => {
+    assert.equal(error.message, 'drop_deploy_result_unknown:output_shape');
+    assert.ok(!error.message.includes(canary));
+    return true;
+  });
+});
+
 test('G4 captures documented Wrangler result and seals the bearer before callback', () => {
   const startedAt = Date.now();
   const raw = wranglerFixture();
