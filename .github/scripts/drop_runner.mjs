@@ -80,7 +80,7 @@ function verifyTemporaryPreview(url, { probe = spawnSync, wait = spawnSync } = {
       if (slept.error || slept.status !== 0) break;
     }
   }
-  throw new DropRunnerError('drop_deploy_result_unknown');
+  throw new DropRunnerError('drop_deploy_result_unknown:preview_unreachable');
 }
 
 /** G4-only Wrangler output capture. The caller must check the CLI exit status;
@@ -91,20 +91,22 @@ export function captureTemporaryDeployment(output, env, {
   startedAt, finishedAt = Date.now(), post = spawnSync,
   probe = spawnSync, wait = spawnSync,
 } = {}) {
-  const unknown = () => { throw new DropRunnerError('drop_deploy_result_unknown'); };
+  const unknown = reason => { throw new DropRunnerError('drop_deploy_result_unknown:' + reason); };
+  if (!Number.isSafeInteger(startedAt) || !Number.isSafeInteger(finishedAt) ||
+      finishedAt < startedAt || finishedAt - startedAt > 15 * 60000)
+    unknown('time_bounds');
   if (typeof output !== 'string' || output.length > 65536 ||
-      !Number.isSafeInteger(startedAt) || !Number.isSafeInteger(finishedAt) ||
-      finishedAt < startedAt || finishedAt - startedAt > 15 * 60000 ||
-      !/^[ \t]*Temporary account ready:[ \t]*$/m.test(output)) unknown();
+      !/^[ \t]*Temporary account ready:[ \t]*$/m.test(output))
+    unknown('output_shape');
 
   // Reject extra labelled lines even when the extra value is malformed.
   for (const label of ['Account:', 'Claim within:', 'Claim URL:']) {
     const prefix = new RegExp('^[ \\t]*' + label, 'gm');
-    if ([...output.matchAll(prefix)].length !== 1) unknown();
+    if ([...output.matchAll(prefix)].length !== 1) unknown('output_labels');
   }
   const exactlyOne = pattern => {
     const matches = [...output.matchAll(pattern)];
-    if (matches.length !== 1) unknown();
+    if (matches.length !== 1) unknown('output_fields');
     return matches[0][1];
   };
   // Source: Cloudflare's documented unauthenticated Wrangler --temporary output.
@@ -119,7 +121,7 @@ export function captureTemporaryDeployment(output, env, {
   // Wrangler gives a relative 60-minute window, not an absolute expiry.
   // Bound the delivered receipt from *before* account creation with a margin.
   const expiresAt = startedAt + 55 * 60000;
-  if (expiresAt - finishedAt < 120000) unknown();
+  if (expiresAt - finishedAt < 120000) unknown('time_window');
   return deliverDropClaim({
     attemptId: env.ATTEMPT_ID, previewUrl, claimUrl, expiresAt,
   }, env, { post });
