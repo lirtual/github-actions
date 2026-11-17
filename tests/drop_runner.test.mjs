@@ -206,7 +206,7 @@ test('G4 inaccessible preview becomes Unknown without callback or redeploy', () 
     probe: () => { probes++; return { status: 0, stdout: '404' }; },
     wait: () => { waits++; return { status: 0 }; },
     post: () => { callbacks++; return { status: 0 }; },
-  }), /drop_deploy_result_unknown/);
+  }), /drop_deploy_result_unknown:preview_unreachable/);
   assert.equal(probes, 12);
   assert.equal(waits, 11);
   assert.equal(callbacks, 0);
@@ -238,6 +238,26 @@ test('G4 refuses ambiguous, reused, unverified or expired Wrangler output', () =
     startedAt: startedAt - 60 * 60000, finishedAt: startedAt,
     post: () => { throw Error('no callback on expired receipt'); },
   }), /drop_deploy_result_unknown/);
+});
+
+test('G4 reports bounded label, field and timing diagnostic stages', () => {
+  const at = Date.now();
+  const raw = wranglerFixture();
+  for (const [output, startedAt, finishedAt, stage] of [
+    [raw.replace('Claim URL:', 'Claim URL: invalid\n  Claim URL:'), at, at + 1000, 'output_labels'],
+    [raw.replace('(created)', '(reused)'), at, at + 1000, 'output_fields'],
+    [raw, at, at + 16 * 60000, 'time_bounds'],
+  ]) {
+    assert.throws(() => captureTemporaryDeployment(output, {
+      ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+    }, {
+      startedAt, finishedAt,
+      post: () => { throw Error('no callback on unknown result'); },
+    }), error => {
+      assert.equal(error.message, 'drop_deploy_result_unknown:' + stage);
+      return true;
+    });
+  }
 });
 
 test('G4 full staged→mock Wrangler→sealed callback chain does not expose credentials', () => {
