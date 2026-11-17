@@ -163,6 +163,36 @@ test('G4 captures documented Wrangler result and seals the bearer before callbac
   assert.equal(callbacks, 1);
 });
 
+test('G4 accepts Cloudflare account display names containing spaces', () => {
+  const at = Date.now();
+  const output = wranglerFixture()
+    .replace('example-name (created)', 'Preview Account Alpha (created)')
+    .replace('drop-preview.example-name.workers.dev', 'drop-preview.preview-account-alpha.workers.dev');
+  let callbacks = 0;
+  const result = captureTemporaryDeployment(output, {
+    ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+  }, {
+    startedAt: at, finishedAt: at + 1000,
+    probe: () => ({ status: 0, stdout: '200' }),
+    post: (_bin, _args, options) => {
+      callbacks++;
+      assert.equal(JSON.parse(options.input).preview_url,
+        'https://drop-preview.preview-account-alpha.workers.dev');
+      assert.ok(!JSON.stringify(options.env).includes('claimToken'));
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(result, { status: 'drop_receipt_acknowledged' });
+  assert.equal(callbacks, 1);
+  assert.throws(() => captureTemporaryDeployment(
+    output.replace('(created)', '(reused)'), {
+      ATTEMPT_ID: attemptId, DROP_RECEIPT_PUBLIC_KEY_PEM: publicKey,
+    }, {
+      startedAt: at, finishedAt: at + 1000,
+      post: () => { throw Error('no callback on reused account'); },
+    }), /drop_deploy_result_unknown/);
+});
+
 test('G4 verifies public HTTP 200 after transient 404 without exposing claim', () => {
   const at = Date.now();
   const seen = [], waits = [];

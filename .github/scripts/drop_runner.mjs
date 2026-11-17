@@ -111,7 +111,9 @@ export function captureTemporaryDeployment(output, env, {
   };
   // Source: Cloudflare's documented unauthenticated Wrangler --temporary output.
   // Fail closed on reused accounts, changed output formats, or ambiguous URLs.
-  exactlyOne(/^[ \t]*Account:[ \t]*[a-zA-Z0-9_-]{1,100}[ \t]+\((created)\)[ \t]*$/gm);
+  // Cloudflare may return a display name with spaces (its own Wrangler tests do).
+  // We do not use the name; keep length bounded and still require "(created)".
+  exactlyOne(/^[ \t]*Account:[ \t]*[^\r\n()]{0,99}[^\s\r\n()][ \t]+\((created)\)[ \t]*$/gm);
   exactlyOne(/^[ \t]*Claim within:[ \t]*(60)[ \t]+minutes[ \t]*$/gm);
   const claimUrl = exactlyOne(/^[ \t]*Claim URL:[ \t]*(https:\/\/dash\.cloudflare\.com\/claim-preview\?claimToken=[A-Za-z0-9_-]{16,1024})[ \t]*$/gm);
   const previewUrl = exactlyOne(/^[ \t]*(https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+workers\.dev\/?)[ \t]*$/gm);
