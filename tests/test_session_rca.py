@@ -327,6 +327,16 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             marker.symlink_to(outside)
             self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
 
+    def test_failure_log_reports_only_allowlisted_phase(self):
+        with mock.patch.object(rca, 'start',
+                               side_effect=rca.BootstrapError('SENSITIVE_SYNTHETIC_EXCEPTION')), \
+                mock.patch.object(rca, 'BOOTSTRAP_PHASE', 'release_lookup'), \
+                mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch('builtins.print') as output:
+            self.assertEqual(rca.main(), 1)
+        output.assert_called_once_with(
+            'Session RCA unavailable at phase=release_lookup; SSH/RDP remains available.')
+
     def test_release_lookup_failure_denied_before_download(self):
         def unavailable(*_args):
             raise rca.BootstrapError("synthetic metadata unavailable")
