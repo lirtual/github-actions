@@ -222,6 +222,8 @@ def observe_windows_transport(parent_pid, executable, *, run=subprocess.run,
 # Read only a fixed checkpoint from the Agent's existing Windows job-private
 # store. Unknown/untrusted content is never reproduced in Actions logs.
 BOOTSTRAP_SPAWNED = False
+# Static phase names only: never log exception text, URLs, credentials or filesystem paths.
+BOOTSTRAP_PHASE = "environment"
 
 TRANSPORT_STAGES = frozenset({
     "pending", "entered", "store_ready", "pem_ready", "identity_ready", "signed_recovered", "receipts_ready",
@@ -257,6 +259,8 @@ def observe_windows_child_stage(runner_temp, delay=time.sleep):
 
 def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen,
           select_release=resolve_latest_release):
+    global BOOTSTRAP_PHASE
+    BOOTSTRAP_PHASE = "environment"
     windows = sys.platform == "win32"
     workflow = "windows" if windows else "ubuntu"
     if (env.get("GITHUB_ACTIONS") != "true" or env.get("RUNNER_ENVIRONMENT") != "github-hosted"
@@ -269,6 +273,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         raise BootstrapError("Missing job-scoped runtime directory")
     # Use the already-reviewed Claim discovery contract, not a new repository variable.
     # Override any ambient audience; only the short-lived registration parent receives it.
+    BOOTSTRAP_PHASE = "audience"
     registration_env = dict(env)
     registration_env["WORKFLOW_ACTION_OIDC_AUDIENCE"] = discover_audience(
         env.get("WORKFLOW_ACTION_CLAIM_URL", ""))
@@ -297,17 +302,21 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
                 pass
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
+    BOOTSTRAP_PHASE = "release_lookup"
     tag, sha, url = select_release(target, extension, opener)
     if not TAG.fullmatch(tag) or not DIGEST.fullmatch(sha):
         raise BootstrapError("Unverified Release selection")
     name = f"remote-control-agent-{tag}-{target}.{extension}"
     if url != f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}":
         raise BootstrapError("Unexpected Release download URL")
+    BOOTSTRAP_PHASE = "asset_download"
     stage = Path(temp) / "session-rca-reviewed-release"
     stage.mkdir(mode=0o700, exist_ok=False)
     archive = stage / name
     download_pinned(url, archive, sha, opener)
+    BOOTSTRAP_PHASE = "asset_unpack"
     unpack_reviewed(archive, stage, windows)
+    BOOTSTRAP_PHASE = "bundle_check"
     manifest = json.loads((stage / "bundle.json").read_text(encoding="utf-8"))
     if (manifest.get("version") != tag or manifest.get("target") != target or
         manifest.get("name") != "remote-control-agent" or manifest.get("device_protocol") != 2 or
@@ -319,6 +328,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         raise BootstrapError("Release lacks Session-only foreground executable")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
     global BOOTSTRAP_SPAWNED
+    BOOTSTRAP_PHASE = "process_launch"
     process = launch([str(node), str(entry)], cwd=str(stage), env=registration_env,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      creationflags=flags, start_new_session=not windows)
@@ -357,7 +367,7 @@ def main():
                 pass  # Missing marker conservatively disables SSH-only early stop.
         # Mark this optional Step as failed, while continue-on-error preserves Hold.
         # Never print external HTTP errors, OIDC tokens, private keys or OS paths.
-        print("Session RCA unavailable (optional bootstrap rejected); SSH/RDP remains available.")
+        print(f"Session RCA unavailable at phase={BOOTSTRAP_PHASE}; SSH/RDP remains available.")
         return 1
     return 0
 
