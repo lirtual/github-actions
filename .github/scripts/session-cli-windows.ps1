@@ -45,7 +45,7 @@ switch ($Mode) {
         $Output = Join-Path $env:RUNNER_TEMP 'session-cf-install.log'
         $ErrorLog = Join-Path $env:RUNNER_TEMP 'session-cf-install.err'
         try {
-            $Arguments = 'install --global --prefix "' + $Prefix + '" --ignore-scripts --no-audit --no-fund cf@1.0.0-beta.14'
+            $Arguments = 'install --global --prefix "' + $Prefix + '" --ignore-scripts --no-audit --no-fund cf@1.0.0-rc.1'
             $Process = Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /c ""' + $Npm + '" ' + $Arguments + '"') -NoNewWindow -PassThru -RedirectStandardOutput $Output -RedirectStandardError $ErrorLog
             if (-not $Process.WaitForExit(75000)) {
                 $Process.Kill($true)
