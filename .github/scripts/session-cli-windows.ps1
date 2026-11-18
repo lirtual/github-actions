@@ -35,7 +35,9 @@ switch ($Mode) {
         }
         $VersionText = (& node.exe --version).TrimStart('v')
         $Numbers = @($VersionText.Split('.') | ForEach-Object { [int]$_ })
-        $Supported = ($Numbers[0] -eq 22 -and $Numbers[1] -ge 18) -or ($Numbers[0] -ge 23)
+        $Supported = ($Numbers[0] -eq 22 -and $Numbers[1] -ge 23) -or
+                     ($Numbers[0] -eq 24 -and $Numbers[1] -ge 22) -or
+                     ($Numbers[0] -eq 26 -and $Numbers[1] -ge 12)
         if (-not $Supported) {
             Write-Output 'Pinned cf CLI requires a newer Node.js version'
             break
@@ -45,7 +47,7 @@ switch ($Mode) {
         $Output = Join-Path $env:RUNNER_TEMP 'session-cf-install.log'
         $ErrorLog = Join-Path $env:RUNNER_TEMP 'session-cf-install.err'
         try {
-            $Arguments = 'install --global --prefix "' + $Prefix + '" --ignore-scripts --no-audit --no-fund cf@1.0.0-beta.14'
+            $Arguments = 'install --global --prefix "' + $Prefix + '" --ignore-scripts --no-audit --no-fund cf@1.0.0-rc.1'
             $Process = Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /c ""' + $Npm + '" ' + $Arguments + '"') -NoNewWindow -PassThru -RedirectStandardOutput $Output -RedirectStandardError $ErrorLog
             if (-not $Process.WaitForExit(75000)) {
                 $Process.Kill($true)

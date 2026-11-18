@@ -16,9 +16,9 @@ case "${1:-}" in
     # All tools are optional: a package registry outage must not block the Session.
     if ! command -v cf >/dev/null 2>&1; then
       if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
-         node -e 'const a=process.versions.node.split(".").map(Number);process.exit((a[0]===22&&a[1]>=18)||(a[0]>=23)?0:1)'; then
+         node -e 'const a=process.versions.node.split(".").map(Number);process.exit((a[0]===22&&a[1]>=23)||(a[0]===24&&a[1]>=22)||(a[0]===26&&a[1]>=12)?0:1)'; then
         mkdir -p "$npm_prefix"
-        if timeout 60s npm install --global --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund cf@1.0.0-beta.14 >/dev/null 2>&1 &&
+        if timeout 60s npm install --global --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund cf@1.0.0-rc.1 >/dev/null 2>&1 &&
            "$npm_prefix/bin/cf" --version >/dev/null 2>&1; then
           echo 'Pinned cf CLI installed'
         else
