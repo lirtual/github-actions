@@ -67,13 +67,6 @@ jobs:
           SESSION_SERVICE: code-server
           OWNER_EMAIL: ${{ vars.OWNER_EMAIL }}
         run: bash .github/scripts/start-tunnel.sh
-      - name: Upload temporary Tunnel locator
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: session-tunnel-url
-          path: ${{ runner.temp }}/session-tunnel-url
-          if-no-files-found: error
-          retention-days: 1
       - name: Signed Ready after local service health check
         run: python3 .github/scripts/session_action.py ready
       - name: Hold until Runner-local lifetime or GitHub cancellation
