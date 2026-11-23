@@ -18,7 +18,7 @@ from session_action import discover_audience
 
 REPOSITORY = "lirtual/mcp-workers"
 # Advance only with a reviewed Candidate source change and matching Workflow approval.
-CANDIDATE_COMMIT = "9b9e6a1d0fab290eec17ac82434866d8c2547a3a"
+CANDIDATE_COMMIT = "5ec9ef512128df755dd4764da992b72391a6d707"
 CANDIDATE_TIMEOUT_SECONDS = 180
 WINDOWS_CANDIDATE_TIMEOUT_SECONDS = 600
 LIMIT = 180 * 1024 * 1024
