@@ -80,7 +80,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("        description: Session RCA implementation (candidate is for authorized acceptance only)", ubuntu)
         self.assertIn("timeout-minutes: 5", ubuntu[ubuntu.index("Start optional reviewed Session RCA"):])
         self.assertIn("SESSION_RCA_AGENT: ${{ inputs.session_agent || 'release' }}", ubuntu)
-        self.assertIn("CANDIDATE_COMMIT = \"9b9e6a1d0fab290eec17ac82434866d8c2547a3a\"",
+        self.assertIn("CANDIDATE_COMMIT = \"5ec9ef512128df755dd4764da992b72391a6d707\"",
                       (ROOT / ".github/scripts/session_rca.py").read_text())
         windows = (ROOT / ".github/workflows/windows.yml").read_text()
         self.assertIn("      session_agent:", windows)
