@@ -200,6 +200,8 @@ def _candidate_build_env(source=os.environ):
 
 def build_linux_candidate(runner_temp, *, run=subprocess.run, source_env=os.environ):
     """Build the exact reviewed Rust Session Candidate without passing OIDC to build tools."""
+    if sys.platform != "linux":
+        raise BootstrapError("Linux-only Candidate build is unsupported on this platform.")
     root = Path(runner_temp) / "session-rca-rust-candidate"
     root.mkdir(mode=0o700, exist_ok=False)
     source = root / "source"

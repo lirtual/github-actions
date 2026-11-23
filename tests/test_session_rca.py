@@ -143,6 +143,12 @@ class SessionRcaBootstrapTests(unittest.TestCase):
 
     def test_candidate_build_is_sha_pinned_sanitized_and_private(self):
         with tempfile.TemporaryDirectory() as root:
+            if rca.sys.platform != "linux":
+                candidate_root = Path(root) / "session-rca-rust-candidate"
+                with self.assertRaisesRegex(rca.BootstrapError, "Linux-only"):
+                    rca.build_linux_candidate(root)
+                self.assertFalse(candidate_root.exists())
+                return
             calls = []
             def fake_run(args, **kwargs):
                 calls.append((args, kwargs))
