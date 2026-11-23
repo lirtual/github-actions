@@ -35,6 +35,14 @@ on:
           - repository
         default: explicit
         required: false
+      session_agent:
+        description: Session RCA implementation (candidate is for authorized acceptance only)
+        type: choice
+        options:
+          - release
+          - rust-candidate
+        default: release
+        required: false
 
 env:
   WORKFLOW_ACTION_PUBLIC: "true"
@@ -53,6 +61,7 @@ jobs:
       CAPABILITY_ID: ${{ inputs.capability_id }}
       WORKFLOW_ACTION_CLAIM_URL: ${{ vars.WORKFLOW_ACTION_CLAIM_URL }}
       DURATION_MINUTES: ${{ inputs.duration_mode == 'repository' && (vars.SESSION_DURATION_MINUTES || '300') || inputs.duration_minutes }}
+      SESSION_RCA_AGENT: ${{ inputs.session_agent || 'release' }}
       SESSION_TAILSCALE_HOSTNAME: ${{ inputs.session_mode == 'fixed' && 'session-windows' || format('sa-{0}-a{1}', github.run_id, github.run_attempt) }}
     steps:
       - name: Capture job lifetime before checkout
@@ -143,8 +152,8 @@ jobs:
         shell: pwsh
         run: python .github/scripts/session_action.py ready
       - name: Start optional latest verified Session RCA after signed Ready
-        continue-on-error: true
-        timeout-minutes: 2
+        continue-on-error: ${{ inputs.session_agent != 'rust-candidate' }}
+        timeout-minutes: ${{ inputs.session_agent == 'rust-candidate' && 12 || 2 }}
         shell: pwsh
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}

@@ -72,7 +72,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
                 self.assertIn("inputs.duration_mode == 'repository'", yml)
                 self.assertIn("timeout-minutes: 360", yml)
 
-    def test_rust_session_candidate_is_explicit_ubuntu_only_opt_in(self):
+    def test_rust_session_candidate_is_explicit_opt_in_and_release_default(self):
         ubuntu = (ROOT / ".github/workflows/ubuntu.yml").read_text()
         self.assertIn("      session_agent:", ubuntu)
         self.assertIn("          - release\n          - rust-candidate", ubuntu)
@@ -80,10 +80,15 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("        description: Session RCA implementation (candidate is for authorized acceptance only)", ubuntu)
         self.assertIn("timeout-minutes: 5", ubuntu[ubuntu.index("Start optional reviewed Session RCA"):])
         self.assertIn("SESSION_RCA_AGENT: ${{ inputs.session_agent || 'release' }}", ubuntu)
-        self.assertIn("CANDIDATE_COMMIT = \"2610ebc7093dc7e00f93e75706caff7a4e0487d6\"",
+        self.assertIn("CANDIDATE_COMMIT = \"9b9e6a1d0fab290eec17ac82434866d8c2547a3a\"",
                       (ROOT / ".github/scripts/session_rca.py").read_text())
         windows = (ROOT / ".github/workflows/windows.yml").read_text()
-        self.assertNotIn("session_agent:", windows)
+        self.assertIn("      session_agent:", windows)
+        self.assertIn("          - release\n          - rust-candidate", windows)
+        self.assertIn("        default: release", windows)
+        self.assertIn("SESSION_RCA_AGENT: ${{ inputs.session_agent || 'release' }}", windows)
+        self.assertIn("continue-on-error: ${{ inputs.session_agent != 'rust-candidate' }}", windows)
+        self.assertIn("inputs.session_agent == 'rust-candidate' && 12 || 2", windows)
 
     def test_only_ubuntu_reads_repository_idle_minutes(self):
         ubuntu = (ROOT / ".github/workflows/ubuntu.yml").read_text()
