@@ -457,7 +457,11 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         if windows:
             confirm_windows_registration(process)
             state = observe_windows_transport(process.pid, executable)
-            print(f"Session RCA Windows credential-free transport: {state}; WSS admission remains authoritative.")
+            if state != "alive":
+                # A successful one-shot registration does not establish a live
+                # credential-free transport. Never report Candidate startup ready.
+                raise BootstrapError("Windows RCA Candidate transport liveness unconfirmed.")
+            print("Session RCA Windows credential-free transport: alive; WSS admission remains authoritative.")
         else:
             confirm_linux_registration(process)
         return True
