@@ -245,6 +245,27 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                     self.assertTrue(launches[0][1]["start_new_session"])
                     self.assertEqual(launches[0][1]["env"]["SESSION_ACTION_RCA"], "1")
 
+    def test_windows_candidate_fails_closed_without_observed_live_child(self):
+        for state in ("exited", "unknown"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as root:
+                env = settings(root, bundle())
+                env["GITHUB_WORKFLOW"] = "windows"
+                env["SESSION_RCA_AGENT"] = "rust-candidate"
+                candidate = Path(root) / "rca-session-windows-candidate.exe"
+                candidate.write_bytes(b"synthetic-candidate")
+                child = type("Child", (), {"pid": 4321, "wait": lambda self, timeout: 0})()
+                with mock.patch.object(rca.sys, "platform", "win32"), \
+                     mock.patch.object(rca.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, create=True), \
+                     mock.patch.object(rca, "confirm_windows_registration"), \
+                     mock.patch.object(rca, "observe_windows_transport", return_value=state):
+                    with self.assertRaisesRegex(rca.BootstrapError, "liveness unconfirmed"):
+                        rca.start(
+                            env, launch=lambda *_args, **_kwargs: child,
+                            build_windows_candidate_fn=lambda temp: candidate,
+                            select_release=lambda *_args: (_ for _ in ()).throw(
+                                AssertionError("Candidate must not fetch Release")),
+                        )
+
     def test_windows_candidate_build_is_sha_pinned_and_drops_credentials(self):
         with tempfile.TemporaryDirectory() as root:
             calls = []
