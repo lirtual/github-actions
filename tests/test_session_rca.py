@@ -257,7 +257,8 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 with mock.patch.object(rca.sys, "platform", "win32"), \
                      mock.patch.object(rca.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, create=True), \
                      mock.patch.object(rca, "confirm_windows_registration"), \
-                     mock.patch.object(rca, "observe_windows_transport", return_value=state):
+                     mock.patch.object(rca, "observe_windows_transport", return_value=state), \
+                     mock.patch.object(rca, "observe_windows_child_stage", return_value="wss_start") as observe_stage:
                     with self.assertRaisesRegex(rca.BootstrapError, "liveness unconfirmed"):
                         rca.start(
                             env, launch=lambda *_args, **_kwargs: child,
@@ -265,6 +266,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                             select_release=lambda *_args: (_ for _ in ()).throw(
                                 AssertionError("Candidate must not fetch Release")),
                         )
+                    observe_stage.assert_called_once()
 
     def test_windows_candidate_build_is_sha_pinned_and_drops_credentials(self):
         with tempfile.TemporaryDirectory() as root:
