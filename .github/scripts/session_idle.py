@@ -162,22 +162,37 @@ def stop_ssh_ingress():
 def restore_ssh_ingress():
     try:
         systemctl("start", "ssh.socket", "ssh.service")
-        return True
-    except (OSError, subprocess.SubprocessError):
+        tailnet_ip = subprocess.run(["tailscale", "ip", "-4"],
+                                    capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+        listeners = subprocess.run(["ss", "-H", "-ltn", "( sport = :22 )"],
+                                   capture_output=True, text=True, check=True, timeout=5).stdout
+        rows = [row.split() for row in listeners.splitlines()]
+        return (bool(tailnet_ip) and len(rows) == 1 and len(rows[0]) >= 4
+                and rows[0][3] == tailnet_ip + ":22")
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
         return False
+
+
+class IdleRecoveryError(RuntimeError):
+    """An aborted idle stop did not restore a required ingress."""
 
 
 def prepare_idle_stop(ready_ms, now_ms, known_failure):
     """Freeze RCA admissions, stop SSH ingress, then validate both again."""
     idle_ms = idle_timeout_ms()
-    frozen = False
+    freeze_attempted = False
     ssh_touched = False
     success = False
     try:
         if not known_failure:
-            if exchange("idle-freeze") != "ready":
+            # The private Session control owner is this Hold. A lost reply
+            # does not prove that the freeze was never applied.
+            freeze_attempted = True
+            reply = exchange("idle-freeze")
+            if reply == "busy":
+                freeze_attempted = False
+            if reply != "ready":
                 return False
-            frozen = True
             fresh = read_agent()
             if (not fresh or fresh["state"] != "idle"
                     or now_ms - max(ready_ms, fresh["last_activity_ms"] or ready_ms) < idle_ms):
@@ -195,10 +210,21 @@ def prepare_idle_stop(ready_ms, now_ms, known_failure):
         return True
     finally:
         if not success:
+            failed = []
             if ssh_touched:
-                restore_ssh_ingress()
-            if frozen:
-                exchange("release")
+                try:
+                    if not restore_ssh_ingress():
+                        failed.append("SSH")
+                except Exception:
+                    failed.append("SSH")
+            if freeze_attempted:
+                try:
+                    if exchange("release") != "released":
+                        failed.append("RCA")
+                except Exception:
+                    failed.append("RCA")
+            if failed:
+                raise IdleRecoveryError(" / ".join(failed))
 
 
 def hold_until(end_sec, ready_ms):
@@ -216,6 +242,14 @@ def hold_until(end_sec, ready_ms):
             try:
                 if prepare_idle_stop(max(ready_ms, last_busy_ms), now_ms, failed):
                     return "idle"
+            except IdleRecoveryError as error:
+                # Do not end a potentially active Session early or try further
+                # idle freezes with uncertain ingress state. Surface the
+                # failure now and mark the Hold failed at its original deadline.
+                print(f"::error::Session idle stop recovery unconfirmed: {error}", flush=True)
+                while time.time() < end_sec:
+                    time.sleep(min(10, max(0, end_sec - time.time())))
+                raise
             except Exception:
                 pass  # Unknown local state is not evidence for early stop.
             last_busy_ms = int(time.time() * 1000)

@@ -147,3 +147,103 @@ class SessionIdleTests(unittest.TestCase):
              mock.patch.object(idle,'systemctl') as systemctl:
             self.assertTrue(idle.stop_ssh_ingress())
             systemctl.assert_called_once_with('stop','ssh.socket','ssh.service')
+
+    def test_cancelled_idle_stop_reports_both_failed_recoveries(self):
+        observed = []
+        def exchange(command):
+            observed.append(command)
+            return "ready" if command == "idle-freeze" else None
+        with mock.patch.object(idle, "exchange", side_effect=exchange), \
+             mock.patch.object(idle, "read_agent", return_value={"state": "idle", "last_activity_ms": None}), \
+             mock.patch.object(idle, "stop_ssh_ingress", return_value=False), \
+             mock.patch.object(idle, "restore_ssh_ingress", return_value=False) as restore:
+            with self.assertRaisesRegex(RuntimeError, "SSH.*RCA"):
+                idle.prepare_idle_stop(1000, 2000000, False)
+            restore.assert_called_once()
+            self.assertIn("release", observed)
+
+    def test_recovery_failure_never_retries_idle_or_ends_active_hold_early(self):
+        clock = Clock(1000)
+        with mock.patch.dict(os.environ, {"SESSION_IDLE_MINUTES": "1"}), \
+             mock.patch.object(idle.time, "time", clock.time), mock.patch.object(idle.time, "sleep", clock.sleep), \
+             mock.patch.object(idle, "read_agent", return_value={"state": "idle", "last_activity_ms": None}), \
+             mock.patch.object(idle, "ssh_state", return_value="clear"), \
+             mock.patch.object(idle, "exchange", side_effect=lambda cmd: "ready" if cmd == "idle-freeze" else None), \
+             mock.patch.object(idle, "restore_ssh_ingress", return_value=False), \
+             mock.patch.object(idle, "stop_ssh_ingress", return_value=False) as stopping:
+            with self.assertRaisesRegex(RuntimeError, "SSH.*RCA"):
+                idle.hold_until(1120, 1000 * 1000)
+            self.assertEqual(clock.now, 1120)
+            stopping.assert_called_once()
+
+    def test_ssh_restore_requires_exact_tailnet_listener(self):
+        for listener, expected in (
+            ("LISTEN 0 128 100.64.0.7:22 0.0.0.0:*\n", True),
+            ("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n", False),
+            ("", False),
+        ):
+            with self.subTest(listener=listener), mock.patch.object(idle, "systemctl"), \
+                 mock.patch.object(idle.subprocess, "run", side_effect=[
+                     mock.Mock(stdout="100.64.0.7\n"), mock.Mock(stdout=listener)]):
+                self.assertEqual(idle.restore_ssh_ingress(), expected)
+
+    def test_real_private_socket_lost_freeze_ack_is_released(self):
+        import socket
+        import tempfile
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "session-rca"
+            root.mkdir(mode=0o700)
+            path = root / "upgrade.sock"
+            observed = []
+            frozen = []
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(str(path))
+                path.chmod(0o600)
+                server.listen(2)
+                server.settimeout(3)
+                def accept():
+                    try:
+                        for _ in range(2):
+                            conn, _ = server.accept()
+                            with conn:
+                                conn.settimeout(1)
+                                with conn.makefile("rb") as wire:
+                                    command = wire.readline(128)
+                                observed.append(command)
+                                if command == b"idle-freeze\n":
+                                    frozen.append(True)
+                                    # Close without replying after applying the freeze.
+                                elif command == b"release\n":
+                                    frozen.clear()
+                                    conn.sendall(b"released\n")
+                    except OSError:
+                        pass
+                thread = threading.Thread(target=accept, daemon=True)
+                thread.start()
+                try:
+                    with mock.patch.dict(os.environ, {"RUNNER_TEMP": tmp}), \
+                         mock.patch.object(idle, "reviewed_runner", return_value=True), \
+                         mock.patch.object(idle, "stop_ssh_ingress") as stopping:
+                        self.assertFalse(idle.prepare_idle_stop(1000, 2000000, False))
+                        stopping.assert_not_called()
+                finally:
+                    thread.join(4)
+                self.assertEqual(observed, [b"idle-freeze\n", b"release\n"])
+                self.assertFalse(frozen)
+
+    def test_definite_busy_does_not_release_a_freeze_it_never_acquired(self):
+        with mock.patch.object(idle, "exchange", return_value="busy") as exchange, \
+             mock.patch.object(idle, "stop_ssh_ingress") as stop:
+            self.assertFalse(idle.prepare_idle_stop(1000, 2000000, False))
+            exchange.assert_called_once_with("idle-freeze")
+            stop.assert_not_called()
+
+    def test_ssh_recovery_exception_does_not_skip_rca_release(self):
+        with mock.patch.object(idle, "exchange", side_effect=lambda cmd: "ready" if cmd == "idle-freeze" else "released") as exchange, \
+             mock.patch.object(idle, "read_agent", return_value={"state": "idle", "last_activity_ms": None}), \
+             mock.patch.object(idle, "stop_ssh_ingress", return_value=False), \
+             mock.patch.object(idle, "restore_ssh_ingress", side_effect=RuntimeError("private detail")):
+            with self.assertRaisesRegex(RuntimeError, "^SSH$"):
+                idle.prepare_idle_stop(1000, 2000000, False)
+            exchange.assert_called_with("release")
