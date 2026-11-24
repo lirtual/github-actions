@@ -24,11 +24,9 @@ WINDOWS_CANDIDATE_TIMEOUT_SECONDS = 600
 LIMIT = 180 * 1024 * 1024
 UNPACKED_LIMIT = 250 * 1024 * 1024
 COUNT_LIMIT = 200
-# Complete versions may be GitHub prereleases; -rc / other suffixed tags cannot auto-run.
+# Only the repository-wide immutable stable Latest may auto-run.
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
-RELEASE_PAGE_SIZE = 100
-RELEASE_PAGE_LIMIT = 5
 RELEASE_RESPONSE_LIMIT = 8 * 1024 * 1024
 
 
@@ -110,41 +108,27 @@ def download_pinned(url, archive, sha, opener=urllib.request.urlopen):
 
 
 def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
-    """Find the highest complete immutable Release, then verify its exact asset."""
-    eligible = []
-    for page in range(1, RELEASE_PAGE_LIMIT + 1):
-        url = (f"https://api.github.com/repos/{REPOSITORY}/releases"
-               f"?per_page={RELEASE_PAGE_SIZE}&page={page}")
-        request = urllib.request.Request(url, headers={
-            "User-Agent": "github-actions-session-rca",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
-        with opener(request, timeout=8) as response:
-            if response.geturl() != url:
-                raise BootstrapError("Unexpected GitHub Releases API redirect")
-            raw = response.read(RELEASE_RESPONSE_LIMIT + 1)
-        if len(raw) > RELEASE_RESPONSE_LIMIT:
-            raise BootstrapError("Release metadata exceeds limit")
-        releases = json.loads(raw)
-        if not isinstance(releases, list) or len(releases) > RELEASE_PAGE_SIZE:
-            raise BootstrapError("Invalid Release metadata")
-        for release in releases:
-            if not isinstance(release, dict):
-                raise BootstrapError("Invalid Release entry")
-            tag = release.get("tag_name")
-            if (isinstance(tag, str) and len(tag) <= 32
-                    and TAG.fullmatch(tag) and release.get("draft") is False):
-                eligible.append((tuple(map(int, tag[1:].split("."))), tag, release))
-        if len(releases) < RELEASE_PAGE_SIZE:
-            break
-    else:
-        raise BootstrapError("Release listing pagination incomplete")
-    if not eligible:
-        raise BootstrapError("No eligible full Release")
-    _, tag, release = max(eligible, key=lambda row: row[0])
-    if release.get("immutable") is not True:
-        raise BootstrapError("Latest Release is not immutable")
+    """Use the owner-selected repository-wide immutable stable Latest."""
+    metadata_url = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+    request = urllib.request.Request(metadata_url, headers={
+        "User-Agent": "github-actions-session-rca",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    with opener(request, timeout=8) as response:
+        if response.geturl() != metadata_url:
+            raise BootstrapError("Unexpected GitHub Releases API redirect")
+        raw = response.read(RELEASE_RESPONSE_LIMIT + 1)
+    if len(raw) > RELEASE_RESPONSE_LIMIT:
+        raise BootstrapError("Release metadata exceeds limit")
+    release = json.loads(raw)
+    if not isinstance(release, dict):
+        raise BootstrapError("Invalid Latest Release metadata")
+    tag = release.get("tag_name")
+    if (not isinstance(tag, str) or len(tag) > 32 or not TAG.fullmatch(tag)
+            or release.get("draft") is not False or release.get("prerelease") is not False
+            or release.get("immutable") is not True):
+        raise BootstrapError("Latest Release is not immutable stable")
     name = f"remote-control-agent-{tag}-{target}.{extension}"
     url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
     assets = release.get("assets")

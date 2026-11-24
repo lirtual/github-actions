@@ -631,11 +631,11 @@ class SessionRcaBootstrapTests(unittest.TestCase):
 
 class LatestReleaseSelectionTests(unittest.TestCase):
     def release(self, tag=TAG, *, immutable=True, draft=False, digest=None,
-                windows=False, uploaded=True):
+                windows=False, uploaded=True, prerelease=False):
         target = 'windows-x64' if windows else 'linux-x64-glibc'
         ext = 'zip' if windows else 'tar.gz'
         name = f'remote-control-agent-{tag}-{target}.{ext}'
-        return {'tag_name': tag, 'draft': draft, 'prerelease': True,
+        return {'tag_name': tag, 'draft': draft, 'prerelease': prerelease,
                 'immutable': immutable, 'assets': [{
                     'name': name, 'state': 'uploaded' if uploaded else 'new',
                     'size': 1234,
@@ -644,11 +644,11 @@ class LatestReleaseSelectionTests(unittest.TestCase):
                         f'https://github.com/{rca.REPOSITORY}/releases/download/{tag}/{name}',
                 }]}
 
-    def lookup(self, releases, *, redirect=False, windows=False):
+    def lookup(self, latest, *, redirect=False, windows=False):
         requested = []
         def opener(req, timeout):
             requested.append((req.full_url, timeout))
-            data = json.dumps(releases).encode()
+            data = json.dumps(latest).encode()
             response = Download(data)
             response.geturl = lambda: (
                 'https://evil.invalid/' if redirect else req.full_url)
@@ -656,52 +656,53 @@ class LatestReleaseSelectionTests(unittest.TestCase):
         target, ext = ('windows-x64', 'zip') if windows else ('linux-x64-glibc', 'tar.gz')
         return rca.resolve_latest_release(target, ext, opener=opener), requested
 
-    def test_highest_complete_semver_not_latest_api_order(self):
-        result, urls = self.lookup([self.release('v0.1.49'),
-                                    self.release('v0.1.51'),
-                                    self.release('v0.1.50-rc.3'),
-                                    self.release('v0.1.52', draft=True)])
-        self.assertEqual('v0.1.51', result[0])
-        self.assertEqual('a' * 64, result[1])
-        self.assertTrue(result[2].endswith('v0.1.51-linux-x64-glibc.tar.gz'))
-        self.assertEqual(1, len(urls))
-        self.assertIn('per_page=100&page=1', urls[0][0])
-        self.assertLessEqual(urls[0][1], 8)
+    def test_only_owner_selected_latest_not_highest_numeric_release(self):
+        latest = self.release('v0.1.49')
+        other = self.release('v0.1.51', prerelease=True)
+        # A listing may contain an immutable, numerically greater prerelease.
+        # Only the explicit repository-wide Latest endpoint is authoritative.
+        requested = []
+        def opener(req, timeout):
+            requested.append(req.full_url)
+            result = latest if req.full_url.endswith('/releases/latest') else [latest, other]
+            response = Download(json.dumps(result).encode())
+            response.geturl = lambda: req.full_url
+            return response
+        result = rca.resolve_latest_release('linux-x64-glibc', 'tar.gz', opener=opener)
+        self.assertEqual(result[0], 'v0.1.49')
+        self.assertEqual(requested, [f'https://api.github.com/repos/{rca.REPOSITORY}/releases/latest'])
 
     def test_windows_target_uses_matching_asset(self):
-        result, _ = self.lookup([self.release(windows=True)], windows=True)
+        result, _ = self.lookup(self.release(windows=True), windows=True)
         self.assertTrue(result[2].endswith('v0.1.40-windows-x64.zip'))
 
-    def test_no_downgrade_if_highest_release_is_mutable_or_missing_asset(self):
+    def test_invalid_latest_never_falls_back(self):
         for latest in (self.release('v0.1.52', immutable=False),
                        self.release('v0.1.52', uploaded=False),
                        self.release('v0.1.52', digest='bad'),
-                       {'tag_name': 'v0.1.52', 'draft': False,
-                        'immutable': True, 'assets': []}):
+                       self.release('v0.1.52', prerelease=True),
+                       self.release('v0.1.52', draft=True),
+                       self.release('v0.1.52-rc.1'),
+                       {**self.release(), 'assets': []},
+                       None, []):
             with self.subTest(latest=latest), self.assertRaises(rca.BootstrapError):
-                self.lookup([self.release('v0.1.51'), latest])
-
-    def test_draft_rc_and_empty_listing_are_denied(self):
-        with self.assertRaises(rca.BootstrapError):
-            self.lookup([self.release('v0.1.52-rc.1'),
-                         self.release('v0.1.53', draft=True)])
-        with self.assertRaises(rca.BootstrapError):
-            self.lookup([])
+                self.lookup(latest)
 
     def test_api_redirect_is_rejected(self):
         with self.assertRaises(rca.BootstrapError):
-            self.lookup([self.release()], redirect=True)
+            self.lookup(self.release(), redirect=True)
 
-    def test_pagination_limit_fails_closed(self):
-        releases = [self.release() for _ in range(rca.RELEASE_PAGE_SIZE)]
-        with self.assertRaisesRegex(rca.BootstrapError, 'pagination incomplete'):
-            self.lookup(releases)
+    def test_duplicate_target_asset_denied(self):
+        latest = self.release()
+        latest['assets'] *= 2
+        with self.assertRaises(rca.BootstrapError):
+            self.lookup(latest)
 
     def test_tampered_download_url_denied(self):
         release = self.release()
         release['assets'][0]['browser_download_url'] = 'https://evil.invalid/asset'
         with self.assertRaises(rca.BootstrapError):
-            self.lookup([release])
+            self.lookup(release)
 
 if __name__ == '__main__':
     unittest.main()
