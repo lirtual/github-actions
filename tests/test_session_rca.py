@@ -632,17 +632,19 @@ class SessionRcaBootstrapTests(unittest.TestCase):
 class LatestReleaseSelectionTests(unittest.TestCase):
     def release(self, tag=TAG, *, immutable=True, draft=False, digest=None,
                 windows=False, uploaded=True, prerelease=False):
-        target = 'windows-x64' if windows else 'linux-x64-glibc'
-        ext = 'zip' if windows else 'tar.gz'
-        name = f'remote-control-agent-{tag}-{target}.{ext}'
+        # The public release contract requires all five platform assets.
+        assets = []
+        for target, ext in [('linux-x64-glibc', 'tar.gz'), ('linux-arm64-glibc', 'tar.gz'),
+                            ('windows-x64', 'zip'), ('darwin-arm64', 'tar.gz'), ('darwin-x64', 'tar.gz')]:
+            name = f'remote-control-agent-{tag}-{target}.{ext}'
+            assets.append({
+                'name': name, 'state': 'uploaded' if uploaded else 'new',
+                'size': 1234, 'digest': 'sha256:' + (digest or 'a' * 64),
+                'browser_download_url':
+                    f'https://github.com/{rca.REPOSITORY}/releases/download/{tag}/{name}',
+            })
         return {'tag_name': tag, 'draft': draft, 'prerelease': prerelease,
-                'immutable': immutable, 'assets': [{
-                    'name': name, 'state': 'uploaded' if uploaded else 'new',
-                    'size': 1234,
-                    'digest': 'sha256:' + (digest or 'a' * 64),
-                    'browser_download_url':
-                        f'https://github.com/{rca.REPOSITORY}/releases/download/{tag}/{name}',
-                }]}
+                'immutable': immutable, 'assets': assets}
 
     def lookup(self, latest, *, redirect=False, windows=False):
         requested = []
@@ -697,6 +699,33 @@ class LatestReleaseSelectionTests(unittest.TestCase):
         latest['assets'] *= 2
         with self.assertRaises(rca.BootstrapError):
             self.lookup(latest)
+
+    def test_all_platforms_required_even_for_linux_session(self):
+        for index in range(1, 5):
+            latest = self.release()
+            latest['assets'].pop(index)
+            with self.subTest(missing=index), self.assertRaises(rca.BootstrapError):
+                self.lookup(latest)
+
+    def test_mixed_platform_release_is_denied(self):
+        latest = self.release()
+        latest['assets'].append(self.release('v0.1.57')['assets'][2])
+        with self.assertRaises(rca.BootstrapError):
+            self.lookup(latest)
+
+    def test_invalid_other_platform_metadata_denied(self):
+        for field, value in [('digest', 'bad'), ('state', 'new'),
+                             ('size', 180_000_001), ('size', True),
+                             ('browser_download_url', 'https://evil.invalid/asset')]:
+            latest = self.release()
+            latest['assets'][3][field] = value
+            with self.subTest(field=field), self.assertRaises(rca.BootstrapError):
+                self.lookup(latest)
+
+    def test_non_platform_manifest_allowed(self):
+        latest = self.release()
+        latest['assets'].append({'name': 'remote-control-agent-manifest.txt'})
+        self.assertEqual(self.lookup(latest)[0][0], TAG)
 
     def test_tampered_download_url_denied(self):
         release = self.release()

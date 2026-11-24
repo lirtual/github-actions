@@ -129,25 +129,51 @@ def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
             or release.get("draft") is not False or release.get("prerelease") is not False
             or release.get("immutable") is not True):
         raise BootstrapError("Latest Release is not immutable stable")
-    name = f"remote-control-agent-{tag}-{target}.{extension}"
-    url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+    # Same repository-wide release admission as the public installers:
+    # validate all five assets before selecting the local Session package.
+    targets = {
+        "linux-x64-glibc": "tar.gz", "linux-arm64-glibc": "tar.gz",
+        "windows-x64": "zip", "darwin-arm64": "tar.gz", "darwin-x64": "tar.gz",
+    }
+    if targets.get(target) != extension:
+        raise BootstrapError("Unsupported Release target")
+    expected = {f"remote-control-agent-{tag}-{t}.{ext}": t
+                for t, ext in targets.items()}
+    platform_name = re.compile(
+        r"remote-control-agent-v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?-"
+        r"(?:linux-x64-glibc|linux-arm64-glibc|windows-x64|darwin-arm64|darwin-x64)"
+        r"\.(?:tar\.gz|zip)\Z")
+    if ("html_url" in release and release["html_url"] !=
+            f"https://github.com/{REPOSITORY}/releases/tag/{tag}"):
+        raise BootstrapError("Untrusted Latest Release origin")
     assets = release.get("assets")
     if not isinstance(assets, list):
         raise BootstrapError("Release assets unavailable")
-    matches = [asset for asset in assets
-               if isinstance(asset, dict) and asset.get("name") == name]
-    if len(matches) != 1:
-        raise BootstrapError("Matching Release asset missing or ambiguous")
-    asset = matches[0]
-    digest = asset.get("digest")
-    size = asset.get("size")
-    if (asset.get("state") != "uploaded" or
-            asset.get("browser_download_url") != url or
-            not isinstance(digest, str) or not digest.startswith("sha256:") or
-            not DIGEST.fullmatch(digest[7:]) or
-            type(size) is not int or not 0 < size <= LIMIT):
-        raise BootstrapError("Unverified Release asset")
-    return tag, digest[7:], url
+    selected = {}
+    for asset in assets:
+        if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
+            raise BootstrapError("Malformed Release asset")
+        name = asset["name"]
+        platform = expected.get(name)
+        if platform is None:
+            if platform_name.fullmatch(name):
+                raise BootstrapError("Release mixes incompatible platform assets")
+            continue
+        url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+        digest = asset.get("digest")
+        size = asset.get("size")
+        if (platform in selected or asset.get("state") != "uploaded" or
+                asset.get("browser_download_url") != url or
+                not isinstance(digest, str) or not digest.startswith("sha256:") or
+                not DIGEST.fullmatch(digest[7:]) or
+                type(size) is not int or not 0 < size <= 180_000_000):
+            raise BootstrapError("Unverified or duplicate Release asset")
+        selected[platform] = (digest[7:], url)
+    if len(selected) != len(targets):
+        raise BootstrapError("Latest Release is missing a platform asset")
+    digest, url = selected[target]
+    return tag, digest, url
+
 
 
 def confirm_linux_registration(process, timeout=45):
