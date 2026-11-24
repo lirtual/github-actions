@@ -183,6 +183,7 @@ class SessionIdleTests(unittest.TestCase):
             ("", False),
         ):
             with self.subTest(listener=listener), mock.patch.object(idle, "systemctl"), \
+                 mock.patch.object(idle, "stop_ssh_ingress", return_value=True), \
                  mock.patch.object(idle.subprocess, "run", side_effect=[
                      mock.Mock(stdout="100.64.0.7\n"), mock.Mock(stdout=listener)]):
                 self.assertEqual(idle.restore_ssh_ingress(), expected)
@@ -244,6 +245,46 @@ class SessionIdleTests(unittest.TestCase):
              mock.patch.object(idle, "read_agent", return_value={"state": "idle", "last_activity_ms": None}), \
              mock.patch.object(idle, "stop_ssh_ingress", return_value=False), \
              mock.patch.object(idle, "restore_ssh_ingress", side_effect=RuntimeError("private detail")):
-            with self.assertRaisesRegex(RuntimeError, "^SSH$"):
+            with self.assertRaisesRegex(RuntimeError, "SSH ingress"):
                 idle.prepare_idle_stop(1000, 2000000, False)
             exchange.assert_called_with("release")
+
+    def test_non_tailnet_restoration_closes_ingress_or_refuses_continued_hold(self):
+        listener = "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n"
+        for closed in (True, False):
+            with self.subTest(closed=closed), mock.patch.object(idle, "systemctl"), \
+                 mock.patch.object(idle.subprocess, "run", side_effect=[
+                     mock.Mock(stdout="100.64.0.7\n"), mock.Mock(stdout=listener)]), \
+                 mock.patch.object(idle, "stop_ssh_ingress", return_value=closed) as stop:
+                if closed:
+                    self.assertFalse(idle.restore_ssh_ingress())
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "SSH ingress"):
+                        idle.restore_ssh_ingress()
+                stop.assert_called_once()
+
+    def test_unconfirmed_unsafe_listener_releases_rca_and_does_not_hold(self):
+        clock = Clock(1000)
+        with mock.patch.dict(os.environ, {"SESSION_IDLE_MINUTES": "1"}), \
+             mock.patch.object(idle.time, "time", clock.time), mock.patch.object(idle.time, "sleep", clock.sleep), \
+             mock.patch.object(idle, "read_agent", return_value={"state": "idle", "last_activity_ms": None}), \
+             mock.patch.object(idle, "ssh_state", return_value="clear"), \
+             mock.patch.object(idle, "exchange", side_effect=lambda cmd: "ready" if cmd == "idle-freeze" else "released") as exchange, \
+             mock.patch.object(idle, "systemctl"), \
+             mock.patch.object(idle.subprocess, "run", side_effect=[
+                 mock.Mock(stdout="100.64.0.7\n"), mock.Mock(stdout="LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n")]), \
+             mock.patch.object(idle, "stop_ssh_ingress", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "SSH ingress"):
+                idle.hold_until(1120, 1000 * 1000)
+            self.assertEqual(clock.now, 1060)
+            exchange.assert_called_with("release")
+
+    def test_partial_start_and_unknown_listener_are_fenced(self):
+        import subprocess
+        for readback in ("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n", OSError("private detail")):
+            effect = readback if isinstance(readback, Exception) else mock.Mock(stdout=readback)
+            with self.subTest(readback=type(readback)), mock.patch.object(idle, "systemctl", side_effect=subprocess.CalledProcessError(1, "start")), \
+                 mock.patch.object(idle.subprocess, "run", side_effect=[mock.Mock(stdout="100.64.0.7\n"), effect]), \
+                 mock.patch.object(idle, "stop_ssh_ingress", return_value=True) as stop:
+                self.assertFalse(idle.restore_ssh_ingress())
+                stop.assert_called_once()

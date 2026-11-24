@@ -159,18 +159,34 @@ def stop_ssh_ingress():
         return False
 
 
+class UnsafeSshIngressError(RuntimeError):
+    """The SSH listener cannot be proven restricted or closed."""
+
+
 def restore_ssh_ingress():
+    started = True
     try:
         systemctl("start", "ssh.socket", "ssh.service")
+    except (OSError, subprocess.SubprocessError):
+        started = False
+    # Even a failed start can leave one unit listening. Never keep an
+    # unverified listener open just to preserve the Session lifetime.
+    try:
         tailnet_ip = subprocess.run(["tailscale", "ip", "-4"],
                                     capture_output=True, text=True, check=True, timeout=5).stdout.strip()
         listeners = subprocess.run(["ss", "-H", "-ltn", "( sport = :22 )"],
                                    capture_output=True, text=True, check=True, timeout=5).stdout
         rows = [row.split() for row in listeners.splitlines()]
-        return (bool(tailnet_ip) and len(rows) == 1 and len(rows[0]) >= 4
-                and rows[0][3] == tailnet_ip + ":22")
+        if not rows:
+            return False
+        if (bool(tailnet_ip) and len(rows) == 1 and len(rows[0]) >= 4
+                and rows[0][3] == tailnet_ip + ":22"):
+            return started
     except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+        pass
+    if stop_ssh_ingress():  # Existing non-killing shutdown and listener readback.
         return False
+    raise UnsafeSshIngressError("SSH ingress not confirmed restricted or closed")
 
 
 class IdleRecoveryError(RuntimeError):
@@ -211,18 +227,22 @@ def prepare_idle_stop(ready_ms, now_ms, known_failure):
     finally:
         if not success:
             failed = []
+            unsafe_ssh = False
             if ssh_touched:
                 try:
                     if not restore_ssh_ingress():
                         failed.append("SSH")
                 except Exception:
-                    failed.append("SSH")
+                    unsafe_ssh = True
             if freeze_attempted:
                 try:
                     if exchange("release") != "released":
                         failed.append("RCA")
                 except Exception:
                     failed.append("RCA")
+            if unsafe_ssh:
+                suffix = "; RCA release unconfirmed" if "RCA" in failed else ""
+                raise UnsafeSshIngressError("SSH ingress not confirmed restricted or closed" + suffix)
             if failed:
                 raise IdleRecoveryError(" / ".join(failed))
 
@@ -242,6 +262,10 @@ def hold_until(end_sec, ready_ms):
             try:
                 if prepare_idle_stop(max(ready_ms, last_busy_ms), now_ms, failed):
                     return "idle"
+            except UnsafeSshIngressError as error:
+                # Security boundary takes precedence over the remaining lifetime.
+                print(f"::error::{error}; normal job cleanup follows", flush=True)
+                raise
             except IdleRecoveryError as error:
                 # Do not end a potentially active Session early or try further
                 # idle freezes with uncertain ingress state. Surface the
