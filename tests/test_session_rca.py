@@ -23,7 +23,7 @@ spec.loader.exec_module(rca)
 TAG = 'v0.1.40'
 
 
-def bundle(windows=False, version=TAG, extra=(), native=False, omit=(), overrides=None):
+def bundle(windows=False, version=TAG, extra=(), native=True, omit=(), overrides=None):
     target = 'windows-x64' if windows else 'linux-x64-glibc'
     name = 'session-rca-windows.js' if windows else 'session-rca-main.js'
     files = {
@@ -128,7 +128,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
 
     def test_missing_ambient_oidc_audience_is_discovered_for_both_runners(self):
         for windows in (False, True):
-            with self.subTest(windows=windows):
+            with self.subTest(windows=windows), mock.patch.object(rca, 'observe_windows_transport', return_value='alive'), mock.patch.object(rca, 'observe_windows_child_stage', return_value='wss_start'):
                 result, calls = self.invoke(bundle(windows=windows), windows=windows)
                 self.assertTrue(result)
                 self.assertEqual(len(calls), 1)
@@ -331,8 +331,8 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(len(calls), 1)
         argv, opts = calls[0]
-        self.assertTrue(argv[0].replace('\\', '/').endswith('/bin/node'))
-        self.assertTrue(argv[1].replace('\\', '/').endswith('/apps/remote-control-agent/src/session-rca-main.js'))
+        self.assertEqual(len(argv), 1)
+        self.assertTrue(argv[0].endswith('/.build/rca-session-linux-candidate'))
         self.assertTrue(opts['start_new_session'])
         self.assertEqual(opts['env']['GITHUB_REPOSITORY'], 'autoactions/github-actions')
         self.assertEqual(opts['env']['SESSION_ACTION_RCA'], '1')
@@ -362,10 +362,12 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             self.assertNotEqual(calls[0][1]["env"].get("SHELL"), str(shell))
 
     def test_windows_matching_pin_launches_approved_windows_entrypoint(self):
-        result, calls = self.invoke(bundle(windows=True), windows=True)
-        self.assertTrue(result)
+        with mock.patch.object(rca, 'observe_windows_transport', return_value='alive'), mock.patch.object(rca, 'observe_windows_child_stage', return_value='wss_start'):
+            result, calls = self.invoke(bundle(windows=True), windows=True)
+        self.assertIs(result, True)
         self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0][0][1].endswith('session-rca-windows.js'))
+        self.assertEqual(len(calls[0][0]), 1)
+        self.assertTrue(calls[0][0][0].endswith('rca-session-windows-candidate.exe'))
         self.assertFalse(calls[0][1]['start_new_session'])
         self.assertNotIn('SESSION_ACTION_RCA', calls[0][1]['env'])
         self.assertNotIn('BASH_ENV', calls[0][1]['env'])
@@ -382,6 +384,13 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 self.assertEqual(len(argv), 1)
                 self.assertTrue(argv[0].endswith('rca-session-windows-candidate.exe' if windows else 'rca-session-linux-candidate'))
                 self.assertEqual(opts['start_new_session'], not windows)
+
+    def test_retired_node_release_never_launches(self):
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                result, calls = self.invoke(bundle(windows=windows, native=False), windows=windows)
+                self.assertEqual(result, 'denied')
+                self.assertEqual(calls, [])
 
     def test_native_release_missing_session_contract_never_falls_back(self):
         for windows in (False, True):
@@ -448,14 +457,14 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 calls.append((argv, opts))
                 return result
             value = rca.observe_windows_transport(
-                1234, r"C:\\Runner\\private\\node.exe", run=run, delay=lambda _: None)
+                1234, r"C:\\Runner\\private\\rca-session-windows-candidate.exe", run=run, delay=lambda _: None)
             self.assertEqual(value, expected)
             self.assertEqual(len(calls), 1)
             argv, opts = calls[0]
             self.assertIn("ParentProcessId = 1234", argv[-1])
             self.assertIn("--session-transport", argv[-1])
             self.assertIn(r'(?:^|\s)', argv[-1])
-            self.assertIn("node.exe", argv[-1])
+            self.assertIn("rca-session-windows-candidate.exe", argv[-1])
             self.assertIs(opts['stderr'], rca.subprocess.DEVNULL)
             self.assertLessEqual(opts['timeout'], 10)
         check(Result(b"alive\n"), "alive")
@@ -467,9 +476,9 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         def hang(*args, **kwargs):
             raise rca.subprocess.TimeoutExpired("synthetic", 1)
         self.assertEqual(rca.observe_windows_transport(
-            1234, r"C:\\Runner\\node.exe", run=hang, delay=lambda _: None), "unknown")
+            1234, r"C:\\Runner\\rca-session-windows-candidate.exe", run=hang, delay=lambda _: None), "unknown")
         self.assertEqual(rca.observe_windows_transport(
-            0, r"C:\\Runner\\node.exe", run=hang, delay=lambda _: None), "unknown")
+            0, r"C:\\Runner\\rca-session-windows-candidate.exe", run=hang, delay=lambda _: None), "unknown")
 
     @unittest.skipUnless(sys.platform == 'win32' and os.environ.get('GITHUB_ACTIONS') == 'true',
                          'Native Windows CI only')
@@ -565,7 +574,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             with mock.patch.object(rca.sys, 'platform', 'linux'), \
                     mock.patch.object(rca, 'discover_audience', return_value='workflow-github-abcde'):
                 self.assertTrue(rca.start(env, opener=opener,
-                    launch=lambda *_a, **_kw: type('Child', (), {'pid': 1234})(),
+                    launch=lambda *_a, **_kw: type('Child', (), {'pid': 1234, 'wait': lambda self, timeout: 0})(),
                     select_release=lambda target, ext, _opener: (
                         TAG, hashlib.sha256(payload).hexdigest(),
                         f"https://github.com/{rca.REPOSITORY}/releases/download/"

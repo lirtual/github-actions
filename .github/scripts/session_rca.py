@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional Session RCA bootstrap: immutable Release by default, pinned Rust source for Ubuntu acceptance."""
+"""Optional Session RCA bootstrap: immutable Release by default, pinned Rust source for acceptance."""
 import hashlib
 import json
 import os
@@ -329,7 +329,7 @@ def observe_windows_transport(parent_pid, executable, *, run=subprocess.run,
     """One bounded native process snapshot; status is not proof of WSS online."""
     if not isinstance(parent_pid, int) or parent_pid <= 0:
         return "unknown"
-    # The entry is the SHA-pinned, already verified Node executable. Match
+    # The entry is the SHA-pinned, already verified Rust executable. Match
     # both its exact native image path and the transport-only argv marker.
     safe_path = str(executable).replace("'", "''")
     script = (
@@ -494,46 +494,23 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         manifest.get("name") != "remote-control-agent" or manifest.get("device_protocol") != 2 or
         manifest.get("upgrade_profile") != "paired-full-v1"):
         raise BootstrapError("Unreviewed Session RCA release identity")
-    if "artifact_profile" in manifest:
-        expected_runtime = "rust-standard-windows-v1" if windows else "rust-standard-linux-v1"
-        if (manifest.get("artifact_profile") != "rust-native-only-v1" or
-                manifest.get("artifact_schema") != 1 or manifest.get("agent_runtime") != expected_runtime or
-                manifest.get("session_runtime") != "rust-session-v1" or manifest.get("modules") != [] or
-                "node" in manifest or "upgrade_protocol" in manifest or
-                (stage / "bin" / ("node.exe" if windows else "node")).exists()):
-            raise BootstrapError("Unreviewed native Session Release profile")
-        build = stage / "apps/remote-control-agent/.build"
-        executable = build / ("rca-session-windows-candidate.exe" if windows else "rca-session-linux-candidate")
-        required = [executable] if windows else [executable, build / "session-supervisor"]
-        if any(not path.is_file() or path.is_symlink() for path in required):
-            raise BootstrapError("Release lacks reviewed native Session entry")
-        if not windows:
-            for path in required:
-                path.chmod(0o700)
-        BOOTSTRAP_PHASE = "process_launch"
-        return launch_native(executable, registration_env, temp, windows, launch)
-    if "session_runtime" in manifest:
-        raise BootstrapError("Unreviewed Session Release profile")
-    node = stage / "bin" / ("node.exe" if windows else "node")
-    entry = stage / "apps" / "remote-control-agent" / "src" / ("session-rca-windows.js" if windows else "session-rca-main.js")
-    if not node.is_file() or node.is_symlink() or not entry.is_file() or entry.is_symlink():
-        raise BootstrapError("Release lacks Session-only foreground executable")
-    flags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
+    expected_runtime = "rust-standard-windows-v1" if windows else "rust-standard-linux-v1"
+    if (manifest.get("artifact_profile") != "rust-native-only-v1" or
+            manifest.get("artifact_schema") != 1 or manifest.get("agent_runtime") != expected_runtime or
+            manifest.get("session_runtime") != "rust-session-v1" or manifest.get("modules") != [] or
+            "node" in manifest or "upgrade_protocol" in manifest or
+            (stage / "bin" / ("node.exe" if windows else "node")).exists()):
+        raise BootstrapError("Unreviewed native Session Release profile")
+    build = stage / "apps/remote-control-agent/.build"
+    executable = build / ("rca-session-windows-candidate.exe" if windows else "rca-session-linux-candidate")
+    required = [executable] if windows else [executable, build / "session-supervisor"]
+    if any(not path.is_file() or path.is_symlink() for path in required):
+        raise BootstrapError("Release lacks reviewed native Session entry")
+    if not windows:
+        for path in required:
+            path.chmod(0o700)
     BOOTSTRAP_PHASE = "process_launch"
-    process = launch([str(node), str(entry)], cwd=str(stage), env=registration_env,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=flags, start_new_session=not windows)
-    BOOTSTRAP_SPAWNED = True
-    print(f"Session RCA job-scoped foreground Agent launched (pid {process.pid}); online admission remains authoritative.")
-    if windows:
-        confirm_windows_registration(process)
-        # No raw process/command-line data is logged, only a fixed snapshot.
-        # A live child is not necessarily authenticated to the WSS server.
-        state = observe_windows_transport(process.pid, node)
-        print(f"Session RCA Windows credential-free transport: {state}; WSS admission remains authoritative.")
-        stage_status = observe_windows_child_stage(temp)
-        print(f"Session RCA Windows child stage: {stage_status}; WSS admission remains authoritative.")
-    return True
+    return launch_native(executable, registration_env, temp, windows, launch)
 
 
 def main():
