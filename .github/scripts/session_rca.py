@@ -396,6 +396,29 @@ def observe_windows_child_stage(runner_temp, delay=time.sleep):
         return "unknown"
 
 
+
+def launch_native(executable, registration_env, temp, windows, launch):
+    global BOOTSTRAP_SPAWNED
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
+    process = launch([str(executable)], cwd=str(executable.parent), env=registration_env,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, creationflags=flags,
+                     start_new_session=not windows)
+    BOOTSTRAP_SPAWNED = True
+    print(f"Session RCA Rust Candidate launched (pid {process.pid}); Worker online admission remains authoritative.")
+    if windows:
+        confirm_windows_registration(process)
+        state = observe_windows_transport(process.pid, executable)
+        stage = observe_windows_child_stage(temp, delay=lambda _seconds: None)
+        print(f"Session RCA Windows Candidate stage: {stage}; WSS admission remains authoritative.")
+        if state != "alive":
+            raise BootstrapError("Windows RCA Candidate transport liveness unconfirmed.")
+        print("Session RCA Windows credential-free transport: alive; WSS admission remains authoritative.")
+    else:
+        confirm_linux_registration(process)
+    return True
+
+
 def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen,
           select_release=resolve_latest_release, build_candidate=build_linux_candidate,
           build_windows_candidate_fn=build_windows_candidate):
@@ -447,26 +470,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         BOOTSTRAP_PHASE = "candidate_build"
         executable = build_windows_candidate_fn(temp) if windows else build_candidate(temp)
         BOOTSTRAP_PHASE = "candidate_launch"
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
-        process = launch([str(executable)], cwd=str(executable.parent), env=registration_env,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, creationflags=flags,
-                         start_new_session=not windows)
-        BOOTSTRAP_SPAWNED = True
-        print(f"Session RCA Rust Candidate launched (pid {process.pid}); Worker online admission remains authoritative.")
-        if windows:
-            confirm_windows_registration(process)
-            state = observe_windows_transport(process.pid, executable)
-            stage = observe_windows_child_stage(temp, delay=lambda _seconds: None)
-            print(f"Session RCA Windows Candidate stage: {stage}; WSS admission remains authoritative.")
-            if state != "alive":
-                # A successful one-shot registration does not establish a live
-                # credential-free transport. Never report Candidate startup ready.
-                raise BootstrapError("Windows RCA Candidate transport liveness unconfirmed.")
-            print("Session RCA Windows credential-free transport: alive; WSS admission remains authoritative.")
-        else:
-            confirm_linux_registration(process)
-        return True
+        return launch_native(executable, registration_env, temp, windows, launch)
 
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
@@ -490,6 +494,26 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
         manifest.get("name") != "remote-control-agent" or manifest.get("device_protocol") != 2 or
         manifest.get("upgrade_profile") != "paired-full-v1"):
         raise BootstrapError("Unreviewed Session RCA release identity")
+    if "artifact_profile" in manifest:
+        expected_runtime = "rust-standard-windows-v1" if windows else "rust-standard-linux-v1"
+        if (manifest.get("artifact_profile") != "rust-native-only-v1" or
+                manifest.get("artifact_schema") != 1 or manifest.get("agent_runtime") != expected_runtime or
+                manifest.get("session_runtime") != "rust-session-v1" or manifest.get("modules") != [] or
+                "node" in manifest or "upgrade_protocol" in manifest or
+                (stage / "bin" / ("node.exe" if windows else "node")).exists()):
+            raise BootstrapError("Unreviewed native Session Release profile")
+        build = stage / "apps/remote-control-agent/.build"
+        executable = build / ("rca-session-windows-candidate.exe" if windows else "rca-session-linux-candidate")
+        required = [executable] if windows else [executable, build / "session-supervisor"]
+        if any(not path.is_file() or path.is_symlink() for path in required):
+            raise BootstrapError("Release lacks reviewed native Session entry")
+        if not windows:
+            for path in required:
+                path.chmod(0o700)
+        BOOTSTRAP_PHASE = "process_launch"
+        return launch_native(executable, registration_env, temp, windows, launch)
+    if "session_runtime" in manifest:
+        raise BootstrapError("Unreviewed Session Release profile")
     node = stage / "bin" / ("node.exe" if windows else "node")
     entry = stage / "apps" / "remote-control-agent" / "src" / ("session-rca-windows.js" if windows else "session-rca-main.js")
     if not node.is_file() or node.is_symlink() or not entry.is_file() or entry.is_symlink():

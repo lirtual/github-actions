@@ -23,7 +23,7 @@ spec.loader.exec_module(rca)
 TAG = 'v0.1.40'
 
 
-def bundle(windows=False, version=TAG, extra=()):
+def bundle(windows=False, version=TAG, extra=(), native=False, omit=(), overrides=None):
     target = 'windows-x64' if windows else 'linux-x64-glibc'
     name = 'session-rca-windows.js' if windows else 'session-rca-main.js'
     files = {
@@ -32,6 +32,18 @@ def bundle(windows=False, version=TAG, extra=()):
         'bin/node.exe' if windows else 'bin/node': b'synthetic-node-not-executed',
         f'apps/remote-control-agent/src/{name}': b'// synthetic entry not executed\n',
     }
+    if native:
+        manifest = json.loads(files['bundle.json'])
+        manifest.update(artifact_schema=1, artifact_profile='rust-native-only-v1',
+                        agent_runtime='rust-standard-windows-v1' if windows else 'rust-standard-linux-v1',
+                        session_runtime='rust-session-v1', modules=[])
+        manifest.update(overrides or {})
+        files = {'bundle.json': json.dumps(manifest).encode(),
+                 'apps/remote-control-agent/.build/' + ('rca-session-windows-candidate.exe' if windows else 'rca-session-linux-candidate'): b'synthetic-session-not-executed'}
+        if not windows:
+            files['apps/remote-control-agent/.build/session-supervisor'] = b'synthetic-supervisor'
+    for path in omit:
+        files.pop(path, None)
     output = io.BytesIO()
     if windows:
         with zipfile.ZipFile(output, 'w') as z:
@@ -42,6 +54,8 @@ def bundle(windows=False, version=TAG, extra=()):
             for path, content in [*files.items(), *extra]:
                 entry = tarfile.TarInfo(path)
                 entry.size = len(content)
+                if native and "/.build/" in path:
+                    entry.mode = 0o700
                 tf.addfile(entry, io.BytesIO(content))
     return output.getvalue()
 
@@ -357,6 +371,29 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertNotIn('BASH_ENV', calls[0][1]['env'])
         self.assertIs(calls[0][1]['stderr'], rca.subprocess.DEVNULL)
         self.assertIs(calls[0][1]['stdout'], rca.subprocess.DEVNULL)
+
+    def test_native_stable_launches_only_reviewed_session_entry(self):
+        for windows in (False, True):
+            with self.subTest(windows=windows), mock.patch.object(rca, 'observe_windows_transport', return_value='alive'), mock.patch.object(rca, 'observe_windows_child_stage', return_value='wss_start'):
+                result, calls = self.invoke(bundle(windows=windows, native=True), windows=windows)
+                self.assertIs(result, True)
+                self.assertEqual(len(calls), 1)
+                argv, opts = calls[0]
+                self.assertEqual(len(argv), 1)
+                self.assertTrue(argv[0].endswith('rca-session-windows-candidate.exe' if windows else 'rca-session-linux-candidate'))
+                self.assertEqual(opts['start_new_session'], not windows)
+
+    def test_native_release_missing_session_contract_never_falls_back(self):
+        for windows in (False, True):
+            entry = 'apps/remote-control-agent/.build/' + ('rca-session-windows-candidate.exe' if windows else 'rca-session-linux-candidate')
+            for options in ({'omit': (entry,)}, {'overrides': {'session_runtime': None}},
+                            {'overrides': {'agent_runtime': 'node-v2'}},
+                            {'overrides': {'modules': ['node.js']}},
+                            {'extra': (('bin/node.exe' if windows else 'bin/node', b'node'),)}):
+                with self.subTest(windows=windows, options=options):
+                    result, calls = self.invoke(bundle(windows=windows, native=True, **options), windows=windows)
+                    self.assertEqual(result, 'denied')
+                    self.assertEqual(calls, [])
 
     def test_windows_registration_nonzero_exit_fails_without_error_output(self):
         from contextlib import redirect_stdout
