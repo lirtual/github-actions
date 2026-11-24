@@ -130,7 +130,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         for windows in (False, True):
             with self.subTest(windows=windows), mock.patch.object(rca, 'observe_windows_transport', return_value='alive'), mock.patch.object(rca, 'observe_windows_child_stage', return_value='wss_start'):
                 result, calls = self.invoke(bundle(windows=windows), windows=windows)
-                self.assertTrue(result)
+                self.assertIs(result, True)
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0][1]['env']['WORKFLOW_ACTION_OIDC_AUDIENCE'],
                                  'workflow-github-abcde')
@@ -152,7 +152,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
     def test_stale_ambient_oidc_audience_is_not_trusted(self):
         result, calls = self.invoke(bundle(),
             {'WORKFLOW_ACTION_OIDC_AUDIENCE': 'workflow-github-wrong'})
-        self.assertTrue(result)
+        self.assertIs(result, True)
         self.assertEqual(calls[0][1]['env']['WORKFLOW_ACTION_OIDC_AUDIENCE'],
                          'workflow-github-abcde')
 
@@ -244,7 +244,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                         select_release=lambda *_args: (_ for _ in ()).throw(
                             AssertionError("Release selection must not run in candidate mode")),
                     )
-                self.assertTrue(result)
+                self.assertIs(result, True)
                 self.assertEqual(len(launches), 1)
                 self.assertEqual(launches[0][0], [str(candidate)])
                 self.assertIn("ACTIONS_ID_TOKEN_REQUEST_TOKEN", launches[0][1]["env"])
@@ -328,11 +328,11 @@ class SessionRcaBootstrapTests(unittest.TestCase):
 
     def test_linux_matching_pin_launches_job_private_reviewed_entrypoint(self):
         result, calls = self.invoke(bundle())
-        self.assertTrue(result)
+        self.assertIs(result, True)
         self.assertEqual(len(calls), 1)
         argv, opts = calls[0]
         self.assertEqual(len(argv), 1)
-        self.assertTrue(argv[0].endswith('/.build/rca-session-linux-candidate'))
+        self.assertTrue(Path(argv[0]).name == 'rca-session-linux-candidate')
         self.assertTrue(opts['start_new_session'])
         self.assertEqual(opts['env']['GITHUB_REPOSITORY'], 'autoactions/github-actions')
         self.assertEqual(opts['env']['SESSION_ACTION_RCA'], '1')
@@ -349,16 +349,16 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             shell.write_text("#!/bin/bash\\n")
             shell.chmod(0o700)
             result, calls = self.invoke(bundle(), {"HOME": root})
-            self.assertTrue(result)
+            self.assertIs(result, True)
             self.assertEqual(calls[0][1]["env"]["SHELL"], str(shell))
             shell.chmod(0o755)
             result, calls = self.invoke(bundle(), {"HOME": root})
-            self.assertTrue(result)
+            self.assertIs(result, True)
             self.assertNotEqual(calls[0][1]["env"].get("SHELL"), str(shell))
             shell.unlink()
             shell.symlink_to("/bin/bash")
             result, calls = self.invoke(bundle(), {"HOME": root})
-            self.assertTrue(result)
+            self.assertIs(result, True)
             self.assertNotEqual(calls[0][1]["env"].get("SHELL"), str(shell))
 
     def test_windows_matching_pin_launches_approved_windows_entrypoint(self):
