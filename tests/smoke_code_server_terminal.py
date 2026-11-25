@@ -3,6 +3,7 @@
 ChromeDriver and Chrome are supplied by ubuntu-latest; no npm/pip dependency,
 external Tunnel, authentication bypass, repository credentials or user files.
 """
+import base64
 import json
 import os
 from pathlib import Path
@@ -59,6 +60,7 @@ def main():
             wait_for(ready, 10)
             result = request("POST", "/session", {"capabilities": {
                 "alwaysMatch": {"browserName": "chrome",
+                                "goog:loggingPrefs": {"performance": "ALL"},
                                 "goog:chromeOptions": {"args": [
                                     "--headless=new", "--window-size=1440,900"]}}}})
             session = "/session/" + result["sessionId"]
@@ -92,17 +94,30 @@ def main():
             # shell input echo cannot satisfy the output assertion.
             keys(f"printf '%s%s' '{left}' '{right}' > '{marker}'; cat '{marker}'; echo\ue007")
             wait_for(lambda: marker.exists() and marker.read_text() == value)
-            # Linux's documented Open Accessible View shortcut, invoked
-            # while the terminal still has focus, exposes its output buffer.
-            request("POST", session + "/actions", {"actions": [{
-                "type": "key", "id": "keyboard", "actions": [
-                    {"type": kind, "value": key}
-                    for kind, key in [
-                        ("keyDown", "\ue008"), ("keyDown", "\ue00a"),
-                        ("keyDown", "\ue032"), ("keyUp", "\ue032"),
-                        ("keyUp", "\ue00a"), ("keyUp", "\ue008")]
-                ]}]})
-            wait_for(lambda: js("return [...document.querySelectorAll('.view-lines')].some(e => e.innerText.includes(" + json.dumps(value) + "))"))
+            # Observe browser-side incoming WebSocket frames, not a second
+            # UI shortcut or the Runner's own stdout. The marker is never
+            # sent as a contiguous string in the input command.
+            tails = {}
+
+            def output_received():
+                entries = request("POST", session + "/log", {"type": "performance"})
+                for entry in entries:
+                    event = json.loads(entry["message"])["message"]
+                    if event["method"] != "Network.webSocketFrameReceived":
+                        continue
+                    params = event["params"]
+                    frame = params["response"]
+                    payload = (base64.b64decode(frame["payloadData"])
+                               if frame["opcode"] == 2
+                               else frame["payloadData"].encode())
+                    channel = params["requestId"]
+                    combined = tails.get(channel, b"") + payload
+                    if value.encode() in combined:
+                        return True
+                    tails[channel] = combined[-len(value):]
+                return False
+
+            wait_for(output_received)
             print("CODE_SERVER_TERMINAL_COMMAND_AND_OUTPUT_VERIFIED")
         except Exception:
             if session:
