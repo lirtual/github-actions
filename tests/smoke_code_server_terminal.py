@@ -92,7 +92,16 @@ def main():
             # shell input echo cannot satisfy the output assertion.
             keys(f"printf '%s%s' '{left}' '{right}' > '{marker}'; cat '{marker}'; echo\ue007")
             wait_for(lambda: marker.exists() and marker.read_text() == value)
-            command("Terminal: Focus Accessible Buffer")
+            # Linux's documented Open Accessible View shortcut, invoked
+            # while the terminal still has focus, exposes its output buffer.
+            request("POST", session + "/actions", {"actions": [{
+                "type": "key", "id": "keyboard", "actions": [
+                    {"type": kind, "value": key}
+                    for kind, key in [
+                        ("keyDown", "\ue008"), ("keyDown", "\ue00a"),
+                        ("keyDown", "\ue032"), ("keyUp", "\ue032"),
+                        ("keyUp", "\ue00a"), ("keyUp", "\ue008")]
+                ]}]})
             wait_for(lambda: js("return [...document.querySelectorAll('.view-lines')].some(e => e.innerText.includes(" + json.dumps(value) + "))"))
             print("CODE_SERVER_TERMINAL_COMMAND_AND_OUTPUT_VERIFIED")
         except Exception:
