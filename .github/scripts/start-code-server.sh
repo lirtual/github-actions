@@ -2,13 +2,13 @@
 set -euo pipefail
 # The loopback service has no separate login. External access is granted only
 # through the email-OTP protected Quick Tunnel verified before signed Ready.
-VERSION=4.146.0
+VERSION=4.140.0
 TARBALL="$RUNNER_TEMP/code-server.tar.gz"
 curl --fail --location --retry 2 \
   "https://github.com/coder/code-server/releases/download/v$VERSION/code-server-$VERSION-linux-amd64.tar.gz" \
   --output "$TARBALL"
-# Official pinned v4.146.0 linux-amd64 archive, SHA-256 published in the GitHub Release asset metadata.
-printf '%s  %s\n' 'cf7e82ca5fe1df664d43a43d900c3c9710f8f3403a5e8d0e18f6a12d10d7401b' "$TARBALL" | sha256sum -c -
+# Official pinned v4.140.0 linux-amd64 archive, confirmed across independent Runner downloads.
+printf '%s  %s\n' '864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48' "$TARBALL" | sha256sum -c -
 tar -xzf "$TARBALL" -C "$RUNNER_TEMP"
 BIN="$RUNNER_TEMP/code-server-$VERSION-linux-amd64/bin/code-server"
 "$BIN" --version >/dev/null
