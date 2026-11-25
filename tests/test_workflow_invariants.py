@@ -652,7 +652,7 @@ class SessionWorkflowInvariants(unittest.TestCase):
 
     def test_external_packages_are_immutable(self):
         code = (ROOT / ".github/scripts/start-code-server.sh").read_text()
-        self.assertIn("864c5d01c808ade57e4d12c708717be7a187219fded60428f263b9e2da9f6b48", code)
+        self.assertIn("cf7e82ca5fe1df664d43a43d900c3c9710f8f3403a5e8d0e18f6a12d10d7401b", code)
         self.assertIn("sha256sum -c -", code)
         image = (ROOT / ".github/scripts/start-openlist.sh").read_text()
         self.assertIn("openlistteam/openlist@sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64", image)

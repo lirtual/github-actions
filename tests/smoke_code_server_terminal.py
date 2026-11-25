@@ -1,0 +1,113 @@
+"""Exercise the real loopback code-server GUI on the stock GitHub Runner.
+
+ChromeDriver and Chrome are supplied by ubuntu-latest; no npm/pip dependency,
+external Tunnel, authentication bypass, repository credentials or user files.
+"""
+import json
+import os
+from pathlib import Path
+import secrets
+import socket
+import subprocess
+import tempfile
+import time
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+def wait_for(fn, timeout=20):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = fn()
+        if result:
+            return result
+        time.sleep(0.25)
+    raise RuntimeError("Timed out waiting for code-server terminal behavior")
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix="code-server-terminal-") as temp:
+        marker = Path(temp) / "result"
+        value = secrets.token_hex(16)
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        driver = subprocess.Popen(["chromedriver", f"--port={port}",
+                                   "--allowed-ips=127.0.0.1"],
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+        session = None
+
+        def request(method, path, payload=None):
+            data = None if payload is None else json.dumps(payload).encode()
+            req = Request(base + path, data=data, method=method,
+                          headers={"Content-Type": "application/json"})
+            try:
+                with urlopen(req, timeout=10) as response:
+                    return json.load(response)["value"]
+            except HTTPError as error:
+                raise RuntimeError(f"ChromeDriver {path}: {error.read().decode()}") from error
+
+        def ready():
+            try:
+                return request("GET", "/status").get("ready")
+            except (URLError, TimeoutError):
+                return False
+
+        try:
+            wait_for(ready, 10)
+            result = request("POST", "/session", {"capabilities": {
+                "alwaysMatch": {"browserName": "chrome",
+                                "goog:chromeOptions": {"args": [
+                                    "--headless=new", "--window-size=1440,900"]}}}})
+            session = "/session/" + result["sessionId"]
+
+            def js(script):
+                return request("POST", session + "/execute/sync",
+                               {"script": script, "args": []})
+
+            def keys(text):
+                active = request("GET", session + "/element/active")
+                element = active["element-6066-11e4-a52e-4f735466cecf"]
+                request("POST", session + "/element/" + element + "/value",
+                        {"text": text})
+
+            def command(name):
+                keys("\ue031")  # F1 opens the command palette.
+                wait_for(lambda: js("return !!document.querySelector('.quick-input-widget input')"))
+                keys(name)
+                wait_for(lambda: js("return [...document.querySelectorAll('.quick-input-list .monaco-list-row')].some(e => e.innerText.includes(" + json.dumps(name) + "))"))
+                keys("\ue007")
+
+            request("POST", session + "/url", {"url": "http://127.0.0.1:8080/"})
+            wait_for(lambda: js("return !!document.querySelector('.monaco-workbench')"), 45)
+            command("Terminal: Create New Terminal")
+            wait_for(lambda: js("return !!document.querySelector('.xterm textarea')"))
+            js("document.querySelector('.xterm textarea').focus(); return true")
+            # Input must reach the real PTY and shell; a rendered panel or
+            # echoed input alone cannot produce this per-run file.
+            keys(f"printf '%s' '{value}' > '{marker}'\ue007")
+            wait_for(lambda: marker.exists() and marker.read_text() == value)
+            print("CODE_SERVER_TERMINAL_COMMAND_VERIFIED")
+        except Exception:
+            if session:
+                try:
+                    print("Workbench:", js("return document.body.innerText.slice(-2500)"))
+                except Exception:
+                    pass
+            log = Path(os.environ["RUNNER_TEMP"]) / "code-server-session.log"
+            if log.exists():
+                print(log.read_text(errors="replace")[-6000:])
+            raise
+        finally:
+            try:
+                if session:
+                    request("DELETE", session)
+            finally:
+                driver.terminate()
+                driver.wait(timeout=10)
+
+
+if __name__ == "__main__":
+    main()

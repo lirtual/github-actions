@@ -114,6 +114,10 @@ jobs:
           # Verify no native login page/auth challenge survives.
           ! curl --silent --max-time 5 -D - -o /dev/null "http://127.0.0.1:$PORT/" | grep -Eiq '^www-authenticate:'
 
+      - name: Verify code-server integrated terminal executes a real command
+        if: matrix.service == 'code-server'
+        run: python3 tests/smoke_code_server_terminal.py
+
       - name: Remove transient local service
         if: always()
         shell: bash
