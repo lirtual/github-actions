@@ -87,9 +87,14 @@ def main():
             js("document.querySelector('.xterm textarea').focus(); return true")
             # Input must reach the real PTY and shell; a rendered panel or
             # echoed input alone cannot produce this per-run file.
-            keys(f"printf '%s' '{value}' > '{marker}'\ue007")
+            left, right = value[:16], value[16:]
+            # The contiguous value is absent from the typed command, so
+            # shell input echo cannot satisfy the output assertion.
+            keys(f"printf '%s%s' '{left}' '{right}' > '{marker}'; cat '{marker}'; echo\ue007")
             wait_for(lambda: marker.exists() and marker.read_text() == value)
-            print("CODE_SERVER_TERMINAL_COMMAND_VERIFIED")
+            command("Terminal: Focus Accessible Buffer")
+            wait_for(lambda: js("return [...document.querySelectorAll('.view-lines')].some(e => e.innerText.includes(" + json.dumps(value) + "))"))
+            print("CODE_SERVER_TERMINAL_COMMAND_AND_OUTPUT_VERIFIED")
         except Exception:
             if session:
                 try:
