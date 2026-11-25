@@ -40,12 +40,12 @@ def main():
                                   stderr=subprocess.DEVNULL)
         session = None
 
-        def request(method, path, payload=None):
+        def request(method, path, payload=None, timeout=10):
             data = None if payload is None else json.dumps(payload).encode()
             req = Request(base + path, data=data, method=method,
                           headers={"Content-Type": "application/json"})
             try:
-                with urlopen(req, timeout=10) as response:
+                with urlopen(req, timeout=timeout) as response:
                     return json.load(response)["value"]
             except HTTPError as error:
                 raise RuntimeError(f"ChromeDriver {path}: {error.read().decode()}") from error
@@ -62,7 +62,8 @@ def main():
                 "alwaysMatch": {"browserName": "chrome",
                                 "goog:loggingPrefs": {"performance": "ALL"},
                                 "goog:chromeOptions": {"args": [
-                                    "--headless=new", "--window-size=1440,900"]}}}})
+                                    "--headless=new", "--window-size=1440,900"]}}}},
+                             timeout=60)
             session = "/session/" + result["sessionId"]
 
             def js(script):
@@ -100,7 +101,7 @@ def main():
             tails = {}
 
             def output_received():
-                entries = request("POST", session + "/log", {"type": "performance"})
+                entries = request("POST", session + "/se/log", {"type": "performance"})
                 for entry in entries:
                     event = json.loads(entry["message"])["message"]
                     if event["method"] != "Network.webSocketFrameReceived":
