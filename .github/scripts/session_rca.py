@@ -6,11 +6,14 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import socket
+import ssl
 import stat
 import subprocess
 import sys
 import time
 import tarfile
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -32,6 +35,46 @@ RELEASE_RESPONSE_LIMIT = 8 * 1024 * 1024
 
 class BootstrapError(Exception):
     pass
+
+
+class ReleaseLookupError(BootstrapError):
+    # Only fixed local reason codes are passed by the Release validator.
+    pass
+
+
+def failure_reason(error):
+    """Report diagnostic facts, never external messages, URLs, bodies or paths."""
+    if isinstance(error, ReleaseLookupError):
+        return str(error)
+    if isinstance(error, urllib.error.HTTPError):
+        status = error.code
+        if type(status) is int and 100 <= status <= 599:
+            if status == 429 or (status == 403 and error.headers is not None and
+                                 error.headers.get('X-RateLimit-Remaining') == '0'):
+                return f'http_{status}_rate_limited'
+            return f'http_{status}'
+        return 'http_error'
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+        if not isinstance(error, OSError):
+            return 'url_error'
+    if isinstance(error, TimeoutError):
+        return 'timeout'
+    if isinstance(error, socket.gaierror):
+        return 'dns_error'
+    if isinstance(error, ssl.SSLError):
+        return 'tls_error'
+    if isinstance(error, json.JSONDecodeError):
+        return 'invalid_json'
+    if isinstance(error, UnicodeError):
+        return 'invalid_encoding'
+    if isinstance(error, (zipfile.BadZipFile, tarfile.TarError)):
+        return 'invalid_archive'
+    if isinstance(error, OSError):
+        return 'os_error'
+    if isinstance(error, ValueError):
+        return 'invalid_value'
+    return 'bootstrap_error'
 
 
 def member_path(name):
@@ -117,18 +160,18 @@ def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
     })
     with opener(request, timeout=8) as response:
         if response.geturl() != metadata_url:
-            raise BootstrapError("Unexpected GitHub Releases API redirect")
+            raise ReleaseLookupError("release_api_redirect")
         raw = response.read(RELEASE_RESPONSE_LIMIT + 1)
     if len(raw) > RELEASE_RESPONSE_LIMIT:
-        raise BootstrapError("Release metadata exceeds limit")
+        raise ReleaseLookupError("release_metadata_too_large")
     release = json.loads(raw)
     if not isinstance(release, dict):
-        raise BootstrapError("Invalid Latest Release metadata")
+        raise ReleaseLookupError("release_metadata_invalid")
     tag = release.get("tag_name")
     if (not isinstance(tag, str) or len(tag) > 32 or not TAG.fullmatch(tag)
             or release.get("draft") is not False or release.get("prerelease") is not False
             or release.get("immutable") is not True):
-        raise BootstrapError("Latest Release is not immutable stable")
+        raise ReleaseLookupError("release_not_immutable_stable")
     # Same repository-wide release admission as the public installers:
     # validate all five assets before selecting the local Session package.
     targets = {
@@ -136,7 +179,7 @@ def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
         "windows-x64": "zip", "darwin-arm64": "tar.gz", "darwin-x64": "tar.gz",
     }
     if targets.get(target) != extension:
-        raise BootstrapError("Unsupported Release target")
+        raise ReleaseLookupError("release_target_unsupported")
     expected = {f"remote-control-agent-{tag}-{t}.{ext}": t
                 for t, ext in targets.items()}
     platform_name = re.compile(
@@ -145,19 +188,19 @@ def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
         r"\.(?:tar\.gz|zip)\Z")
     if ("html_url" in release and release["html_url"] !=
             f"https://github.com/{REPOSITORY}/releases/tag/{tag}"):
-        raise BootstrapError("Untrusted Latest Release origin")
+        raise ReleaseLookupError("release_origin_untrusted")
     assets = release.get("assets")
     if not isinstance(assets, list):
-        raise BootstrapError("Release assets unavailable")
+        raise ReleaseLookupError("release_assets_unavailable")
     selected = {}
     for asset in assets:
         if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
-            raise BootstrapError("Malformed Release asset")
+            raise ReleaseLookupError("release_asset_malformed")
         name = asset["name"]
         platform = expected.get(name)
         if platform is None:
             if platform_name.fullmatch(name):
-                raise BootstrapError("Release mixes incompatible platform assets")
+                raise ReleaseLookupError("release_asset_version_mismatch")
             continue
         url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
         digest = asset.get("digest")
@@ -167,10 +210,10 @@ def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
                 not isinstance(digest, str) or not digest.startswith("sha256:") or
                 not DIGEST.fullmatch(digest[7:]) or
                 type(size) is not int or not 0 < size <= 180_000_000):
-            raise BootstrapError("Unverified or duplicate Release asset")
+            raise ReleaseLookupError("release_asset_unverified_or_duplicate")
         selected[platform] = (digest[7:], url)
     if len(selected) != len(targets):
-        raise BootstrapError("Latest Release is missing a platform asset")
+        raise ReleaseLookupError("release_platform_asset_missing")
     digest, url = selected[target]
     return tag, digest, url
 
@@ -487,10 +530,10 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     BOOTSTRAP_PHASE = "release_lookup"
     tag, sha, url = select_release(target, extension, opener)
     if not TAG.fullmatch(tag) or not DIGEST.fullmatch(sha):
-        raise BootstrapError("Unverified Release selection")
+        raise ReleaseLookupError("release_selection_unverified")
     name = f"remote-control-agent-{tag}-{target}.{extension}"
     if url != f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}":
-        raise BootstrapError("Unexpected Release download URL")
+        raise ReleaseLookupError("release_download_url_unexpected")
     BOOTSTRAP_PHASE = "asset_download"
     stage = Path(temp) / "session-rca-reviewed-release"
     stage.mkdir(mode=0o700, exist_ok=False)
@@ -526,7 +569,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
 def main():
     try:
         start()
-    except (BootstrapError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError):
+    except (BootstrapError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError) as error:
         # Known pre-spawn failure, not the ambiguous case where a child may live.
         if not BOOTSTRAP_SPAWNED and sys.platform != "win32" and \
            os.environ.get("GITHUB_ACTIONS") == "true" and \
@@ -545,7 +588,8 @@ def main():
                 pass  # Missing marker conservatively disables SSH-only early stop.
         # Mark this optional Step as failed, while continue-on-error preserves Hold.
         # Never print external HTTP errors, OIDC tokens, private keys or OS paths.
-        print(f"Session RCA unavailable at phase={BOOTSTRAP_PHASE}; SSH/RDP remains available.")
+        print(f"Session RCA unavailable at phase={BOOTSTRAP_PHASE}; "
+              f"reason={failure_reason(error)}; SSH/RDP remains available.")
         return 1
     return 0
 

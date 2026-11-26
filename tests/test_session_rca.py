@@ -4,7 +4,10 @@ import importlib.util
 import io
 import json
 import os
+import socket
+import ssl
 import sys
+import urllib.error
 from pathlib import Path
 import tarfile
 import tempfile
@@ -546,7 +549,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             marker.symlink_to(outside)
             self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
 
-    def test_failure_log_reports_only_allowlisted_phase(self):
+    def test_failure_log_does_not_expose_arbitrary_exception_message(self):
         with mock.patch.object(rca, 'start',
                                side_effect=rca.BootstrapError('SENSITIVE_SYNTHETIC_EXCEPTION')), \
                 mock.patch.object(rca, 'BOOTSTRAP_PHASE', 'release_lookup'), \
@@ -554,7 +557,31 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 mock.patch('builtins.print') as output:
             self.assertEqual(rca.main(), 1)
         output.assert_called_once_with(
-            'Session RCA unavailable at phase=release_lookup; SSH/RDP remains available.')
+            'Session RCA unavailable at phase=release_lookup; reason=bootstrap_error; SSH/RDP remains available.')
+
+    def test_release_failure_log_distinguishes_http_network_and_validation_without_leaks(self):
+        secret = 'SENSITIVE_SYNTHETIC_EXCEPTION'
+        url = 'https://example.invalid/' + secret
+        for error, reason in (
+            (urllib.error.HTTPError(url, 403, secret, {'X-RateLimit-Remaining': '0'}, None), 'http_403_rate_limited'),
+            (urllib.error.HTTPError(url, 403, secret, {'X-RateLimit-Remaining': '10'}, None), 'http_403'),
+            (urllib.error.HTTPError(url, 429, secret, {}, None), 'http_429_rate_limited'),
+            (urllib.error.HTTPError(url, 503, secret, {}, None), 'http_503'),
+            (urllib.error.URLError(TimeoutError(secret)), 'timeout'),
+            (urllib.error.URLError(socket.gaierror(-2, secret)), 'dns_error'),
+            (urllib.error.URLError(ssl.SSLError(secret)), 'tls_error'),
+            (urllib.error.URLError(secret), 'url_error'),
+            (json.JSONDecodeError(secret, secret, 0), 'invalid_json'),
+            (rca.ReleaseLookupError('release_platform_asset_missing'), 'release_platform_asset_missing'),
+        ):
+            with self.subTest(reason=reason), \
+                    mock.patch.object(rca, 'start', side_effect=error), \
+                    mock.patch.object(rca, 'BOOTSTRAP_PHASE', 'release_lookup'), \
+                    mock.patch.dict(os.environ, {}, clear=True), \
+                    mock.patch('builtins.print') as output:
+                self.assertEqual(rca.main(), 1)
+            output.assert_called_once_with(
+                f'Session RCA unavailable at phase=release_lookup; reason={reason}; SSH/RDP remains available.')
 
     def test_release_lookup_failure_denied_before_download(self):
         def unavailable(*_args):
@@ -691,7 +718,7 @@ class LatestReleaseSelectionTests(unittest.TestCase):
                 self.lookup(latest)
 
     def test_api_redirect_is_rejected(self):
-        with self.assertRaises(rca.BootstrapError):
+        with self.assertRaisesRegex(rca.BootstrapError, 'release_api_redirect'):
             self.lookup(self.release(), redirect=True)
 
     def test_duplicate_target_asset_denied(self):
@@ -704,7 +731,7 @@ class LatestReleaseSelectionTests(unittest.TestCase):
         for index in range(1, 5):
             latest = self.release()
             latest['assets'].pop(index)
-            with self.subTest(missing=index), self.assertRaises(rca.BootstrapError):
+            with self.subTest(missing=index), self.assertRaisesRegex(rca.BootstrapError, 'release_platform_asset_missing'):
                 self.lookup(latest)
 
     def test_mixed_platform_release_is_denied(self):
@@ -719,7 +746,7 @@ class LatestReleaseSelectionTests(unittest.TestCase):
                              ('browser_download_url', 'https://evil.invalid/asset')]:
             latest = self.release()
             latest['assets'][3][field] = value
-            with self.subTest(field=field), self.assertRaises(rca.BootstrapError):
+            with self.subTest(field=field), self.assertRaisesRegex(rca.BootstrapError, 'release_asset_unverified_or_duplicate'):
                 self.lookup(latest)
 
     def test_non_platform_manifest_allowed(self):

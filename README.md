@@ -9,3 +9,9 @@ explicit `session_agent=rust-candidate` choice is for authorized acceptance,
 builds the platform-specific Rust Candidate from a reviewed commit pin, and
 starts it as the sole Session Agent. Candidate mode requires its exact GitHub
 Action contract to be approved in the published Workflow before it can run.
+
+Signed Ready confirms private SSH (and Windows RDP), not RCA connectivity.
+If the optional RCA bootstrap fails, the Session remains available over SSH/RDP;
+inspect the bootstrap step's `phase` and safe `reason` code (including HTTP
+status/rate limit and Release validation failures). It does not print raw
+exceptions, URLs, response bodies or credentials.
