@@ -28,6 +28,34 @@ jobs:
         run: |
           python3 -m py_compile .github/scripts/session_action.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: One-time authenticated public Latest read for issue 135
+        env:
+          SESSION_RCA_RELEASE_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import os
+          import sys
+          import urllib.request
+          sys.path.insert(0, ".github/scripts")
+          import session_rca
+          token = os.environ.pop("SESSION_RCA_RELEASE_TOKEN")
+          def observe(request, timeout):
+              response = urllib.request.urlopen(request, timeout=timeout)
+              limit = response.headers.get("X-RateLimit-Limit", "")
+              remaining = response.headers.get("X-RateLimit-Remaining", "")
+              if not limit.isdecimal() or int(limit) <= 60:
+                  response.close()
+                  raise session_rca.ReleaseLookupError("authenticated_quota_unconfirmed")
+              print("Authenticated quota:", limit, "remaining:", remaining if remaining.isdecimal() else "unknown")
+              return response
+          try:
+              tag, _, _ = session_rca.resolve_latest_release("linux-x64-glibc", "tar.gz", opener=observe, token=token)
+          except (session_rca.BootstrapError, OSError, ValueError) as error:
+              print("Authenticated Latest read failed:", session_rca.failure_reason(error))
+              sys.exit(1)
+          print("AUTHENTICATED_LATEST_READ_PASS", tag)
+          PYCODE
       - name: Verify Drop encrypted handoff contract (no external writes)
         run: node --test tests/drop_envelope.test.mjs tests/drop_runner.test.mjs tests/drop_receipt.test.mjs
       - name: Verify pinned cloudflared supports protected Quick Tunnels
