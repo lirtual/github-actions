@@ -10,6 +10,9 @@ builds the platform-specific Rust Candidate from a reviewed commit pin, and
 starts it as the sole Session Agent. Candidate mode requires its exact GitHub
 Action contract to be approved in the published Workflow before it can run.
 
+The immutable Latest metadata lookup uses the job-scoped read-only GitHub
+token; the token is not passed to the downloaded Agent or asset download.
+
 Signed Ready confirms private SSH (and Windows RDP), not RCA connectivity.
 If the optional RCA bootstrap fails, the Session remains available over SSH/RDP;
 inspect the bootstrap step's `phase` and safe `reason` code (including HTTP

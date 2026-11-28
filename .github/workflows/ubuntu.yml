@@ -124,6 +124,7 @@ jobs:
         timeout-minutes: 5
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          SESSION_RCA_RELEASE_TOKEN: ${{ inputs.session_agent != 'rust-candidate' && github.token || '' }}
         run: python3 .github/scripts/session_rca.py
       - name: Hold until selected lifetime or GitHub cancellation
         env:

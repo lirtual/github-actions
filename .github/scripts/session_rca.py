@@ -150,14 +150,18 @@ def download_pinned(url, archive, sha, opener=urllib.request.urlopen):
 
 
 
-def resolve_latest_release(target, extension, opener=urllib.request.urlopen):
-    """Use the owner-selected repository-wide immutable stable Latest."""
+def resolve_latest_release(target, extension, opener=urllib.request.urlopen, *, token):
+    """Use the authenticated, owner-selected immutable stable Latest."""
+    if not token:
+        raise ReleaseLookupError("release_token_unavailable")
     metadata_url = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
     request = urllib.request.Request(metadata_url, headers={
         "User-Agent": "github-actions-session-rca",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     })
+    # urllib must not forward the job token if GitHub responds with a redirect.
+    request.add_unredirected_header("Authorization", f"Bearer {token}")
     with opener(request, timeout=8) as response:
         if response.geturl() != metadata_url:
             raise ReleaseLookupError("release_api_redirect")
@@ -474,7 +478,7 @@ def launch_native(executable, registration_env, temp, windows, launch):
 
 def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen,
           select_release=resolve_latest_release, build_candidate=build_linux_candidate,
-          build_windows_candidate_fn=build_windows_candidate):
+          build_windows_candidate_fn=build_windows_candidate, *, release_token=None):
     global BOOTSTRAP_PHASE, BOOTSTRAP_SPAWNED
     BOOTSTRAP_PHASE = "environment"
     windows = sys.platform == "win32"
@@ -528,7 +532,7 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
     target = "windows-x64" if windows else "linux-x64-glibc"
     extension = "zip" if windows else "tar.gz"
     BOOTSTRAP_PHASE = "release_lookup"
-    tag, sha, url = select_release(target, extension, opener)
+    tag, sha, url = select_release(target, extension, opener, token=release_token)
     if not TAG.fullmatch(tag) or not DIGEST.fullmatch(sha):
         raise ReleaseLookupError("release_selection_unverified")
     name = f"remote-control-agent-{tag}-{target}.{extension}"
@@ -567,8 +571,11 @@ def start(env=os.environ, opener=urllib.request.urlopen, launch=subprocess.Popen
 
 
 def main():
+    # Consume the short-lived read-only token before any subprocess or
+    # registration environment is constructed. It is for metadata only.
+    release_token = os.environ.pop("SESSION_RCA_RELEASE_TOKEN", None)
     try:
-        start()
+        start(release_token=release_token)
     except (BootstrapError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError) as error:
         # Known pre-spawn failure, not the ambiguous case where a child may live.
         if not BOOTSTRAP_SPAWNED and sys.platform != "win32" and \

@@ -90,6 +90,17 @@ class SessionWorkflowInvariants(unittest.TestCase):
         self.assertIn("continue-on-error: ${{ inputs.session_agent != 'rust-candidate' }}", windows)
         self.assertIn("inputs.session_agent == 'rust-candidate' && 12 || 2", windows)
 
+    def test_release_token_is_scoped_to_rca_bootstrap(self):
+        for name in ("ubuntu", "windows"):
+            with self.subTest(workflow=name):
+                yml = (ROOT / ".github/workflows" / (name + ".yml")).read_text()
+                step = next(part for part in yml.split("      - name: ")
+                            if "run: python" in part and ".github/scripts/session_rca.py" in part)
+                self.assertIn("SESSION_RCA_RELEASE_TOKEN: ${{ inputs.session_agent != 'rust-candidate' && github.token || '' }}", step)
+                self.assertEqual(yml.count("SESSION_RCA_RELEASE_TOKEN:"), 1)
+                self.assertIn("  contents: read", yml)
+                self.assertNotIn("contents: write", yml)
+
     def test_only_ubuntu_reads_repository_idle_minutes(self):
         ubuntu = (ROOT / ".github/workflows/ubuntu.yml").read_text()
         self.assertIn("SESSION_IDLE_MINUTES: ${{ vars.SESSION_IDLE_MINUTES || '30' }}", ubuntu)

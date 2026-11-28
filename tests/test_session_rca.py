@@ -24,6 +24,7 @@ rca = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rca)
 
 TAG = 'v0.1.40'
+RELEASE_TOKEN = 'synthetic-release-token'
 
 
 def bundle(windows=False, version=TAG, extra=(), native=True, omit=(), overrides=None):
@@ -105,10 +106,10 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                     try:
                         outcome = rca.start(
                             env, opener=lambda *_args, **_kwargs: Download(payload),
-                            launch=launch, build_candidate=build_candidate or rca.build_linux_candidate,
+                            launch=launch, release_token=RELEASE_TOKEN, build_candidate=build_candidate or rca.build_linux_candidate,
                             build_windows_candidate_fn=build_windows_candidate or rca.build_windows_candidate,
                             select_release=select_override or
-                            (lambda target, extension, opener: (
+                            (lambda target, extension, opener, *, token: (
                                 TAG, hashlib.sha256(payload).hexdigest(),
                                 f"https://github.com/{rca.REPOSITORY}/releases/download/"
                                 f"{TAG}/remote-control-agent-{TAG}-{target}.{extension}")))
@@ -549,6 +550,28 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             marker.symlink_to(outside)
             self.assertEqual(rca.observe_windows_child_stage(root,delay=lambda _:None),"unknown")
 
+    def test_bootstrap_consumes_token_before_start(self):
+        def check_start(*, release_token):
+            self.assertEqual(release_token, RELEASE_TOKEN)
+            self.assertNotIn("SESSION_RCA_RELEASE_TOKEN", os.environ)
+        with mock.patch.dict(os.environ, {"SESSION_RCA_RELEASE_TOKEN": RELEASE_TOKEN}, clear=True), mock.patch.object(rca, "start", side_effect=check_start) as start:
+            self.assertEqual(rca.main(), 0)
+        start.assert_called_once_with(release_token=RELEASE_TOKEN)
+
+    def test_release_token_is_only_passed_to_selection(self):
+        for windows in (False, True):
+            with self.subTest(windows=windows), mock.patch.object(rca, "observe_windows_transport", return_value="alive"), mock.patch.object(rca, "observe_windows_child_stage", return_value="connected"):
+                payload = bundle(windows=windows)
+                def select(target, extension, opener, *, token):
+                    self.assertEqual(token, RELEASE_TOKEN)
+                    return (TAG, hashlib.sha256(payload).hexdigest(),
+                            f"https://github.com/{rca.REPOSITORY}/releases/download/"
+                            f"{TAG}/remote-control-agent-{TAG}-{target}.{extension}")
+                result, calls = self.invoke(payload, windows=windows, select_override=select)
+                self.assertIs(result, True)
+                self.assertEqual(len(calls), 1)
+                self.assertNotIn(RELEASE_TOKEN, calls[0][1]["env"].values())
+
     def test_failure_log_does_not_expose_arbitrary_exception_message(self):
         with mock.patch.object(rca, 'start',
                                side_effect=rca.BootstrapError('SENSITIVE_SYNTHETIC_EXCEPTION')), \
@@ -584,7 +607,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
                 f'Session RCA unavailable at phase=release_lookup; reason={reason}; SSH/RDP remains available.')
 
     def test_release_lookup_failure_denied_before_download(self):
-        def unavailable(*_args):
+        def unavailable(*_args, **_kwargs):
             raise rca.BootstrapError("synthetic metadata unavailable")
         result, calls = self.invoke(bundle(), select_override=unavailable)
         self.assertEqual(result, 'denied')
@@ -596,13 +619,14 @@ class SessionRcaBootstrapTests(unittest.TestCase):
             env = settings(root, payload)
             urls = []
             def opener(req, timeout):
+                self.assertIsNone(req.get_header("Authorization"))
                 urls.append((req.full_url, timeout))
                 return Download(payload)
             with mock.patch.object(rca.sys, 'platform', 'linux'), \
                     mock.patch.object(rca, 'discover_audience', return_value='workflow-github-abcde'):
-                self.assertTrue(rca.start(env, opener=opener,
+                self.assertTrue(rca.start(env, opener=opener, release_token=RELEASE_TOKEN,
                     launch=lambda *_a, **_kw: type('Child', (), {'pid': 1234, 'wait': lambda self, timeout: 0})(),
-                    select_release=lambda target, ext, _opener: (
+                    select_release=lambda target, ext, _opener, *, token: (
                         TAG, hashlib.sha256(payload).hexdigest(),
                         f"https://github.com/{rca.REPOSITORY}/releases/download/"
                         f"{TAG}/remote-control-agent-{TAG}-{target}.{ext}")))
@@ -628,7 +652,7 @@ class SessionRcaBootstrapTests(unittest.TestCase):
         self.assertFalse(calls)
 
     def test_wrong_sha_cannot_launch(self):
-        result, calls = self.invoke(bundle(), select_override=lambda target, ext, _opener: (
+        result, calls = self.invoke(bundle(), select_override=lambda target, ext, _opener, *, token: (
             TAG, '0' * 64, f"https://github.com/{rca.REPOSITORY}/releases/download/"
             f"{TAG}/remote-control-agent-{TAG}-{target}.{ext}"))
         self.assertEqual(result, 'denied')
@@ -683,7 +707,7 @@ class LatestReleaseSelectionTests(unittest.TestCase):
                 'https://evil.invalid/' if redirect else req.full_url)
             return response
         target, ext = ('windows-x64', 'zip') if windows else ('linux-x64-glibc', 'tar.gz')
-        return rca.resolve_latest_release(target, ext, opener=opener), requested
+        return rca.resolve_latest_release(target, ext, opener=opener, token=RELEASE_TOKEN), requested
 
     def test_only_owner_selected_latest_not_highest_numeric_release(self):
         latest = self.release('v0.1.49')
@@ -697,9 +721,40 @@ class LatestReleaseSelectionTests(unittest.TestCase):
             response = Download(json.dumps(result).encode())
             response.geturl = lambda: req.full_url
             return response
-        result = rca.resolve_latest_release('linux-x64-glibc', 'tar.gz', opener=opener)
+        result = rca.resolve_latest_release('linux-x64-glibc', 'tar.gz', opener=opener, token=RELEASE_TOKEN)
         self.assertEqual(result[0], 'v0.1.49')
         self.assertEqual(requested, [f'https://api.github.com/repos/{rca.REPOSITORY}/releases/latest'])
+
+    def test_auth_header_is_only_for_fixed_metadata_request(self):
+        def opener(req, timeout):
+            self.assertEqual(req.full_url,
+                             f"https://api.github.com/repos/{rca.REPOSITORY}/releases/latest")
+            self.assertEqual(req.get_header("Authorization"), f"Bearer {RELEASE_TOKEN}")
+            redirected = rca.urllib.request.HTTPRedirectHandler().redirect_request(
+                req, None, 302, "redirect", {}, "https://example.invalid/redirect")
+            self.assertIsNone(redirected.get_header("Authorization"))
+            response = Download(json.dumps(self.release()).encode())
+            response.geturl = lambda: req.full_url
+            return response
+        self.assertEqual(rca.resolve_latest_release(
+            "linux-x64-glibc", "tar.gz", opener=opener, token=RELEASE_TOKEN)[0], TAG)
+
+    def test_missing_token_never_uses_anonymous_api(self):
+        for token in (None, ""):
+            with self.subTest(token=token), self.assertRaisesRegex(
+                    rca.ReleaseLookupError, "release_token_unavailable"):
+                rca.resolve_latest_release("linux-x64-glibc", "tar.gz",
+                    opener=lambda *_a, **_kw: self.fail("unexpected network request"), token=token)
+
+    def test_authenticated_rate_limit_is_not_retried_anonymously(self):
+        err = urllib.error.HTTPError("https://example.invalid/", 403, "synthetic",
+                                     {"X-RateLimit-Remaining": "0"}, None)
+        opener = mock.Mock(side_effect=err)
+        with self.assertRaises(urllib.error.HTTPError):
+            rca.resolve_latest_release("linux-x64-glibc", "tar.gz",
+                                       opener=opener, token=RELEASE_TOKEN)
+        opener.assert_called_once()
+        self.assertEqual(rca.failure_reason(err), "http_403_rate_limited")
 
     def test_windows_target_uses_matching_asset(self):
         result, _ = self.lookup(self.release(windows=True), windows=True)
